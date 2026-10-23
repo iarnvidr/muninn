@@ -108,7 +108,7 @@ pub fn classify_text(text: &str) -> FailureReason {
         LiveStream
     } else if has(&["requested format is not available", "no video formats", "no stream urls"]) {
         FormatUnavailable
-    } else if has(&["video unavailable", "this video is unavailable", "video is not available", "has been removed", "no longer available", "account associated with this video has been terminated", "video does not exist", "video has been deleted", "copyright"]) {
+    } else if has(&["video unavailable", "this video is unavailable", "this video is not available", "has been removed", "no longer available", "account associated with this video has been terminated", "video does not exist", "video has been deleted", "copyright"]) {
         Unavailable
     } else if t.starts_with("probing stream length") || t.contains("did not report its length") {
         LengthProbeFailed
