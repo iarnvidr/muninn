@@ -93,7 +93,7 @@ pub async fn tab_open_video(
         return Err("invalid video id".into());
     }
     let loc = match playlist {
-        Some(playlist) if muninn_core::tabs::valid_list_id(&playlist.list_id) => muninn_core::tabs::Loc::WatchInPlaylist { video_id, playlist },
+        Some(playlist) if muninn_core::playlist::valid_list_id(&playlist.list_id) => muninn_core::tabs::Loc::WatchInPlaylist { video_id, playlist },
         Some(_) => return Err("invalid playlist context".into()),
         None => muninn_core::tabs::Loc::Watch(video_id),
     };
