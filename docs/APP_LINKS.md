@@ -17,7 +17,8 @@ muninn://open?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ
 open 'muninn://open?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ'
 ```
 
-The app starts if needed, opens a new active tab and brings its window forward.
+The app starts if needed, opens an active tab (or activates the one that already
+shows that destination; see below) and brings its window forward.
 An already-running app receives the link through macOS opened-URL events or the
 single-instance argument handler. Library or Settings yields to the requested tab;
 the request survives a chrome page that has not loaded yet. Closing the Mac window
@@ -28,6 +29,29 @@ playlist and search pages open in a browsing tab. This is an individual open
 action. For large collections of links, use `--cli import links` to populate the
 library without opening tabs or downloading videos. `--cli open` remains the
 separate operation that creates sleeping tabs in an already-running app.
+
+## One tab per destination
+
+Muninn keeps at most one main tab per logical destination, whichever way it is
+opened (toolbar, links in a page, Library, channels, app links, `--cli open`,
+New Tab). A video is identified by its video ID, so watch, Shorts, `youtu.be`,
+embed and live forms of one video are the same tab. Other pages are identified by
+a conservative normalisation: `youtube.com`, `www.` and `m.` are the same,
+fragments and tracking parameters (`utm_*`, `si`, `feature`, `pp`, `fbclid`,
+`gclid`, ...) are ignored, while search queries, filters (`sp=`), playlists
+(`list=`), channel routes, `music.youtube.com` and account routes stay distinct.
+
+- Opening an open destination activates that tab (sleeping tabs included) and
+  does not reload it or touch playback or scroll position. A background open
+  never takes the focus. New Tab with Home already open shows the Home tab.
+- A tab that navigates (address bar, Back/Forward, a page's own link) to a
+  destination open in another tab leaves itself unchanged and the other tab is
+  shown. If a page navigates by itself to such a destination, the other tab is
+  shown and the navigating tab is sent back; with nothing to go back to it closes.
+- Saved state with duplicates is collapsed at start-up: the active tab wins, then
+  a playing one, then the most recently active, then the lowest ID. The winner
+  keeps its place and takes over a missing scroll position or title; the
+  duplicate rows are removed from the browsing database.
 
 ## Constructing app links
 
