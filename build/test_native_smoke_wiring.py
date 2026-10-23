@@ -7,22 +7,63 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class NativeSmokeWiringTests(unittest.TestCase):
-    def test_workflow_smokes_the_signed_bundle_that_build_script_stages(self):
+    def test_release_health_and_debug_ui_interaction_are_separate(self):
         workflow = (ROOT / ".github/workflows/macos.yml").read_text()
         builder = (ROOT / "build/build-native-macos.sh").read_text()
         smoke = (ROOT / "build/smoke-native-macos.sh").read_text()
+        ui_smoke = (ROOT / "build/native-ui-smoke.sh").read_text()
 
-        build_step = re.search(r'run: bash build/build-native-macos\.sh "\$RUNNER_TEMP/muninn"', workflow)
-        smoke_step = re.search(r'run: bash build/smoke-native-macos\.sh "([^"]+)"', workflow)
-        self.assertIsNotNone(build_step, "workflow must build into its runner-temp output directory")
-        self.assertIsNotNone(smoke_step, "workflow must run native smoke")
-        self.assertEqual(smoke_step.group(1), "$RUNNER_TEMP/muninn/Muninn.app")
-        self.assertIn('ditto "$app" "$out/Muninn.app"', builder,
-                      "builder must stage its exact signed .app at the workflow smoke path")
-        self.assertLess(builder.index('codesign --verify --deep --strict --verbose=2 "$app"'),
-                        builder.index('ditto "$app" "$out/Muninn.app"'))
-        self.assertIn('[[ -d "$app/Contents/MacOS" ]]', smoke)
-        self.assertIn('codesign --verify --deep --strict "$app"', smoke)
+        self.assertIn('run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"', workflow)
+        self.assertIn('run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"', workflow)
+        self.assertIn('ditto "$app" "$out/Muninn.app"', builder)
+        self.assertIn('cargo build --locked -p muninn --target aarch64-apple-darwin', workflow)
+        self.assertIn('Muninn.app', workflow)
+        self.assertIn('aarch64-apple-darwin/debug/muninn', ui_smoke)
+        self.assertIn('codesign --force --sign - "$app"', ui_smoke)
+        self.assertIn('Muninn.app', ui_smoke)
+        self.assertIn('native-ui-smoke', ui_smoke)
+        self.assertIn('debug native UI smoke marker', ui_smoke)
+        self.assertNotIn('native-ui-smoke.sh', smoke)
+        self.assertNotIn("cargo tauri", workflow)
+
+    def test_release_artifact_and_debug_evidence_are_uploaded_separately(self):
+        workflow = (ROOT / ".github/workflows/macos.yml").read_text()
+        ui_smoke = (ROOT / "build/native-ui-smoke.sh").read_text()
+        self.assertIn('muninn-release-evidence/**', workflow)
+        self.assertIn('muninn-debug-ui-evidence/**', workflow)
+        self.assertIn('Muninn_*.zip', workflow)
+        self.assertNotIn('muninn-debug/**', workflow)
+        self.assertIn('screenshots/window.png', ui_smoke)
+        self.assertIn('reports/os-permission.txt', ui_smoke)
+        self.assertIn('if: always()', workflow)
+        self.assertIn('MUNINN_DATA_DIR', ui_smoke)
+        self.assertIn('interaction_status', ui_smoke)
+        self.assertIn('Contents/Resources/bin/ffmpeg', ui_smoke)
+        self.assertIn('! -L "$ffmpeg" && -x "$ffmpeg"', ui_smoke)
+        self.assertIn('generate-native-fixture.swift', ui_smoke)
+        self.assertIn('xcrun swift', ui_smoke)
+        self.assertNotRegex(ui_smoke, r"ffmpeg[^\\n]*-f\\s+lavfi|testsrc2?=|sine=frequency")
+        fixture = (ROOT / "build/generate-native-fixture.swift").read_text()
+        self.assertIn('AVAssetWriter', fixture)
+        self.assertIn('AVVideoCodecType.h264', fixture)
+        self.assertIn('900', fixture)
+        self.assertIn('asset.load(.isPlayable)', fixture)
+        self.assertIn('NATIVE_SMOKE_MEDIA_FILE', ui_smoke)
+        self.assertIn('reports/media-fixture.txt', ui_smoke)
+
+    def test_preview_version_agrees_across_metadata_and_lockfile(self):
+        import json
+        import tomllib
+        version = "0.2.14-preview.3"
+        config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text())
+        cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())
+        lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
+        self.assertEqual(cargo["workspace"]["package"]["version"], version)
+        self.assertEqual(config["version"], version)
+        for package in lock["package"]:
+            if package["name"] in {"muninn", "muninn-core"}:
+                self.assertEqual(package["version"], version)
+
 
 
 if __name__ == "__main__":

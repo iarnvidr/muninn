@@ -29,17 +29,32 @@ jobs:
         run: brew install meson ninja pkgconf
       - name: Select the pinned Rust toolchain
         run: rustup show active-toolchain
-      - name: Build, test and sign locally
+      # This release build/package and its launch-health check intentionally do not
+      # run the debug-only e2e harness.
+      - name: Build, test and sign release artifact
         run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"
-      - name: Native app launch and localhost smoke
+      - name: Release app launch and localhost health smoke
+        env:
+          SMOKE_EVIDENCE_DIR: ${{ runner.temp }}/muninn-release-evidence
         run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"
+      - name: Build debug binary for native UI interactions
+        run: cargo build --locked -p muninn --target aarch64-apple-darwin
+      - name: Native UI interaction smoke (debug bundle only)
+        env:
+          NATIVE_UI_EVIDENCE_DIR: ${{ runner.temp }}/muninn-debug-ui-evidence
+        run: bash build/native-ui-smoke.sh "$RUNNER_TEMP/muninn/Muninn.app" "$RUNNER_TEMP/muninn-debug-ui-evidence"
       - id: upload
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: muninn-macos-arm64
-          path: ${{ runner.temp }}/muninn/*
+          path: |
+            ${{ runner.temp }}/muninn/Muninn_*.zip
+            ${{ runner.temp }}/muninn/Muninn_*.zip.sha256
+            ${{ runner.temp }}/muninn/verify-macos.txt
+            ${{ runner.temp }}/muninn-release-evidence/**
+            ${{ runner.temp }}/muninn-debug-ui-evidence/**
           if-no-files-found: error
-          # Builds of main stay downloadable for a month; PR builds for a week.
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
       - name: Show where to download this build
         env:
@@ -48,7 +63,7 @@ jobs:
           {
             echo "### Muninn test build (Apple Silicon)"
             echo
-            echo "Download: [muninn-macos-arm64]($ARTIFACT_URL) (sign in to GitHub; zip with Muninn.app and its .sha256)."
+            echo "Download: [muninn-macos-arm64]($ARTIFACT_URL) (sign in to GitHub; includes release archive/checksum and separate debug UI smoke evidence)."
             echo "Not a release: ad-hoc signed and not notarized. See README, Install on the Mac."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Download: $ARTIFACT_URL"
