@@ -403,8 +403,9 @@ impl Core {
 
     /// Asks a running entry to stop and records why, so the log can tell a deliberate stop from a failure.
     pub(crate) fn cancel_with_cause(&self, entry: &str, cause: &'static str) {
-        self.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).insert(entry.to_string(), cause);
+        // Only a running entry can be stopped; a cause for anything else would never be cleared.
         if let Some(job) = self.running.lock().unwrap_or_else(|e| e.into_inner()).get(entry) {
+            self.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).insert(entry.to_string(), cause);
             job.cancel.store(true, Ordering::SeqCst);
         }
     }
@@ -518,10 +519,8 @@ impl Core {
             // A finished copy exists: never replace it with a new download.
             return Err(Error::Conflict("this video is already cached".into()));
         }
-        let preempted = self.preempt_speculative();
+        let facts = self.facts_for(video_id);
         let hls_dir = hls_dir_for(&self.paths.cache_dir, video_id, &variant);
-        let _ = std::fs::remove_dir_all(&hls_dir);
-        std::fs::create_dir_all(&hls_dir)?;
         let job = Arc::new(StreamJob {
             video_id: video_id.to_string(),
             hls_dir: hls_dir.clone(),
@@ -535,11 +534,24 @@ impl Core {
                 ..StreamState::default()
             }),
         });
+        // Admission first: a start that cannot get disk space must not preempt background downloads
+        // or touch the previous entry (its row, its protected flag, its partial files).
+        let estimate = crate::jobs::estimate_bytes(&variant, facts.duration_seconds, None);
+        if let Ok(short) = self.enforce_caps(estimate) {
+            if short > 0 {
+                self.streams.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(video_id.to_string(), job.clone());
+                self.stream_event("info", "stream.start", &job, json!({"origin":"explicit","variant":variant,"audio_only":audio_only,"active_streams":active,"queue_position":active,"running_jobs":self.running_count(),"concurrency":settings.download_concurrency,"preempted_background":0}));
+                self.fail_stream(&job, &Failure::new(FailureReason::DiskSpace, format!("not enough disk: {} MB short under the cache cap or minimum free space", short / 1_000_000 + 1)));
+                return Ok(job);
+            }
+        }
+        let preempted = self.preempt_speculative();
+        let _ = std::fs::remove_dir_all(&hls_dir);
+        std::fs::create_dir_all(&hls_dir)?;
         let running_jobs = self.running_count();
         self.streams.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(video_id.to_string(), job.clone());
         self.stream_event("info", "stream.start", &job, json!({"origin":"explicit","variant":variant,"audio_only":audio_only,"active_streams":active,"queue_position":active,"running_jobs":running_jobs,"concurrency":settings.download_concurrency,"preempted_background":preempted}));
         // Make the entry visible right away (status downloading) so the UI, the disk caps and the rules see it.
-        let facts = self.facts_for(video_id);
         let decision = retention_for_request(&self.video.rules(), &facts);
         let mut row = EntryRow::new(video_id, &variant, &variant, "play", self.now());
         row.title = facts.title.clone();
@@ -554,13 +566,6 @@ impl Core {
             // same row, keeping what the user decided about it.
             row.protected = old.protected;
             self.video.delete_entry(&old.id)?;
-        }
-        let estimate = crate::jobs::estimate_bytes(&variant, facts.duration_seconds, None);
-        if let Ok(short) = self.enforce_caps(estimate) {
-            if short > 0 {
-                self.fail_stream(&job, &Failure::new(FailureReason::DiskSpace, format!("not enough disk: {} MB short under the cache cap or minimum free space", short / 1_000_000 + 1)));
-                return Ok(job);
-            }
         }
         self.video.insert_entry(&row)?;
         let running = Arc::new(RunningJob { cancel: false.into(), started_at: self.now() });
@@ -581,9 +586,10 @@ impl Core {
                 let mut map = core.running.lock().unwrap_or_else(|e| e.into_inner());
                 if map.get(&entry).is_some_and(|r| Arc::ptr_eq(r, &running2)) {
                     map.remove(&entry);
+                    // Cleared after the registration is gone, so a late cancel cannot leave a stale cause.
+                    core.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).remove(&entry);
                 }
             }
-            core.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).remove(&entry);
             core.wake_scheduler();
         });
         if spawned.is_err() {
@@ -686,8 +692,14 @@ impl Core {
         });
         let started = Instant::now();
         let status = loop {
-            if let Some(st) = child.try_wait().map_err(|e| Failure::new(FailureReason::HelperExit, e.to_string()))? {
-                break st;
+            match child.try_wait() {
+                Ok(Some(st)) => break st,
+                Ok(None) => {}
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(Failure::new(FailureReason::HelperExit, e.to_string()));
+                }
             }
             if cancel.load(Ordering::SeqCst) {
                 let _ = child.kill();
@@ -905,7 +917,11 @@ impl Core {
             match child.try_wait() {
                 Ok(Some(st)) => break Some(st),
                 Ok(None) => {}
-                Err(_) => break None,
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
             }
             let segments = playlist_progress(&job.hls_dir).0;
             if !logged_first_bytes && (seen_bytes.load(Ordering::SeqCst) || segments >= 1) {
@@ -981,8 +997,7 @@ impl Core {
             }
             other => {
                 let _ = std::fs::remove_file(&partial);
-                let message = tail.iter().rev().find(|l| !l.trim().is_empty()).cloned().unwrap_or_else(|| "ffmpeg failed".into());
-                let mut f = Failure::from_text(message, FailureReason::HelperExit);
+                let mut f = failure_from_ffmpeg_tail(&tail);
                 if let Some(st) = other.as_ref() {
                     f = f.with_status(st);
                 }
@@ -1015,6 +1030,18 @@ impl Core {
         );
         self.streams.errors.lock().unwrap_or_else(|e| e.into_inner()).insert(video_id.to_string(), StartError { reason, message });
     }
+}
+
+/// Classifies ffmpeg's failure from its whole stderr tail (the cause is often not the last line)
+/// and reports the last non-empty line as the message.
+fn failure_from_ffmpeg_tail(tail: &[String]) -> Failure {
+    let lines: Vec<&str> = tail.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let message = lines.last().map_or("ffmpeg failed".to_string(), |l| l.to_string());
+    let reason = match classify_text(&lines.join(" ")) {
+        FailureReason::Unknown => FailureReason::HelperExit,
+        r => r,
+    };
+    Failure::new(reason, message)
 }
 
 /// Sleeps up to `total`, returning true early if `cancel` is raised.
@@ -1562,6 +1589,52 @@ mod tests {
         r.core.start_queued();
         assert_eq!(r.core.video.get_entry("bbbbbbbbbbb.360").unwrap().unwrap().status, STATUS_QUEUED);
         r.core.shutdown();
+    }
+
+    #[test]
+    fn failed_disk_admission_keeps_the_previous_entry_and_does_not_preempt_downloads() {
+        let runner = Arc::new(Endless(AtomicUsize::new(0)));
+        let r = rig(&ytdlp_json("http://127.0.0.1:9/v", true), FFMPEG_HANG, Some(runner.clone()));
+        let mut s = r.core.video.settings();
+        s.download_concurrency = 1;
+        s.auto_prefetch = true;
+        r.core.video.put_settings(&s).unwrap();
+        let mut e = EntryRow::new("bbbbbbbbbbb", "360", "360", "prefetch", 10);
+        e.status = STATUS_QUEUED.into();
+        r.core.video.insert_entry(&e).unwrap();
+        r.core.start_queued();
+        wait_for("download running", || runner.0.load(Ordering::SeqCst) == 1);
+        let variant = variant_for_height(s.watch_height).as_str().to_string();
+        let mut failed = EntryRow::new(ID, &variant, &variant, "manual", 1);
+        failed.status = STATUS_FAILED.into();
+        failed.protected = true;
+        r.core.video.insert_entry(&failed).unwrap();
+        s.min_free_bytes = 1 << 60;
+        r.core.video.put_settings(&s).unwrap();
+        let job = r.core.start_stream(ID, false).unwrap();
+        wait_terminal(&job);
+        assert_eq!(job.state.lock().unwrap().reason.as_deref(), Some("disk_space"));
+        assert!(r.events("download.preempted").is_empty(), "a refused start must not stop other downloads");
+        assert_eq!(r.core.video.get_entry("bbbbbbbbbbb.360").unwrap().unwrap().status, STATUS_DOWNLOADING);
+        let row = r.core.video.get_entry(&format!("{ID}.{variant}")).unwrap().expect("the previous entry survives a refused start");
+        assert!(row.protected, "and keeps the library flag");
+        r.core.shutdown();
+    }
+
+    #[test]
+    fn a_cancel_cause_is_only_recorded_for_a_running_entry() {
+        let r = rig("exit 1", FFMPEG_OK, None);
+        r.core.cancel_with_cause("nothing-running.360", "preempted");
+        assert!(r.core.streams.cancel_causes.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ffmpeg_failures_are_classified_from_the_whole_tail() {
+        let tail: Vec<String> = ["HTTP error 503 Service Unavailable", "Error in the pull function.", "", "Conversion failed!"].iter().map(|s| s.to_string()).collect();
+        let f = failure_from_ffmpeg_tail(&tail);
+        assert_eq!(f.reason, FailureReason::TransportRetryable);
+        assert_eq!(f.message, "Conversion failed!");
+        assert_eq!(failure_from_ffmpeg_tail(&[]).reason, FailureReason::HelperExit);
     }
 
     #[test]

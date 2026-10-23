@@ -587,3 +587,31 @@ test('the start watchdog ends an endless spinner but leaves cached, errored and 
   }
   assert.equal(L.startStalled(0, now, waiting), false);
 });
+
+test('local playback failures are classified from the status text, not left as unknown', () => {
+  const view = (playback) => L.playbackFailure({ playback: Object.assign({ state: 'error' }, playback) });
+  assert.equal(view({ local: true, error: 'ffmpeg exited with status 1' }).reason, 'helper_exit');
+  assert.equal(view({ local: true, error: 'No space left on device' }).reason, 'disk_space');
+  assert.equal(view({ local: true, error: 'Invalid data found when processing input' }).reason, 'media_error');
+  assert.equal(view({ error: 'something odd' }).reason, 'unknown');
+  assert.equal(view({ reason: 'geo_age', local: true, error: 'x' }).reason, 'geo_age', 'a service category wins');
+});
+
+test('redactDetail strips urls, emails, paths with spaces and tokens and bounds the length', () => {
+  const out = L.redactDetail('fetch https://h.example.com/a?sig=1 for bob@example.com at /srv/someone/My Movie/x.mp4 key=abc ' + 'z'.repeat(40) + ' tail');
+  for (const leaked of ['example', 'bob', 'someone', 'Movie', 'abc', 'zzzz']) assert.ok(!out.includes(leaked), leaked + ' leaked: ' + out);
+  assert.ok(out.includes('fetch') && out.includes('tail'), out);
+  assert.equal(L.redactDetail('x'.repeat(1000)).length <= 300, true);
+  assert.equal(L.redactDetail(null), '');
+});
+
+test('the start watchdog outlasts the service worst case and follows the reported budget', () => {
+  const now = 10_000_000;
+  // Rust StreamTuning::worst_case_start() with defaults is ~1118 s.
+  assert.ok(L.START_WATCHDOG_MS > 1_118_000);
+  const waiting = { playback: { state: 'resolving', ready: false } };
+  assert.equal(L.startStalled(now - 1_118_000, now, waiting), false);
+  const budgeted = { playback: { state: 'resolving', ready: false, start_budget_ms: 60_000 } };
+  assert.equal(L.startStalled(now - 70_000, now, budgeted), false);
+  assert.equal(L.startStalled(now - 95_000, now, budgeted), true);
+});
