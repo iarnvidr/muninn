@@ -9,6 +9,9 @@ packages are supported; Linux is used for core and WebKitGTK regression testing.
   the later black-spinner report is not established as fixed. Version 0.2.8 fixes
   demonstrated stop/retry, resume and source-selection lifecycle defects and adds
   tracing. Fresh macOS evidence is still needed for the remaining native HLS issue.
+  Late resumes of MKV/WebM copies now prepare a window near the resume position
+  ([timeline contract](LOCAL_PLAYBACK_WINDOW.md)); this is verified only with
+  synthetic media on Linux, not yet on a Mac.
 - **Theatre:** pane-height expansion and toggle-back pass the real Linux Tauri
   regression at three sizes. Native macOS child-webview layout still needs validation.
 - **Google sign-in and YouTube integration:** embedded sign-in can be rejected.
