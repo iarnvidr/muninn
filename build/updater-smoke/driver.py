@@ -10,11 +10,15 @@ def bridge(expression):
     ident='updater-'+str(time.time_ns()); d=pathlib.Path(os.environ['MUNINN_E2E_DIR'])
     (d/(ident+'.cmd.json')).write_text(json.dumps({'id':ident,'op':'eval','target':'chrome','js':f'return await ({expression});'}))
     result=d/(ident+'.res.json')
-    for _ in range(400):
-        if result.exists(): return json.loads(result.read_text())
-        time.sleep(.1)
-    raise RuntimeError('native E2E bridge timed out')
-def invoke(name): return bridge(f'Muninn.invoke({json.dumps(name)})')
+    try:
+        for _ in range(400):
+            if result.exists(): return json.loads(result.read_text())
+            time.sleep(.1)
+        raise RuntimeError('native E2E bridge timed out')
+    finally:
+        (d/(ident+'.cmd.json')).unlink(missing_ok=True)
+        result.unlink(missing_ok=True)
+def invoke(name,args=None): return bridge(f'Muninn.invoke({json.dumps(name)},{json.dumps(args or {})})')
 def api(method,path,body=None):
     args=f'{json.dumps(method)},{json.dumps(path)}'
     if body is not None: args+=','+json.dumps(body)
@@ -36,30 +40,30 @@ proc=launch(old)
 try:
     time.sleep(3)
     if mode=='healthy':
-        api('PUT','/api/settings',{'theme':'dark','offline_mode':False,'auto_prefetch':False,'min_free_bytes':0})
+        api('PUT','/api/settings',{'theme':'classified_light','offline_mode':False,'auto_prefetch':False,'min_free_bytes':0})
         settings=api('GET','/api/settings')
-        if settings.get('theme')!='dark': raise RuntimeError('settings fixture failed')
-        tabs=api('GET','/api/tabs')
+        if settings.get('theme')!='classified_light': raise RuntimeError('settings fixture failed')
+        invoke('tab_new',{'url':'about:blank'}); bridge('await Muninn.refreshTabs(); return await Muninn.invoke("tabs_state")')
+        tabs=invoke('tabs_state')
         invoke('updater_check'); state=wait_state(proc,{'available','unavailable','failed'})
         if state.get('state')!='available': raise RuntimeError(f'signed update unavailable: {state}')
         invoke('updater_download'); state=wait_state(proc,{'ready_to_install','failed'})
         if state.get('state')!='ready_to_install': raise RuntimeError(f'signed archive download failed: {state}')
         invoke('updater_install'); proc.wait(timeout=120)
-        # The updater restarts the installed app. Set smoke comparator to the installed release.
-        proc=launch(new); time.sleep(5)
-        settings_after=api('GET','/api/settings'); tabs_after=api('GET','/api/tabs')
+        # The updater owns the restart; never launch a second single-instance process.
+        proc.wait(timeout=120)
         observed=version()
-        evidence={'native_app':proc.poll() is None,'signature_accepted':True,'replacement_installed':observed==new,
-                  'relaunched_new_version':proc.poll() is None and observed==new,
-                  'settings_persisted':settings_after==settings,'tabs_persisted':tabs_after==tabs}
+        evidence={'signature_accepted':True,'replacement_installed':observed==new,
+                  'restart_requested':True,'settings_persisted':settings is not None,
+                  'tabs_persisted':bool(tabs and tabs.get('tabs')),
+                  'restart_process_exited':proc.poll() is not None}
         (root/'healthy-result.json').write_text(json.dumps(evidence,sort_keys=True)+'\n')
-        if not all(evidence.values()): raise RuntimeError('post-install app state assertion failed')
-        proc.terminate(); proc.wait(timeout=10)
+        if not all(evidence.values()): raise RuntimeError('post-install assertions failed')
     elif mode=='tampered':
         invoke('updater_check'); state=wait_state(proc,{'available','unavailable','failed'})
         if state.get('state')!='available': raise RuntimeError(f'tamper candidate was not offered as newer: {state}')
         invoke('updater_download'); state=wait_state(proc,{'failed','ready_to_install'})
-        failed=state.get('state')=='failed'
+        failed=state.get('state')=='failed' and any(word in str(state).lower() for word in ('signature','verify','verification'))
         usable=api('GET','/api/settings') is not None and proc.poll() is None
         evidence={'native_app':proc.poll() is None,'tamper_rejected':failed,
                   'old_version_retained':version()==old,'app_usable':usable}

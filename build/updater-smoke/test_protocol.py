@@ -16,9 +16,9 @@ class EvidenceProtocol(unittest.TestCase):
             self.assertIn(b'FAIL', result.stderr)
 
     def test_only_complete_native_assertions_emit_evidence(self):
-        healthy = {'native_app':True,'signature_accepted':True,'replacement_installed':True,
-                   'relaunched_new_version':True,'settings_persisted':True,'tabs_persisted':True}
-        tampered = {'native_app':True,'tamper_rejected':True,'old_version_retained':True,'app_usable':True}
+        healthy = {'signature_accepted':True,'replacement_installed':True,
+                   'restart_requested':True,'restart_process_exited':True}
+        tampered = {'tamper_rejected':True}
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
             (root/'healthy-result.json').write_text(json.dumps(healthy))

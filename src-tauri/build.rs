@@ -29,6 +29,11 @@ fn main() {
         "e2e_result",
         "channel_unsubscribe",
         "export_diagnostics",
+        "updater_status",
+        "updater_check",
+        "updater_download",
+        "updater_install",
+        "updater_cancel",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()
