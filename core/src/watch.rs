@@ -22,7 +22,7 @@ impl Core {
         self.log_event("info", "watch.open", json!({"video_id":video_id,"cached":cached.is_some(),"entry_id":cached.as_ref().map(|e|&e.id),"container":cached.as_ref().and_then(|e|e.ext.as_ref()),"bytes":cached.as_ref().map(|e|e.size_bytes)}));
         self.ensure_meta(video_id);
         if let Some(entry)=self.best_complete_entry(video_id) {
-            if matches!(entry.ext.as_deref(),Some("mkv"|"webm")) {self.prepare_local_playback(&entry.id)?;}
+            if matches!(entry.ext.as_deref(),Some("mkv"|"webm")) {self.prepare_local_playback_at(&entry.id,None)?;}
         }
         if self.best_complete_entry(video_id).is_none() {
             // Failures are reported through the status, not raised here.
@@ -30,9 +30,7 @@ impl Core {
                 Ok(_) => {
                     self.streams.errors.lock().unwrap_or_else(|e| e.into_inner()).remove(video_id);
                 }
-                Err(e) => {
-                    self.streams.errors.lock().unwrap_or_else(|e| e.into_inner()).insert(video_id.to_string(), e.to_string());
-                }
+                Err(e) => self.record_start_error(video_id, &e),
             }
         } else if let Some(e) = self.best_complete_entry(video_id) {
             let _ = self.video.touch(&e.id, self.now());
@@ -107,13 +105,13 @@ impl Core {
             json!({
                 "state": match s.phase.as_str() { "failed" | "canceled" => "error", "resolving" | "starting" => "resolving", _ => "streaming" },
                 "phase": s.phase, "kind": "hls", "entry_id": s.entry_id, "variant": s.variant, "height": s.height, "ready": ready,
-                "progress": s.progress, "error": s.error, "segments": segments, "duration_seconds": s.duration_seconds, "audio_only": s.audio_only,
+                "progress": s.progress, "error": s.error, "reason": s.reason, "retryable": s.retryable, "attempt": s.attempt, "segments": segments, "duration_seconds": s.duration_seconds, "audio_only": s.audio_only,
                 "url_path": format!("/h/{}/{}/index.m3u8", self.token(), dir),
-                "started_ms": s.started_ms, "first_segment_ms": s.first_segment_ms,
+                "started_ms": s.started_ms, "start_budget_ms": self.streams.tuning.lock().unwrap_or_else(|e| e.into_inner()).worst_case_start().as_millis() as u64, "first_segment_ms": s.first_segment_ms,
                 "time_to_first_segment_ms": s.first_segment_ms.map(|f| f - s.started_ms),
             })
         } else if let Some(err) = self.streams.errors.lock().unwrap_or_else(|e| e.into_inner()).get(video_id).cloned() {
-            json!({"state": "error", "ready": false, "error": err})
+            json!({"state": "error", "ready": false, "error": err.message, "reason": err.reason.as_str(), "retryable": err.reason.retryable()})
         } else {
             json!({"state": "none", "ready": false})
         };

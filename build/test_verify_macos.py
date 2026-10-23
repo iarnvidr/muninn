@@ -104,3 +104,20 @@ class MacPackageVerificationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuildScriptTests(unittest.TestCase):
+    def test_apple_lipo_gets_the_input_file_before_verify_arch(self):
+        # Apple's lipo reads everything after -verify_arch as architecture names, so
+        # `lipo -verify_arch arm64 FILE` fails on macOS (llvm-lipo accepts it).
+        import re
+        for script in Path(__file__).parent.glob("*.sh"):
+            for number, line in enumerate(script.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(r"\blipo\b", line) and "-verify_arch" in line:
+                    with self.subTest(script=script.name, line=number):
+                        before, _, after = line.partition("-verify_arch")
+                        self.assertRegex(before, r"\blipo\s+\S", f"{script.name}:{number}: {line.strip()}")
+                        self.assertRegex(after.strip(), r"^[A-Za-z0-9_]+(\s+[A-Za-z0-9_]+)*$",
+                                         f"{script.name}:{number}: only architectures may follow -verify_arch")

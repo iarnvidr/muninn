@@ -77,6 +77,9 @@
     tabs_state() { return { rev, active, warm_tabs: 3, tabs: tabs.map(tabView) }; },
     tab_new(a) {
       const url = (a && a.url) || 'https://www.youtube.com/';
+      const vid = window.MuninnLib.extractVideoId(url);
+      const same = tabs.find((x) => (vid ? x.video_id === vid : x.face === 'yt' && x.url === url));
+      if (same) { active = same.id; same.last_active_ms = Date.now(); bump(); return same.id; }  // one tab per destination
       const id = nextId++;
       const t = mk(id, 'New tab', url, { state: 'loading', last_active_ms: Date.now() });
       tabs.push(t); active = id;
@@ -123,6 +126,7 @@
     native_visible(a) { native.visible = !!a.visible; paintNative(); },
     signin_popup() { return null; },
     open_external() { return null; },
+    export_diagnostics() { return { status: 'saved', path: 'Downloads/muninn-diagnostics-2026-01-01.zip' }; },
     trust_status() { return trust; },
     trust_install() { trust = { state: 'installing' }; setTimeout(() => { trust = { state: 'ok' }; }, 1500); },
   };

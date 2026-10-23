@@ -1,4 +1,4 @@
-/* Muninn internal pages: Library, Feeds, Rules, Diagnostics, Settings.
+/* Muninn internal pages: Library, Feeds, Rules, Settings, and the developer-mode Diagnostics page.
  * Each page is { mount(el), unmount() } registered in Muninn.pages. */
 (function () {
   'use strict';
@@ -556,8 +556,64 @@
     const retry=h('button',{type:'button',text:'Retry save',hidden:true,onclick:()=>flush()});
     const feedback=h('div',{class:'settings-feedback'},msg,retry);
     const signMsg=slot('slot-xl');
+
+    /* Setup and repair: the plain-language home of what used to live on Diagnostics. */
+    const toolsMsg=slot('slot-xl'),trustMsg=slot('slot-xl');
+    const toolsLine=h('p',{class:'setup-text'}),trustLine=h('p',{class:'trust-line'}),trustDetail=h('p',{class:'muted trust-detail'});
+    const updateBtn=h('button',{type:'button',text:'Update video downloader',onclick:async()=>{
+      updateBtn.disabled=true;toolsMsg.say('Updating…','',0);
+      try{await M.api('POST','/api/tools/ytdlp/update');toolsMsg.say('The video downloader is up to date','ok');}
+      catch(e){toolsMsg.say(M.errText(e),'error',9000);}
+      finally{updateBtn.disabled=false;await refreshSetup();}
+    }});
+    const trustBtn=h('button',{type:'button',text:'Set up secure browsing',onclick:async()=>{
+      trustBtn.disabled=true;
+      try{await M.invoke('trust_install');}catch(e){trustMsg.say(M.errText(e),'error',9000);}
+      await refreshSetup();
+    }});
+    function renderSetup(){
+      const setup=M.setup,tools=M.tools||{};
+      const y=tools.ytdlp||{},f=tools.ffmpeg||{};
+      const parts=[];
+      parts.push(y.installed?'Video downloader: ready'+(y.version?' ('+y.version+')':''):'Video downloader: not installed yet');
+      parts.push(f.found?'Video merging: ready':'Video merging: not available (higher qualities may be unavailable)');
+      const phase=setup&&setup.phase&&setup.phase!=='ready'?' '+(setup.message||('Setup is '+setup.phase+'.')):'';
+      setText(toolsLine,parts.join('. ')+'.'+phase);
+      setHidden(updateBtn,!y.installed);
+      const tr=M.trust;
+      if(!tr){setText(trustLine,'Secure browsing setup is only available in the Muninn app.');setText(trustDetail,'');trustBtn.disabled=true;setHidden(trustBtn,true);return;}
+      setHidden(trustBtn,false);
+      const label={ok:'Secure browsing is set up.',needed:'Secure browsing is not set up yet. YouTube pages cannot be read until it is.',installing:'Setting up…',failed:'Setting up secure browsing failed. You can try again.'}[tr.state]||tr.state;
+      setText(trustLine,label);setCls(trustLine,'trust-line '+(tr.state==='ok'?'ok':(tr.state==='needed'||tr.state==='failed'?'bad':'')));
+      setText(trustDetail,tr.detail||'');
+      trustBtn.disabled=tr.state==='ok'||tr.state==='installing';
+      setCls(trustBtn,tr.state==='needed'||tr.state==='failed'?'primary':'');
+    }
+    async function refreshSetup(){try{await M.pollSystemNow();}catch(e){/* offline banner */}renderSetup();}
+    const setupPoll=poller(async()=>{await M.pollSystemNow();renderSetup();},()=>5000);
+
+    /* Developer section: only present while developer mode is on. */
+    const exportMsg=slot('slot-xl');
+    const exportBtn=h('button',{type:'button',text:'Export diagnostics',onclick:async()=>{
+      exportBtn.disabled=true;exportMsg.say('Choose where to save…','',0);
+      let result=null,error=null;
+      try{result=await M.invoke('export_diagnostics');}catch(e){error=e==null?'unknown error':e;}
+      finally{exportBtn.disabled=false;}
+      const out=L.exportOutcome(result,error);
+      exportMsg.say(out.text,out.kind==='info'?'':out.kind,out.kind==='error'?12000:0);
+      if(out.kind==='ok')M.flash('info',out.text);
+      if(out.kind==='error')M.flash('error',out.text);
+    }});
+    const diagLink=h('button',{type:'button',text:'Open detailed diagnostics',onclick:()=>{M.page='diagnostics';M.render();}});
+    const inApp=!!(window.__TAURI_INTERNALS__&&window.__TAURI_INTERNALS__.invoke);
+    const devCard=h('section',{class:'card','aria-labelledby':'dev-h',hidden:true,'data-section':'developer'},
+      h('h2',{class:'h2',id:'dev-h',text:'Developer tools'}),
+      h('p',{class:'muted',text:'Detailed diagnostics show raw technical status, the capture proxy and application logs. The export is a ZIP with recent redacted activity for troubleshooting; review it before sharing.'}),
+      h('div',{class:'actions'},diagLink,inApp?exportBtn:null,inApp?exportMsg:null),
+      inApp?null:h('p',{class:'muted',text:'Exporting is available in the Muninn app, or with: muninn --cli diagnostics export FILE.zip'}));
+    function syncDeveloper(){setHidden(devCard,!L.developerMode(M.settings));}
     function values() {const v={};for(const f of L.SETTINGS_FIELDS){const input=S.inputs[f.key];if(input)v[f.key]=f.kind==='bool'?input.checked:input.value;}return v;}
-    function apply(settings) {const offline=M.settings?.offline_mode;M.settings=settings;M.applyAppearance();M.watch?.applySettings();if(offline!==settings.offline_mode)M.render();}
+    function apply(settings) {const offline=M.settings?.offline_mode,developer=L.developerMode(M.settings);M.settings=settings;M.applyAppearance();M.watch?.applySettings();syncDeveloper();if(offline!==settings.offline_mode||developer!==L.developerMode(settings))M.render();}
     async function flush() {
       clearTimeout(S.timer);
       if(!S.orig||S.saving)return;
@@ -609,13 +665,19 @@
     return {
       mount(el) {
         el.append(pageHead('Settings', 'Limits, freshness and browsing behaviour.'), form,
+          h('section', { class: 'card', 'aria-labelledby': 'setup-h' },
+            h('h2', { class: 'h2', id: 'setup-h', text: 'Setup and repair' }),
+            toolsLine, h('div', { class: 'actions' }, updateBtn, toolsMsg),
+            trustLine, trustDetail, h('div', { class: 'actions' }, trustBtn, trustMsg)),
           h('section', { class: 'card', 'aria-labelledby': 'signin-h' },
             h('h2', { class: 'h2', id: 'signin-h', text: 'Google sign-in' }),
             h('p', { class: 'muted', text: 'Sign in inside Muninn to browse your subscriptions and recommendations. The app remembers your session. Google may reject some embedded-browser login flows; the sign-in window provides another entry point.' }),
-            h('div', { class: 'actions' }, signBtn, signMsg)));
-        fetchSettings().catch(M.flashError);
+            h('div', { class: 'actions' }, signBtn, signMsg)),
+          devCard);
+        renderSetup(); setupPoll.kick();
+        fetchSettings().then(syncDeveloper).catch(M.flashError);
       },
-      unmount() { clearTimeout(S.timer); flush(); },
+      unmount() { clearTimeout(S.timer); setupPoll.stop(); flush(); },
     };
   }
 
@@ -667,7 +729,7 @@
     const mkTable = (cols, tbody, cls) => h('div', { class: 'tablewrap ' + (cls || '') }, h('table', { class: 'grid small' }, h('thead', null, h('tr', null, ...cols.map((c) => h('th', { scope: 'col', text: c })))), tbody));
 
     root.append(
-      pageHead('Diagnostics', 'What Muninn is doing behind the page: tools, certificate trust, the capture proxy and your tabs.'),
+      pageHead('Diagnostics', 'Developer mode. What Muninn is doing behind the page: tools, certificate trust, the capture proxy and your tabs.'),
       section('tools', 'Tools and setup', setupLine, setupBar, toolsList, notes, h('div', { class: 'actions' }, updateBtn, toolsMsg)),
       section('trust', 'Certificate trust', trustLine, trustDetail, h('div', { class: 'actions' }, trustBtn)),
       section('proxy', 'Capture proxy', tiles, hosts, h('h3', { class: 'h3', text: 'Recent proxy events' }), mkTable(['Time', 'Kind', 'Host', 'Detail', 'Status', 'Bytes'], eventsBody, 'tall')),

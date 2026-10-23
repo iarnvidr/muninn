@@ -6,6 +6,7 @@
 mod commands;
 mod deep_link;
 mod e2e;
+mod geometry;
 #[cfg(target_os = "linux")]
 mod linux_overlay;
 mod shell;
@@ -135,6 +136,7 @@ fn main() {
             commands::trust_status,
             commands::trust_install,
             commands::signin_popup,
+            commands::export_diagnostics,
             commands::channel_unsubscribe,
             commands::page_open_video,
             commands::page_state,

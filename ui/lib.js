@@ -126,8 +126,14 @@
   // the same entry and must finish before that entry can be reopened.
   function stopBarrier(stop) {
     const pending = new Map();
-    function queue(id) {
-      const next = (pending.get(id) || Promise.resolve()).catch(() => {}).then(() => stop(id));
+    const extras = new Map();
+    // `extra` (the session generation) is captured when the stop is queued and travels with
+    // every attempt, retries included, so a retried stop still cannot end a newer session of
+    // the same entry, and a stop queued earlier never picks up a later stop's generation.
+    function queue(id, extra) {
+      if (arguments.length > 1) extras.set(id, extra);
+      const own = extras.get(id);
+      const next = (pending.get(id) || Promise.resolve()).catch(() => {}).then(() => stop(id, own));
       pending.set(id, next);
       return next;
     }
@@ -143,6 +149,35 @@
       for (const entry of pending.keys()) if (entry.startsWith(id + '.')) await wait(entry);
     }
     return { queue, wait, waitVideo };
+  }
+
+  /* Pure helpers for the local-playback seek / restart / loading-frame state machine. */
+
+  const SEEK_DEBOUNCE_MS = 250;
+  const MAX_LOCAL_RESTARTS = 3;
+
+  // A debounced window preparation fires only if it is still the wanted one: the same
+  // viewing session is on screen and no newer seek (or other prepare) replaced its target.
+  function seekDue(c, current, target) {
+    return !!c && c === current && c.seekTarget === target;
+  }
+
+  // The backend prepared a window that does not cover the resume position: ask again, but
+  // only once at a time and at most MAX_LOCAL_RESTARTS times per viewing session.
+  function mayRestartLocal(c) {
+    return !c.localRestarting && (c.localRestarts || 0) < MAX_LOCAL_RESTARTS;
+  }
+
+  // The loading feedback (awaitingFrame) ends once the source is attached, the resume seek is
+  // done and the player shows a frame: not while seeking, nor before a frame is decodable.
+  function frameSettled(c, v) {
+    if (!c || !c.awaitingFrame || !c.sourceSet || !c.resumeDone) return false;
+    return v.readyState >= 2 && !v.seeking && (v.videoWidth > 0 || v.readyState >= 3);
+  }
+
+  // Whether the loading spinner shows: buffering while playing, or until the first frame.
+  function showSpinner(c, paused) {
+    return !!c.buffering && (!paused || !!c.awaitingFrame);
   }
 
   function isTypingTarget(t) {
@@ -185,6 +220,61 @@
     const cands = [playback && playback.duration_seconds, meta && meta.duration_seconds, videoDuration];
     for (const c of cands) if (c != null && isFinite(c) && c > 0) return Number(c);
     return 0;
+  }
+
+
+  /* ------------------------------------------------------------------ local playback window
+   * Local compatibility playback is prepared as a window of the original video.
+   * Playlist time 0 is original time `offset_seconds` (see core/src/local_playback.rs), so
+   * original time = offset + video.currentTime. `win` is {offset, until, complete}: the
+   * original-time start and prepared end of the window, and whether it reaches the end. */
+
+  const WINDOW_SEEK_MARGIN = 1;       // seconds before the prepared end that a seek may still land
+  const WINDOW_REUSE_AHEAD = 12;      // the backend reuses a running window this far past its end
+
+  function windowOffset(win) {
+    return win && isFinite(win.offset) && win.offset > 0 ? Number(win.offset) : 0;
+  }
+  function toOriginal(win, windowTime) {
+    return windowOffset(win) + (isFinite(windowTime) && windowTime > 0 ? Number(windowTime) : 0);
+  }
+  function toWindow(win, originalTime) {
+    return Math.max(0, (isFinite(originalTime) ? Number(originalTime) : 0) - windowOffset(win));
+  }
+  /** The end of the playable original-time region of a window (0 when nothing is known). */
+  function windowLimit(win, duration) {
+    if (!win) return 0;
+    if (win.complete && duration > 0) return duration;
+    return isFinite(win.until) && win.until > 0 ? Number(win.until) : windowOffset(win);
+  }
+  /**
+   * How to seek to original time `time`: inside the prepared window it is a plain
+   * seek in window time; anywhere else the backend has to prepare a window near it.
+   */
+  function seekPlan(win, time, duration) {
+    let t = Number(time);
+    if (!isFinite(t) || t < 0) t = 0;
+    if (duration > 0 && t > duration) t = duration;
+    if (!win) return { kind: 'window', original: t, time: t };
+    const inside = t >= windowOffset(win) - 0.001 && (win.complete || t <= windowLimit(win, duration) - WINDOW_SEEK_MARGIN);
+    return inside ? { kind: 'window', original: t, time: toWindow(win, t) } : { kind: 'prepare', original: t, target: t };
+  }
+  /** Can the window described by a local status serve `target` without another prepare? */
+  function localFits(pb, target) {
+    if (!pb || !pb.local || pb.offset_seconds == null) return true;       // status from an older backend
+    const offset = Number(pb.offset_seconds) || 0, t = Number(target) || 0;
+    if (t + 0.001 < offset) return false;
+    if (pb.window_complete || pb.mode === 'remux') return true;
+    return t <= (Number(pb.prepared_until) || offset) + WINDOW_REUSE_AHEAD;
+  }
+  /** May the player attach a local status now? Requires the window to cover the target. */
+  function localReady(pb, target) {
+    if (!pb || !pb.ready) return false;
+    if (pb.offset_seconds == null) {                                       // older backend: prefix from 0
+      return !(target > 0 && pb.progress < 1 && (pb.prepared_seconds || 0) < target + 1);
+    }
+    const offset = Number(pb.offset_seconds) || 0, t = Number(target) || 0;
+    return t + 0.001 >= offset && (!!pb.window_complete || (Number(pb.prepared_until) || 0) >= t);
   }
 
   // Reading native ranges before metadata can change WebKit's interpretation
@@ -245,6 +335,82 @@
     if (p.state === 'resolving') return 'Finding the video stream...';
     if (p.state === 'streaming') return 'Starting the stream...';
     return retrying ? 'Retrying...' : 'Starting...';
+  }
+
+  /** What the player says when a video cannot start. Technical detail never reaches the screen. */
+  const FAILURE_TITLE = "Couldn't start this video";
+  const FAILURES = {
+    unavailable: { detail: 'This video is unavailable. It may have been removed or made private.', retryable: false },
+    auth_restricted: { detail: 'This video needs a signed-in account, or it is private, members-only or restricted by YouTube.', retryable: false },
+    geo_age: { detail: 'This video is age-restricted or not available in your region.', retryable: false },
+    live_stream: { detail: "Live streams can't be played here. Open it on youtube.com instead.", retryable: false },
+    format_unavailable: { detail: 'YouTube offers no playable format for this video.', retryable: false },
+    transport_retryable: { detail: 'The connection to YouTube was interrupted.', retryable: true },
+    length_probe_failed: { detail: "Muninn couldn't read the video stream from YouTube.", retryable: true },
+    no_first_bytes_timeout: { detail: "The video didn't start downloading in time.", retryable: true },
+    resolve_timeout: { detail: 'YouTube took too long to answer.', retryable: true },
+    helper_exit: { detail: 'The video helper stopped unexpectedly.', retryable: true },
+    disk_space: { detail: 'There is not enough free disk space. Free some space or lower the cache size in Settings.', retryable: true },
+    busy: { detail: 'Muninn is already preparing several videos. Try again in a moment.', retryable: true },
+    tools_pending: { detail: 'Muninn is still setting up its video tools. Try again in a moment.', retryable: true },
+    tools_missing: { detail: "This build of Muninn can't play videos that are not cached yet.", retryable: false },
+    offline: { detail: 'Offline mode is on. Turn it off in Settings to play videos that are not cached.', retryable: false },
+    cancelled: { detail: 'Playback was stopped.', retryable: true },
+    start_stalled: { detail: 'The video is taking too long to start.', retryable: true },
+    media_error: { detail: 'The video was found but could not be played.', retryable: true },
+    engine_unsupported: { detail: 'This browser cannot play the stream.', retryable: true },
+    unknown: { detail: 'Something went wrong while starting the video.', retryable: true },
+  };
+
+  /** `{title, detail, reason, retryable}` for a failure category. `retryable` (from the service) wins over the table. */
+  function failureView(reason, retryable) {
+    const known = FAILURES[reason] ? reason : 'unknown';
+    const f = FAILURES[known];
+    return { title: FAILURE_TITLE, detail: f.detail, reason: known, retryable: typeof retryable === 'boolean' ? retryable : f.retryable };
+  }
+
+  /** The failure to show for a watch status whose playback state is `error`, else null. */
+  function playbackFailure(status) {
+    const p = status && status.playback;
+    if (!p || p.state !== 'error') return null;
+    // A status without a category (local ffmpeg playback reports only text) is classified from its error text.
+    return failureView(p.reason || classifyFailureText(p.error, !!p.local), p.retryable);
+  }
+
+  /** Best-effort category for helper text that arrived without one. Anything unrecognised from a local (ffmpeg) job is a helper exit. */
+  function classifyFailureText(text, local) {
+    const t = String(text || '').toLowerCase();
+    if (/no space left|not enough disk|disk full/.test(t)) return 'disk_space';
+    if (/timed out|timeout|connection (reset|refused|closed|failed)|network is unreachable|\bdns\b/.test(t)) return 'transport_retryable';
+    if (/invalid data|moov atom|unsupported|decoder|codec|no such file|does not contain any stream|corrupt/.test(t)) return 'media_error';
+    return local ? 'helper_exit' : 'unknown';
+  }
+
+  /** Bounded text without URLs, e-mail addresses, paths or long tokens, safe to write to the log. */
+  function redactDetail(text, max) {
+    const limit = max || 300;
+    return String(text == null ? '' : text)
+      .replace(/[^\s"'<>()]*:\/\/[^\s"'<>()]*/g, '[url]')
+      .replace(/[^\s"'<>()]+@[^\s"'<>()]+/g, '[email]')
+      .replace(/(^|[\s"'(])(?:[A-Za-z]:\\|~?\/|\\\\)[^\n"'<>]*?(?:\.[A-Za-z0-9]{2,5}\b|$)/gm, '$1[path]')
+      .replace(/\b[A-Za-z0-9_\-.%+]{24,}\b/g, '[token]')
+      .replace(/\b(token|key|secret|password|authorization|cookie|sig|signature)(\s*[:=]\s*)\S+/gi, '$1$2[redacted]')
+      .slice(0, limit);
+  }
+
+  /** Backstop against an endless spinner: nothing playable and no error after `limitMs` of waiting. */
+  // Above the service's worst case for one start (StreamTuning::worst_case_start with defaults, ~1118 s:
+  // two resolves of 120 s, probes and first-bytes wait per attempt, two attempts), so Retry never just
+  // rejoins a job that is still working. The service also reports its own budget as `start_budget_ms`.
+  const START_WATCHDOG_MS = 1200000;
+  const START_BUDGET_GRACE_MS = 30000;
+  function startStalled(beganAt, now, status, limitMs) {
+    if (!status || !beganAt) return false;
+    const p = status.playback || {};
+    const limit = limitMs || (p.start_budget_ms > 0 ? p.start_budget_ms + START_BUDGET_GRACE_MS : START_WATCHDOG_MS);
+    if (now - beganAt <= limit) return false;
+    if (p.local || p.ready || p.state === 'cached' || p.state === 'error') return false;
+    return true;
   }
 
   function playbackError(status) {
@@ -490,7 +656,32 @@
     { group: 'Freshness', key: 'comments_ttl_hours', label: 'Comments kept', unit: 'hours', kind: 'int', min: 1 },
     { group: 'Freshness', key: 'search_ttl_hours', label: 'Searches kept', unit: 'hours', kind: 'int', min: 1 },
     { group: 'Freshness', key: 'metadata_ttl_days', label: 'Video info kept', unit: 'days', kind: 'int', min: 1 },
+    { group: 'Developer', key: 'developer_mode', label: 'Developer mode', kind: 'bool', hint: 'Shows detailed diagnostics, raw technical status and logs, and lets you export a support package. Muninn keeps its short, redacted activity log either way.' },
   ];
+
+  /** Pages that only exist while developer mode is on. */
+  const DEVELOPER_PAGES = ['diagnostics'];
+  function developerMode(settings) { return !!(settings && settings.developer_mode === true); }
+  function pageAllowed(page, settings) { return !DEVELOPER_PAGES.includes(page) || developerMode(settings); }
+  /** The page to show: the requested one, or Settings when it is developer-only and the mode is off. */
+  function resolvePage(page, settings) { return page && !pageAllowed(page, settings) ? 'settings' : page; }
+  /** Sidebar pages in order; developer pages are absent unless the mode is on. */
+  function sidebarPages(settings) {
+    const pages = ['browse', 'player', 'library', 'feeds', 'rules'];
+    if (developerMode(settings)) pages.push('diagnostics');
+    pages.push('settings');
+    return pages;
+  }
+  /** Text for the result of the export command (or the error it failed with). */
+  function exportOutcome(result, error) {
+    if (error != null) {
+      const text = typeof error === 'string' ? error : (error && error.message) || 'unknown error';
+      return { kind: 'error', text: 'Could not export diagnostics: ' + text };
+    }
+    if (result && result.status === 'saved' && result.path) return { kind: 'ok', text: 'Saved diagnostics to ' + result.path };
+    if (result && result.status === 'cancelled') return { kind: 'info', text: '' };
+    return { kind: 'error', text: 'Could not export diagnostics: unexpected response' };
+  }
 
   const GIB = 1073741824;   // the core's GB constant is binary
   function gbStr(bytes) { return bytes == null ? '' : String(Math.round(bytes / GIB * 1000) / 1000); }
@@ -602,12 +793,12 @@
   return {
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
-    SEEK_STEP, SEEK_MARGIN, stopBarrier, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
-    resumePosition, streamLabel, overlayMessage, playbackError, watchSettled, pollDelay,
+    SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
+    resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
     statusBanner, roundRect, sameRect,
     TRIGGERS, QUALITIES, splitList, ruleToModel, newRuleModel, rulesSnapshot, rulesValidate,
-    SETTINGS_FIELDS, settingToInput, settingsPatch, gbStr,
+    SETTINGS_FIELDS, developerMode, pageAllowed, resolvePage, sidebarPages, exportOutcome, settingToInput, settingsPatch, gbStr,
     isActiveEntry, entryMatches, librarySearchScore, libraryVideos, libraryCounts, diskMeters,
   };
 });

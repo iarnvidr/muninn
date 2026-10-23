@@ -162,7 +162,28 @@ def build(tarball, jobs=None, output=None):
 def _capture(binary, *args):
     result = subprocess.run([str(binary), "-hide_banner", *args], stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+    if result.returncode != 0:
+        # A binary that cannot answer cannot be verified; never read partial output.
+        raise LicenseError(f"`ffmpeg {' '.join(args)}` exited with status {result.returncode}")
     return result.stdout
+
+
+def check_license_text(text):
+    """Raise LicenseError unless `ffmpeg -L` printed FFmpeg's LGPL 2.1-or-later notice.
+
+    FFmpeg wraps that notice at fixed columns ("...the GNU Lesser General Public" /
+    "License as published by..."), so phrases are matched on whitespace-collapsed
+    text. Any GPL wording, or a version-3 notice (LGPLv3 or GPLv3), is rejected.
+    """
+    flat = " ".join(text.split())
+    if "GNU Lesser General Public License" not in flat:
+        raise LicenseError("`ffmpeg -L` does not report the LGPL")
+    if "version 2.1 of the License" not in flat:
+        raise LicenseError("`ffmpeg -L` does not report LGPL version 2.1")
+    if "GNU General Public License" in flat.replace("GNU Lesser General Public License", ""):
+        raise LicenseError("`ffmpeg -L` mentions the GPL")
+    if "version 3 of the License" in flat:
+        raise LicenseError("`ffmpeg -L` reports a version 3 license")
 
 
 def static_configuration(data):
@@ -205,11 +226,7 @@ def verify(binary):
     if configuration is None:
         raise LicenseError("could not read the configure string from `ffmpeg -version`")
     _check_flags(configuration)
-    license_text = _capture(binary, "-L")
-    if "GNU Lesser General Public License" not in license_text:
-        raise LicenseError("`ffmpeg -L` does not report the LGPL")
-    if "GNU General Public License" in license_text.replace("GNU Lesser General Public License", ""):
-        raise LicenseError("`ffmpeg -L` mentions the GPL")
+    check_license_text(_capture(binary, "-L"))
     return configuration
 
 
