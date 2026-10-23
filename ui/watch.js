@@ -149,9 +149,11 @@
   let cur = null;            // the video currently shown
   let gen = 0;
   let uiTimer = null, reportTimer = null;
-  const pendingStops = L.stopBarrier(entryId=>M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback/stop',{}));
-  function stopLocalPlayback(entryId) {
-    const stop=pendingStops.queue(entryId);
+  const pendingStops = L.stopBarrier((entryId,generation)=>M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback/stop'+(generation!=null?'?generation='+encodeURIComponent(generation):''),{}));
+  // `generation` names the viewing session being stopped: the backend ignores a stop for a
+  // session that a newer prepare has since replaced or reused, so it cannot end the new one.
+  function stopLocalPlayback(entryId,generation) {
+    const stop=pendingStops.queue(entryId,generation);
     stop.catch(e=>M.flashError(e));
     return stop;
   }
@@ -185,9 +187,16 @@
     if (text) cacheMsgTimer = setTimeout(() => setText(W.cacheMsg, ''), 5000);
   }
 
+  // Local compatibility playback is a window of the original video: playlist time 0 is
+  // original time c.win.offset. Everything the user sees or saves (position, duration,
+  // seek bar, progress, resume, cleanup point) is original time; only video.currentTime
+  // is window time. c.win is null for every other kind of source.
+  function mediaPos() { return L.toOriginal(cur && cur.win, video.currentTime); }
+  function setMediaPos(t) { video.currentTime = L.toWindow(cur && cur.win, t); }
   function duration() {
     const c = cur;
-    return L.effectiveDuration(c && c.status && c.status.playback, c && c.detail && c.detail.meta, video.readyState >= 1 ? video.duration : null);
+    const videoDuration = video.readyState >= 1 && Number.isFinite(video.duration) ? L.toOriginal(c && c.win, video.duration) : null;
+    return L.effectiveDuration(c && c.status && c.status.playback, c && c.detail && c.detail.meta, videoDuration);
   }
   function seekableEnd() {
     // Never touch video.seekable before the metadata is in: WebKitGTK's GStreamer player then
@@ -198,6 +207,7 @@
   }
   function limit() {
     const c = cur;
+    if (c && c.win) return L.windowLimit(c.win, duration());
     return L.seekLimit({ kind: c && c.kind, seekableEnd: c?.kind === 'hls' ? seekableEnd() : 0, duration: duration(), progress: c && c.status && c.status.playback ? c.status.playback.progress : null });
   }
 
@@ -212,7 +222,7 @@
     else if (!c.sourceSet) { mode = 'message'; text = L.overlayMessage(c.status, c.retrying); }
     else if (c.loadingEngine) { mode = 'message'; text = 'Loading the video engine...'; }
     else if (c.needsClick && video.paused) mode = 'play';
-    else if (c.buffering && !video.paused) mode = 'spin';
+    else if (c.buffering && (!video.paused || c.awaitingFrame)) mode = 'spin';
     setHidden(ov.el, !mode);
     setAttr(ov.el, 'data-mode', mode);
     setHidden(ov.spinner, !(mode === 'message' || mode === 'spin'));
@@ -225,6 +235,13 @@
 
   /* ------------------------------------------------------------------ control bar */
 
+  // The loading feedback outlives attaching the source: it ends once the resume seek is
+  // done and a frame is available, not when the player merely accepted the URL.
+  function settleFrame(c) {
+    if (!c || !c.awaitingFrame || !c.sourceSet || !c.resumeDone) return;
+    if (video.readyState >= 2 && !video.seeking && (video.videoWidth > 0 || video.readyState >= 3)) { c.awaitingFrame = false; c.buffering = false; updateOverlay(); }
+  }
+
   let dragging = false;
   function updateControls() {
     updateNowPlaying();
@@ -234,7 +251,7 @@
       const position=video.currentTime||0;
       if(c.lastProgressPosition!==position){
         c.lastProgressPosition=position;c.lastProgressAt=Date.now();
-        if(c.buffering&&video.readyState>=2&&!video.seeking){c.buffering=false;updateOverlay();}
+        if(c.buffering&&!c.awaitingFrame&&video.readyState>=2&&!video.seeking){c.buffering=false;updateOverlay();}
       }
       else if(!video.ended&&Date.now()-(c.lastProgressAt||Date.now())>10000&&!c.stallReported){
         c.stallReported=true;
@@ -244,7 +261,8 @@
     }
     const has = !!(c && c.sourceSet);
     const dur = duration();
-    const pos = dragging ? Number(ctl.seek.value) : (video.currentTime || 0);
+    settleFrame(c);
+    const pos = dragging ? Number(ctl.seek.value) : has ? (c.seekTarget != null ? c.seekTarget : mediaPos()) : (c && c.localEntry && c.resumeTarget) || 0;
     ctl.seek.disabled = !(has && dur > 0);
     ctl.seek.max = String(dur > 0 ? dur : 1);
     if (!dragging) ctl.seek.value = String(Math.min(pos, dur > 0 ? dur : 1));
@@ -275,7 +293,7 @@
     const c = cur;
     const entry = c?.detail?.entries?.find(e => e.id === c.playbackEntry);
     const point = c?.sourceSet && c.resumeDone && entry && !entry.protected && !c.keptEntries?.has(entry.id)
-      ? L.cleanupPoint(c.completionPolicy, duration(), video.currentTime) : null;
+      ? L.cleanupPoint(c.completionPolicy, duration(), mediaPos()) : null;
     setHidden(ctl.cleanupPoint, !point);
     setAttr(ctl.seek, 'aria-describedby', point ? 'player-cleanup-point' : null);
     if (point) {
@@ -316,6 +334,7 @@
     if (!cur || !cur.sourceSet) return;
     if (video.paused || video.ended) {
       cur.playIntent=true;
+      if (video.ended && cur.win && L.windowOffset(cur.win) > 0) { commitSeek(0); return; }   // replay needs a window at 0
       if (video.ended) video.currentTime = 0;
       cur.needsClick = false;
       const p = video.play();
@@ -326,12 +345,26 @@
     if (!cur || !cur.sourceSet) return;
     cur.resumeDone = true;     // a manual seek beats a pending resume
     cur.resumeTarget=null;
+    clearTimeout(cur.seekTimer);cur.seekTarget=null;
+    if (cur.win) {
+      // Local window: a seek inside the prepared window is a plain seek. Anywhere else a
+      // window near the target is prepared (debounced; the backend runs one job at a time).
+      const plan = L.seekPlan(cur.win, t, duration());
+      if (plan.kind === 'window') { try { video.currentTime = plan.time; } catch (e) { /* not seekable yet */ } }
+      else {
+        const c = cur;
+        c.seekTarget = plan.target; c.buffering = true; c.awaitingFrame = true; updateOverlay();
+        c.seekTimer = setTimeout(() => { if (c === cur && c.seekTarget === plan.target) prepareLocalPlayback(c, c.localEntry, plan.target); }, 250);
+      }
+      updateControls();
+      return;
+    }
     const r = L.clampSeek(t, { duration: duration(), limit: limit() });
     try { video.currentTime = r.time; } catch (e) { /* not seekable yet */ }
     if (r.clamped) notice(L.clampNoticeText(r.limit));
     updateControls();
   }
-  function seekBy(d) { commitSeek((video.currentTime || 0) + d); }
+  function seekBy(d) { commitSeek(mediaPos() + d); }
   function toggleMute() { video.muted = !video.muted; prefs.muted = video.muted; savePref('muted', video.muted ? '1' : '0'); updateControls(); }
   loop.addEventListener('click', () => { video.loop = !video.loop; setAttr(loop, 'aria-pressed', String(video.loop)); });
   function sizeTheatre() {
@@ -367,8 +400,8 @@
       setText(nowChannel,cur.detail?.meta?.channel||'');
       const durationValue=duration();
       nowSeek.disabled=!(durationValue>0);nowSeek.max=String(durationValue||1);
-      if(document.activeElement!==nowSeek)nowSeek.value=String(video.currentTime||0);
-      setText(nowTime,L.fmtClock(video.currentTime||0)+' / '+L.fmtClock(durationValue));
+      if(document.activeElement!==nowSeek)nowSeek.value=String(mediaPos());
+      setText(nowTime,L.fmtClock(mediaPos())+' / '+L.fmtClock(durationValue));
       nowToggle.replaceChildren(icon(video.paused?'play':'pause'));
       setAttr(nowToggle,'aria-label',video.paused?'Play background video':'Pause background video');
       setAttr(nowPreview,'title','Return to '+title);
@@ -423,15 +456,15 @@
   function playCopy(entry) {
     const c = cur; if (!c) return;
     if(c.playbackEntry===entry.id&&c.sourceSet){startPlayback(c);return;}
-    if(c.localEntry)stopLocalPlayback(c.localEntry);
-    c.localEntry=null;c.localAttempted=false;
-    c.sourceGeneration=(c.sourceGeneration||0)+1;
-    clearTimeout(c.pollTimer);
     const attached=c.sourceSet&&!!video.currentSrc;
-    const position = !c.resumeDone&&c.resumeTarget!=null ? c.resumeTarget : attached ? video.currentTime||0 : c.resumeTarget ?? c.detail?.position_seconds ?? 0;
+    const position = !c.resumeDone&&c.resumeTarget!=null ? c.resumeTarget : attached ? mediaPos() : c.resumeTarget ?? c.detail?.position_seconds ?? 0;
+    if(c.localEntry)stopLocalPlayback(c.localEntry,c.localGeneration);
+    c.localEntry=null;c.localAttempted=false;c.localGeneration=null;
+    c.sourceGeneration=(c.sourceGeneration||0)+1;
+    clearTimeout(c.pollTimer);clearTimeout(c.seekTimer);c.seekTarget=null;
     if(attached)c.playIntent=!video.paused;
     c.resumeTarget=position;
-    detachSource(c); c.resumeDone = false; c.error = c.mediaError = null;
+    detachSource(c); c.win = null; c.resumeDone = false; c.error = c.mediaError = null;
     c.detail = Object.assign({}, c.detail, { position_seconds: position });
     c.status = Object.assign({}, c.status, { playback: { entry_id: entry.id, kind: 'file', state: 'cached', ready: true, height: entry.actual_height, variant: entry.variant, progress: 1, url_path: entry.media_url } });
     c.explicitPlayback=c.status.playback;
@@ -499,7 +532,7 @@
     const body = {
       video_id: c.videoId,
       started: !!c.started,
-      position_seconds: Math.floor(video.currentTime || 0),
+      position_seconds: Math.floor(mediaPos()),
       duration_seconds: dur > 0 ? Math.round(dur) : null,
       watch_height: c.playbackHeight || video.videoHeight || (pb && pb.height) || null,
       paused: video.paused,
@@ -524,12 +557,12 @@
     }
     startReporter(); updateControls(); updateOverlay();
   });
-  video.addEventListener('playing', () => { if (cur) { cur.started=true; report(); cur.buffering = false; cur.mediaError = null; cur.lastProgressAt=Date.now();cur.stallReported=false;logPlaybackState(cur,'playing'); } startReporter(); updateControls(); updateOverlay(); });
+  video.addEventListener('playing', () => { if (cur) { cur.started=true; report(); if(!cur.awaitingFrame)cur.buffering = false; cur.mediaError = null; cur.lastProgressAt=Date.now();cur.stallReported=false;logPlaybackState(cur,'playing'); } startReporter(); updateControls(); updateOverlay(); });
   video.addEventListener('pause', () => { stopReporter(); report(); updateControls(); updateOverlay(); });
   video.addEventListener('ended', () => { if(cur)cur.buffering=false;stopReporter(); report({ ended: true }); updateControls();updateOverlay(); });
-  video.addEventListener('seeked', () => { maybeResume();report(); updateControls(); });
+  video.addEventListener('seeked', () => { maybeResume();report(); settleFrame(cur); updateControls(); updateOverlay(); });
   video.addEventListener('waiting', () => { if (cur && cur.sourceSet) { cur.buffering = true; updateOverlay(); } });
-  video.addEventListener('canplay', () => { if (cur) { cur.buffering = false; maybeResume(); updateOverlay(); } });
+  video.addEventListener('canplay', () => { if (cur) { if(!cur.awaitingFrame)cur.buffering = false; maybeResume(); settleFrame(cur); updateOverlay(); } });
   video.addEventListener('timeupdate', updateControls);
   video.addEventListener('durationchange', updateControls);
   video.addEventListener('volumechange', updateControls);
@@ -557,12 +590,12 @@
     const haveMetadata = video.readyState >= 1;
     const entry=c.detail?.entries?.find(e=>e.id===c.playbackEntry);
     M.api('POST','/api/logs',{event:'ui.playback.'+event,message:JSON.stringify({video_id:c.videoId,entry_id:c.playbackEntry,container:entry?.ext,kind:c.kind,
-      code:video.error?.code,message:video.error?.message||'',time:video.currentTime,duration:haveMetadata&&Number.isFinite(video.duration)?video.duration:null,
+      code:video.error?.code,message:video.error?.message||'',time:video.currentTime,window_offset:c.win?c.win.offset:0,original_time:mediaPos(),duration:haveMetadata&&Number.isFinite(video.duration)?video.duration:null,
       ready_state:video.readyState,network_state:video.networkState,paused:video.paused,seeking:video.seeking,width:video.videoWidth,height:video.videoHeight,
       decoded_frames:haveMetadata?(video.getVideoPlaybackQuality?.().totalVideoFrames??video.webkitDecodedFrameCount):null,
       buffered:L.mediaRanges(video,'buffered'),seekable:L.mediaRanges(video,'seekable'),local_compatibility:!!c.localEntry,
       reason,version:M.boot?.version,playback_rate:video.playbackRate,source:video.currentSrc.replaceAll(M.token||'__none__','[redacted]'),
-      backend_state:c.status?.playback?.state,prepared_seconds:c.status?.playback?.prepared_seconds,backend_ready:c.status?.playback?.ready,overlay:ov.el.dataset.mode,
+      backend_state:c.status?.playback?.state,prepared_seconds:c.status?.playback?.prepared_seconds,prepared_until:c.status?.playback?.prepared_until,job_id:c.status?.playback?.job_id,backend_ready:c.status?.playback?.ready,overlay:ov.el.dataset.mode,
       resume_target:c.resumeTarget,resume_pending:c.resumePending?.target,resume_done:c.resumeDone,
       user_agent:navigator.userAgent,mp4_support:video.canPlayType('video/mp4; codecs="avc1.42E01E,mp4a.40.2"'),webm_support:video.canPlayType('video/webm; codecs="vp9,opus"')})}).catch(()=>{});
   }
@@ -573,22 +606,27 @@
     c.stateEvents[event]=Date.now();logPlaybackState(c,'state',event);
   });
 
-  async function prepareLocalPlayback(c,entryId) {
+  // Prepares (or reuses) a local window near `target` (original seconds; default: the
+  // resume position). The window is attached by applyStatus once the backend reports it ready.
+  async function prepareLocalPlayback(c,entryId,target) {
     const selection=c.sourceGeneration=(c.sourceGeneration||0)+1;
     c.localAttempted=true;c.localEntry=entryId;
+    clearTimeout(c.seekTimer);c.seekTarget=null;
     const attached=c.sourceSet&&!!video.currentSrc;
-    const position=!c.resumeDone&&c.resumeTarget!=null ? c.resumeTarget : attached ? video.currentTime||0 : c.resumeTarget ?? c.detail?.position_seconds ?? 0;
-    if(attached)c.playIntent=!video.paused;
+    const position=target!=null ? target : !c.resumeDone&&c.resumeTarget!=null ? c.resumeTarget : attached ? mediaPos() : c.resumeTarget ?? c.detail?.position_seconds ?? 0;
+    if(attached&&!video.ended)c.playIntent=!video.paused;
     c.resumeTarget=position;
-    detachSource(c);c.mediaError=null;c.error=null;c.resumeDone=false;
+    detachSource(c);c.win=null;c.mediaError=null;c.error=null;c.resumeDone=false;
+    c.awaitingFrame=true;c.buffering=true;
     c.detail=Object.assign({},c.detail,{position_seconds:position});
     c.status=Object.assign({},c.status,{playback:{local:true,state:'resolving',ready:false}});updateOverlay();
     clearTimeout(c.pollTimer);
     try {
       await awaitLocalStop(entryId);
       if(c!==cur||c.sourceGeneration!==selection)return;
-      const playback=await M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback',{});
-      if(c!==cur||c.sourceGeneration!==selection){if(cur?.localEntry!==entryId)stopLocalPlayback(entryId);return;}
+      const playback=await M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback?position='+encodeURIComponent(Math.max(0,Math.floor(position*1000)/1000)),{});
+      if(c!==cur||c.sourceGeneration!==selection){stopLocalPlayback(entryId,playback.generation);return;}
+      c.localGeneration=playback.generation;
       applyStatus(c,Object.assign({},c.status,{playback}));pollLoop(c);
     }catch(error){if(c===cur&&c.sourceGeneration===selection){c.error='Could not prepare this local copy: '+M.errText(error);updateOverlay();}}
   }
@@ -601,17 +639,17 @@
     if (!c.detail && !c.detailFailed) return;            // wait for the saved position
     if (video.readyState < 1) return;                     // metadata not there yet
     const dur = duration();
-    const pos = c.resumeTarget!=null ? Math.max(0,Math.min(c.resumeTarget,dur||Infinity)) : L.resumePosition(c.detail?.position_seconds, dur);
+    const pos = c.resumeTarget!=null ? Math.max(0,Math.min(c.resumeTarget,dur||Infinity)) : L.resumePosition(c.detail?.position_seconds, dur);    // original time
     // Zero is an intentional start too. Growing EVENT HLS may choose its live
     // edge; metadata alone does not prove the media has started at the beginning.
     if(pos===0&&video.readyState<2)return;
-    if(!video.seeking&&Math.abs(video.currentTime-pos)<1){c.resumeDone=true;c.resumePending=null;if(pos>0)notice('Resumed at '+L.fmtClock(pos));return;}
+    if(!video.seeking&&Math.abs(mediaPos()-pos)<1){c.resumeDone=true;c.resumePending=null;if(pos>0)notice('Resumed at '+L.fmtClock(pos));return;}
     if(c.resumePending&&(video.seeking||Date.now()-c.resumePending.at<3000))return;
     if(pos>limit())return;
-    const end=seekableEnd();
-    if(end>0&&pos>end)return;
+    const windowPos=L.toWindow(c.win,pos), end=seekableEnd();
+    if(end>0&&windowPos>end)return;
     c.resumePending={target:pos,at:Date.now()};
-    try { video.currentTime = pos; } catch (e) { c.resumePending=null; }
+    try { video.currentTime = windowPos; } catch (e) { c.resumePending=null; }
   }
 
   /* ------------------------------------------------------------------ source + status */
@@ -667,7 +705,13 @@
     const ownsSource=()=>c===cur && (c.sourceGeneration||0)===selection && c.sourceKey===source;
     c.playbackEntry = pb.entry_id;
     sourceChoice.value=pb.entry_id||'';
-    if(pb.local){c.localEntry=pb.entry_id;c.localAttempted=true;}
+    if(pb.local){
+      c.localEntry=pb.entry_id;c.localAttempted=true;c.localGeneration=pb.generation;
+      c.win={job:pb.job_id,offset:pb.offset_seconds||0,until:pb.prepared_until,complete:!!pb.window_complete};
+      // Attaching is not playing: keep the loading feedback until a frame is decoded.
+      c.awaitingFrame=true;c.buffering=true;updateOverlay();
+    } else {c.win=null;c.awaitingFrame=false;}
+    c.seekTarget=null;
     c.playbackHeight = pb.height;
     video.defaultPlaybackRate = prefs.speed;
     const native = !!(video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl'));
@@ -721,9 +765,20 @@
     } else {
       c.error = null;
       const pb = st.playback || {};
-      if(pb.local && !c.sourceSet && pb.ready && pb.progress<1){
+      if(pb.local && c.win && pb.job_id===c.win.job){          // keep the attached window's extent current
+        c.win.until=pb.prepared_until;c.win.complete=!!pb.window_complete;c.localGeneration=pb.generation;
+      }
+      if(pb.local && !c.sourceSet && pb.state!=='error'){
         const saved=c.resumeTarget!=null ? c.resumeTarget : L.resumePosition(c.detail?.position_seconds,duration());
-        if(saved>0 && (pb.prepared_seconds||0)<saved+1)pb.ready=false;
+        // The window is chosen around the resume position, so it must be known before attaching.
+        if(c.resumeTarget==null && !c.detail && !c.detailFailed)pb.ready=false;
+        else if(!L.localFits(pb,saved) && pb.entry_id && !c.localRestarting && (c.localRestarts||0)<3){
+          c.localRestarts=(c.localRestarts||0)+1;
+          // The backend prepared another window (for example from the saved position of an
+          // earlier session): ask for one that covers where this session resumes.
+          c.localRestarting=true;prepareLocalPlayback(c,pb.entry_id,saved).finally(()=>{c.localRestarting=false;});return;
+        }
+        if(pb.ready && !L.localReady(pb,saved))pb.ready=false;
       }
       if (pb.state === 'none') {
         c.noneSince = c.noneSince || Date.now();
@@ -1083,7 +1138,8 @@
   function leave() {
     const c = cur;
     if (!c) return;
-    if(c.localEntry)stopLocalPlayback(c.localEntry);
+    if(c.localEntry)stopLocalPlayback(c.localEntry,c.localGeneration);
+    clearTimeout(c.seekTimer);
     stopReporter();
     if (c.sourceSet) report();           // while the position is still there
     cur = null;
@@ -1114,7 +1170,7 @@
     const c = cur;
     if (!c) return;
     const tab = { id: c.tabId, video_id: c.videoId };
-    const position=!c.resumeDone&&c.resumeTarget!=null ? c.resumeTarget : video.currentTime||0;
+    const position=!c.resumeDone&&c.resumeTarget!=null ? c.resumeTarget : mediaPos();
     const playing=c.sourceSet&&video.currentSrc ? !video.paused : c.playIntent!==false;
     leave();
     begin(tab);
