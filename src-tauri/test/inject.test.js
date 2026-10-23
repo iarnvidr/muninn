@@ -138,8 +138,8 @@ test('account identity is opaque, changes with the selected account and is not g
 });
 test('page observations distinguish unknown, signed in and signed out without sending raw identity',async()=>{
   const config={LOGGED_IN:true,DATASYNC_ID:'fixture-private-identity',SESSION_INDEX:0};const p=fakePage(config);
+  p.winListeners.load.forEach(f=>f());
   for(let i=0;i<200&&!p.calls.some(c=>c[1].account_key);i++)await new Promise(resolve=>setTimeout(resolve,10));
-  for(let i=0;i<30&&!p.calls.some(c=>c[1].account_key);i++)await new Promise(resolve=>setImmediate(resolve));
   const states=()=>p.calls.filter(c=>c[0]==='page_state').map(c=>c[1]);
   assert.equal(states().at(-1).signed_in,true);assert.match(states().at(-1).account_key,/^[a-f0-9]{64}$/);assert.ok(!JSON.stringify(p.calls).includes(config.DATASYNC_ID));
   config.LOGGED_IN=false;p.winListeners['yt-navigate-finish'].forEach(f=>f());
@@ -150,7 +150,7 @@ test('account switch in the same document cannot relabel the previous account DO
   const config={LOGGED_IN:true,DATASYNC_ID:'account-a',SESSION_INDEX:0},p=fakePage(config);
   p.sandbox.location.pathname='/feed/channels';p.sandbox.ytInitialData={channelRenderer:{channelId:'UCabcdefghijklmnopqrstuv',title:{simpleText:'Old account channel'}}};
   p.winListeners.load.forEach(f=>f());
-  for(let i=0;i<30&&!p.calls.some(c=>c[1].account_key);i++)await new Promise(resolve=>setImmediate(resolve));
+  for(let i=0;i<200&&!p.calls.some(c=>c[1].account_key);i++)await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal(p.calls.at(-1)[1].channels.length,1);
   config.DATASYNC_ID='account-b';p.winListeners['yt-navigate-finish'].forEach(f=>f());
   const latest=p.calls.at(-1)[1];assert.equal(latest.channel_status,'error');assert.equal(latest.channels.length,0,'fresh document required before binding old DOM to a changed account');
