@@ -100,7 +100,7 @@ pub fn classify_text(text: &str) -> FailureReason {
     let has = |needles: &[&str]| needles.iter().any(|n| t.contains(n));
     if has(&["not enough disk", "no space left", "disk full"]) {
         DiskSpace
-    } else if has(&["not available in your country", "blocked it in your country", "geo restrict", "geo-restrict", "age-restricted", "age restricted", "confirm your age", "inappropriate for some users", "not made this video available"]) {
+    } else if has(&["not available in your country", "blocked in your country", "blocked it in your country", "geo restrict", "geo-restrict", "age-restricted", "age restricted", "confirm your age", "inappropriate for some users"]) {
         GeoAge
     } else if has(&["sign in", "log in to", "login required", "members-only", "members only", "join this channel", "private video", "--cookies", "cookies are no longer valid", "not a bot"]) {
         AuthRestricted
@@ -385,6 +385,9 @@ mod tests {
             ("ERROR: Private video. Sign in if you've been granted access", AuthRestricted),
             ("ERROR: The uploader has not made this video available in your country", GeoAge),
             ("ERROR: Sign in to confirm your age. This video may be inappropriate for some users", GeoAge),
+            ("ERROR: This video is blocked in your country", GeoAge),
+            ("ERROR: HTTP Error 403: Forbidden", Unknown),
+            ("ERROR: This video is not available", Unknown),
             ("ERROR: This live event will begin in 2 hours", LiveStream),
             ("ERROR: Requested format is not available", FormatUnavailable),
             ("probing stream length: https://h.example.com/x: Connection Failed", LengthProbeFailed),

@@ -31,6 +31,8 @@ jobs:
         run: rustup show active-toolchain
       - name: Build, test and sign locally
         run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"
+      - name: Native app launch and localhost smoke
+        run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"
       - id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
