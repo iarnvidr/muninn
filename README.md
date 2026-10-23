@@ -74,7 +74,7 @@ The first launch may show a macOS dialog asking you to allow Muninn's local cert
 
 * **Tabs**: new tab, close, back/forward/reload, an address/search box (a URL opens it; words
   search YouTube). Cmd+T / Cmd+W / Cmd+L / Cmd+R.
-* **Sidebar**: Browse, Player, Library, Feeds, Rules, Diagnostics, Settings are pages of the same window.
+* **Sidebar**: Browse, Player, Library, Feeds, Rules, Settings are pages (Diagnostics appears after turning on Developer mode in Settings) of the same window.
   Browse returns to a YouTube tab; Player returns to the current video. Library Play creates a new
   player tab. Drag tabs to group labels or before another tab; Library → Tab groups supports the
   same moves, with dropdowns as a keyboard alternative.

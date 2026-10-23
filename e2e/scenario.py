@@ -163,6 +163,10 @@ def phase_online():
     log(ent["status"] == "complete", "yt-dlp 360p prefetch with ffmpeg (merged format)", {"status": ent["status"], "actual_height": ent.get("actual_height"), "size": ent.get("size_bytes"), "error": ent.get("error")})
 
     # -- the internal pages of the same window -----------------------------------------------------------------
+    nav = ui("return [...document.querySelectorAll('#sidebar [data-page]')].map(b => b.dataset.page).join(',')")
+    log("diagnostics" not in nav, "normal launch has no Diagnostics navigation", nav)
+    e2e.api("/api/settings", "PUT", {"developer_mode": True})
+    time.sleep(12)  # the shell picks the setting up on its next system poll
     for name in ("Library", "Feeds", "Rules", "Diagnostics", "Settings"):
         ui("[...document.querySelectorAll('#sidebar button, #sidebar a')].find(b => /%s/i.test(b.textContent)).click(); return 1" % name)
         time.sleep(1.5)
@@ -170,6 +174,7 @@ def phase_online():
         if name == "Diagnostics":
             diag = ui("return document.getElementById('view-internal').innerText.slice(0, 1500)")
     log("yt-dlp" in diag and "blocked" in diag.lower(), "Diagnostics shows the tools, proxy counters and captures", diag[:200].replace("\n", " | "))
+    e2e.api("/api/settings", "PUT", {"developer_mode": False})
     ui("[...document.querySelectorAll('#sidebar button, #sidebar a')].find(b => /browse/i.test(b.textContent)).click(); return 1")
     time.sleep(1)
 

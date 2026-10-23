@@ -490,7 +490,32 @@
     { group: 'Freshness', key: 'comments_ttl_hours', label: 'Comments kept', unit: 'hours', kind: 'int', min: 1 },
     { group: 'Freshness', key: 'search_ttl_hours', label: 'Searches kept', unit: 'hours', kind: 'int', min: 1 },
     { group: 'Freshness', key: 'metadata_ttl_days', label: 'Video info kept', unit: 'days', kind: 'int', min: 1 },
+    { group: 'Developer', key: 'developer_mode', label: 'Developer mode', kind: 'bool', hint: 'Shows detailed diagnostics, raw technical status and logs, and lets you export a support package. Muninn keeps its short, redacted activity log either way.' },
   ];
+
+  /** Pages that only exist while developer mode is on. */
+  const DEVELOPER_PAGES = ['diagnostics'];
+  function developerMode(settings) { return !!(settings && settings.developer_mode === true); }
+  function pageAllowed(page, settings) { return !DEVELOPER_PAGES.includes(page) || developerMode(settings); }
+  /** The page to show: the requested one, or Settings when it is developer-only and the mode is off. */
+  function resolvePage(page, settings) { return page && !pageAllowed(page, settings) ? 'settings' : page; }
+  /** Sidebar pages in order; developer pages are absent unless the mode is on. */
+  function sidebarPages(settings) {
+    const pages = ['browse', 'player', 'library', 'feeds', 'rules'];
+    if (developerMode(settings)) pages.push('diagnostics');
+    pages.push('settings');
+    return pages;
+  }
+  /** Text for the result of the export command (or the error it failed with). */
+  function exportOutcome(result, error) {
+    if (error != null) {
+      const text = typeof error === 'string' ? error : (error && error.message) || 'unknown error';
+      return { kind: 'error', text: 'Could not export diagnostics: ' + text };
+    }
+    if (result && result.status === 'saved' && result.path) return { kind: 'ok', text: 'Saved diagnostics to ' + result.path };
+    if (result && result.status === 'cancelled') return { kind: 'info', text: '' };
+    return { kind: 'error', text: 'Could not export diagnostics: unexpected response' };
+  }
 
   const GIB = 1073741824;   // the core's GB constant is binary
   function gbStr(bytes) { return bytes == null ? '' : String(Math.round(bytes / GIB * 1000) / 1000); }
@@ -607,7 +632,7 @@
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
     statusBanner, roundRect, sameRect,
     TRIGGERS, QUALITIES, splitList, ruleToModel, newRuleModel, rulesSnapshot, rulesValidate,
-    SETTINGS_FIELDS, settingToInput, settingsPatch, gbStr,
+    SETTINGS_FIELDS, developerMode, pageAllowed, resolvePage, sidebarPages, exportOutcome, settingToInput, settingsPatch, gbStr,
     isActiveEntry, entryMatches, librarySearchScore, libraryVideos, libraryCounts, diskMeters,
   };
 });

@@ -727,7 +727,7 @@
       }
       if (pb.state === 'none') {
         c.noneSince = c.noneSince || Date.now();
-        if (Date.now() - c.noneSince > 6000) c.error = 'Muninn could not start playback. Check Diagnostics that yt-dlp and ffmpeg are installed.';
+        if (Date.now() - c.noneSince > 6000) c.error = 'Muninn could not start playback. Check Settings to make sure the video tools are set up.';
       } else c.noneSince = 0;
       if (pb.ready && !c.sourceSet) setSource(c, st);
     }

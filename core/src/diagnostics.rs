@@ -132,6 +132,7 @@ pub fn export(data_dir: &Path, output: &Path) -> Result<Value> {
         .iter()
         .filter_map(|name| std::fs::read_to_string(data_dir.join(name)).ok())
         .map(|s| s.trim().to_string())
+        .chain(std::iter::once(data_dir.display().to_string()))
         .collect::<Vec<_>>();
     let home = std::env::var("HOME").unwrap_or_default();
     let mut events = Vec::new();
@@ -236,6 +237,55 @@ pub fn export(data_dir: &Path, output: &Path) -> Result<Value> {
     Ok(json!({"path":output,"events":events.len(),"version":crate::VERSION,"works_offline":true}))
 }
 
+/// Default file name offered by the save dialog, e.g. `muninn-diagnostics-2026-10-23.zip`.
+pub fn default_export_name(date: time::Date) -> String {
+    format!("muninn-diagnostics-{:04}-{:02}-{:02}.zip", date.year(), date.month() as u8, date.day())
+}
+
+/// `default_export_name` for today (UTC).
+pub fn default_export_name_today() -> String {
+    default_export_name(time::OffsetDateTime::now_utc().date())
+}
+
+/// Interprets the result of a native save dialog: `Ok(None)` means the user cancelled,
+/// which is not an error. A `.zip` extension is added when the user left it off.
+pub fn parse_save_dialog(success: bool, stdout: &str, stderr: &str) -> std::result::Result<Option<std::path::PathBuf>, String> {
+    if !success {
+        return if stderr.contains("-128") || stderr.to_ascii_lowercase().contains("cancel") {
+            Ok(None)
+        } else {
+            Err("The save dialog could not be shown".into())
+        };
+    }
+    let chosen = stdout.trim_end_matches(['\r', '\n']);
+    if chosen.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut path = std::path::PathBuf::from(chosen);
+    if path.extension().map(|e| !e.eq_ignore_ascii_case("zip")).unwrap_or(true) {
+        let mut name = path.into_os_string();
+        name.push(".zip");
+        path = name.into();
+    }
+    Ok(Some(path))
+}
+
+/// Backs the app's "Export diagnostics" command. `None` (dialog cancelled) is harmless.
+/// A regular file at `destination` was already confirmed for replacement by the
+/// save dialog, so it is replaced; anything else is never deleted.
+pub fn export_to(data_dir: &Path, destination: Option<&Path>) -> Result<Value> {
+    let Some(destination) = destination else {
+        return Ok(json!({"status":"cancelled"}));
+    };
+    if let Ok(meta) = std::fs::symlink_metadata(destination) {
+        if meta.is_file() {
+            std::fs::remove_file(destination)?;
+        }
+    }
+    let report = export(data_dir, destination)?;
+    Ok(json!({"status":"saved","path":destination,"events":report["events"]}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +323,63 @@ mod tests {
             std::fs::read_to_string(dir.path().join("token")).unwrap(),
             "private-local-token"
         );
+    }
+
+    #[test]
+    fn export_with_developer_mode_has_no_paths_or_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+        std::fs::create_dir_all(dir.path().join("db")).unwrap();
+        std::fs::write(dir.path().join("token"), "synthetic-token-value").unwrap();
+        let db = Connection::open(dir.path().join("db/video.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT);CREATE TABLE entries(id TEXT,status TEXT,size_bytes INTEGER,error TEXT,created_at INTEGER,ext TEXT,file_path TEXT,actual_height INTEGER,duration_seconds INTEGER,rule TEXT,last_access_at INTEGER);").unwrap();
+        let settings = serde_json::to_string(&crate::settings::Settings { developer_mode: true, ..Default::default() }).unwrap();
+        db.execute("INSERT INTO kv VALUES('settings',?1)", [settings]).unwrap();
+        drop(db);
+        let line = json!({"message": format!("failed at {} synthetic-token-value", dir.path().display())});
+        std::fs::write(dir.path().join("logs/muninn.jsonl"), line.to_string() + "\n").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let output = out.path().join("d.zip");
+        let result = export_to(dir.path(), Some(&output)).unwrap();
+        assert_eq!(result["status"], "saved");
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+        let mut report = String::new();
+        let mut all = String::new();
+        for name in ["report.json", "logs.json"] {
+            let mut text = String::new();
+            archive.by_name(name).unwrap().read_to_string(&mut text).unwrap();
+            if name == "report.json" { report = text.clone(); }
+            all += &text;
+        }
+        assert!(report.contains("\"developer_mode\": true"), "settings snapshot should include the new field");
+        assert!(!all.contains("synthetic-token-value"));
+        assert!(!all.contains(&dir.path().display().to_string()), "data dir path leaked");
+    }
+
+    #[test]
+    fn cancelled_export_is_harmless_and_replacement_only_touches_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(export_to(dir.path(), None).unwrap()["status"], "cancelled");
+        let out = tempfile::tempdir().unwrap();
+        let existing = out.path().join("old.zip");
+        std::fs::write(&existing, "stale").unwrap();
+        assert_eq!(export_to(dir.path(), Some(&existing)).unwrap()["status"], "saved");
+        assert!(std::fs::metadata(&existing).unwrap().len() > 5);
+        // A directory (or unwritable location) is reported as an error, never deleted.
+        assert!(export_to(dir.path(), Some(out.path())).is_err());
+        assert!(out.path().is_dir());
+        assert!(export_to(dir.path(), Some(&out.path().join("missing/x.zip"))).is_err());
+        assert!(export_to(&dir.path().join("nope"), Some(&out.path().join("x.zip"))).is_err());
+    }
+
+    #[test]
+    fn default_name_and_dialog_parsing() {
+        let date = time::Date::from_calendar_date(2026, time::Month::March, 7).unwrap();
+        assert_eq!(default_export_name(date), "muninn-diagnostics-2026-03-07.zip");
+        assert_eq!(parse_save_dialog(false, "", "execution error: User canceled. (-128)").unwrap(), None);
+        assert!(parse_save_dialog(false, "", "boom").is_err());
+        assert_eq!(parse_save_dialog(true, "\n", "").unwrap(), None);
+        assert_eq!(parse_save_dialog(true, "/tmp/a b/x.zip\n", "").unwrap().unwrap(), std::path::PathBuf::from("/tmp/a b/x.zip"));
+        assert_eq!(parse_save_dialog(true, "/tmp/x\n", "").unwrap().unwrap(), std::path::PathBuf::from("/tmp/x.zip"));
     }
 }

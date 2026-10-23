@@ -6,6 +6,6 @@
   "permissions": [
     "allow-app-boot", "allow-tabs-state", "allow-tab-new", "allow-tab-activate", "allow-tab-close", "allow-tab-go", "allow-tab-back",
     "allow-tab-forward", "allow-tab-reload", "allow-tab-open-video", "allow-tab-hibernate", "allow-layout", "allow-native-visible",
-    "allow-open-external", "allow-trust-status", "allow-trust-install", "allow-signin-popup", "allow-e2e-result", "allow-channel-unsubscribe"
+    "allow-open-external", "allow-trust-status", "allow-trust-install", "allow-signin-popup", "allow-e2e-result", "allow-channel-unsubscribe", "allow-export-diagnostics"
   ]
 }

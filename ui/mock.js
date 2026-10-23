@@ -123,6 +123,7 @@
     native_visible(a) { native.visible = !!a.visible; paintNative(); },
     signin_popup() { return null; },
     open_external() { return null; },
+    export_diagnostics() { return { status: 'saved', path: 'Downloads/muninn-diagnostics-2026-01-01.zip' }; },
     trust_status() { return trust; },
     trust_install() { trust = { state: 'installing' }; setTimeout(() => { trust = { state: 'ok' }; }, 1500); },
   };

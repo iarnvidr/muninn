@@ -254,7 +254,7 @@ Logs persist in `~/Library/Application Support/io.github.iarnvidr.muninn/logs/`.
 Two rotating JSONL files hold roughly 4 MiB total. Events include app lifecycle,
 watch opens, completion, download outcomes, imports, cleanup, channel checks and
 HTTP failures. Entries contain IDs and counts; request bodies, query strings,
-cookies and API tokens are not logged. Diagnostics includes a log viewer.
+cookies and API tokens are not logged. With Developer mode on in Settings, Diagnostics includes a log viewer.
 Proxy capture diagnostics remain separate. These are application events, not
 a full WebKit/network trace or native crash reporter.
 
@@ -399,6 +399,9 @@ of the three most recent complete copies, each limited to three seconds. It does
 not include media or file paths.
 
 ## Diagnostics for local Codex
+
+In the app, turn on Developer mode in Settings and use **Export diagnostics** to save the same ZIP
+(default name `muninn-diagnostics-<date>.zip`) through a save dialog. The CLI export below is unchanged.
 
 `--cli feeds refresh subscriptions` (or `home`) requests a refresh through the
 desktop app's persistent signed-in YouTube session. It creates or reuses a
