@@ -100,7 +100,7 @@ pub fn classify_text(text: &str) -> FailureReason {
     let has = |needles: &[&str]| needles.iter().any(|n| t.contains(n));
     if has(&["not enough disk", "no space left", "disk full"]) {
         DiskSpace
-    } else if has(&["not available in your country", "blocked in your country", "blocked it in your country", "geo restrict", "geo-restrict", "age-restricted", "age restricted", "confirm your age", "inappropriate for some users"]) {
+    } else if has(&["not available in your country", "not made this video available in your country", "blocked in your country", "blocked it in your country", "geo restrict", "geo-restrict", "age-restricted", "age restricted", "confirm your age", "inappropriate for some users"]) {
         GeoAge
     } else if has(&["sign in", "log in to", "login required", "members-only", "members only", "join this channel", "private video", "--cookies", "cookies are no longer valid", "not a bot"]) {
         AuthRestricted
