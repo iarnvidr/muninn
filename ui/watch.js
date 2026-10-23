@@ -73,11 +73,11 @@
   const nowTitle=h('span',{class:'now-playing-title'});
   const nowChannel=h('span',{class:'mini-channel'});
   const nowTime=h('span',{class:'mini-time'});
-  const nowPreview=h('button',{class:'mini-preview','aria-label':'Return to full player',onclick:()=>returnToPlayer()},icon('fullscreen'));
-  const miniButton=(name,iconName,action)=>h('button',{class:'mini-control','aria-label':name,title:name,onclick:action},icon(iconName));
-  const nowToggle=miniButton('Pause background video','pause',()=>togglePlay());
+  const nowPreview=h('button',{type:'button',class:'mini-preview','aria-label':'Return to full player',onclick:()=>returnToPlayer()},icon('fullscreen'));
+  const miniButton=(name,iconName,action,essential)=>h('button',{type:'button',class:'mini-control '+(essential?'mini-essential':'mini-secondary'),'aria-label':name,title:name,onclick:action},icon(iconName));
+  const nowToggle=miniButton('Pause background video','pause',()=>togglePlay(),true);
   const nowPip=miniButton('Picture in picture','fullscreen',()=>togglePip());
-  const nowReturn=miniButton('Return to video','expand',()=>returnToPlayer());
+  const nowReturn=miniButton('Return to video','expand',()=>returnToPlayer(),true);
   const nowStop=miniButton('Stop playback','close',()=>leave());
   const nowSeek=h('input',{type:'range',class:'mini-seek',min:'0',max:'1',step:'any',value:'0','aria-label':'Seek background video',onchange:()=>commitSeek(Number(nowSeek.value))});
   const nowPlaying=h('section',{class:'now-playing',hidden:true,'aria-label':'Background player'},

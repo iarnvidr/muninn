@@ -153,6 +153,8 @@
       d.returnValue = '';
       const onClose = () => { d.removeEventListener('close', onClose); resolve(d.returnValue === 'ok'); };
       d.addEventListener('close', onClose);
+      M.coverNative(true);
+      d.addEventListener('close', () => M.coverNative(false), { once: true });
       d.showModal();
       $('#confirm-cancel').focus();
     });
@@ -605,12 +607,18 @@
   }
   M.scheduleLayout = scheduleLayout;
 
-  function setNativeVisible(v) {
+  // The native view paints above every HTML layer, so it is shown only while the chrome wants it
+  // AND no modal dialog covers the pane. The current rect is always sent before it appears.
+  let nativeWanted = false, nativeCovered = false;
+  function applyNativeVisible() {
+    const v = nativeWanted && !nativeCovered;
     if (v === lastVisible) return;
     if (v) sendLayout(true);           // the rect is current before the view appears
     lastVisible = v;
     invoke('native_visible', { visible: v }).catch(() => {});
   }
+  function setNativeVisible(v) { nativeWanted = v; applyNativeVisible(); }
+  M.coverNative = function (covered) { nativeCovered = !!covered; applyNativeVisible(); };
 
   if (window.ResizeObserver) new ResizeObserver(scheduleLayout).observe(content);
   window.addEventListener('resize', scheduleLayout);

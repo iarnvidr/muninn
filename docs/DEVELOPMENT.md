@@ -50,6 +50,15 @@ app at `/cache/target/debug/muninn`, Xvfb, dbus, xdotool, ffmpeg and WebKitGTK.
 See [VERIFY_0.2.8.md](VERIFY_0.2.8.md) for the local-player commands and assertions.
 The live YouTube scenario needs internet access and can change with the website.
 
+## Sidebar and pane layout check
+
+`e2e/sidebar-layout.test.js` drives the UI in its `?mock=1` mode with Playwright (themes,
+window sizes, collapsed/expanded sidebar, mini-player on/off; bounding-box and keyboard
+assertions, optional screenshots via `SHOTS=dir`). It is not part of CI; it skips when
+Playwright is missing. The native YouTube view is only a drawn stand-in there, so macOS
+WKWebView layering still needs a manual check. The pane-to-native rectangle maths is
+`src-tauri/src/geometry.rs` (pure, unit-tested with `cargo test`).
+
 ## Privacy and installation continuity
 
 Keep `io.github.iarnvidr.muninn` stable; the application-data location follows it.
