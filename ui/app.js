@@ -317,7 +317,7 @@
   /** Local cards preserve the browsing tab and open a dedicated player tab. */
   M.openVideo = async function (videoId, background) {
     if (!videoId) return;
-    if (!background) {const previous={page:M.page,tab:M.tabs.active};const id=await M.newTab('https://www.youtube.com/watch?v='+encodeURIComponent(videoId));M.watchReturns=M.watchReturns||new Map();M.watchReturns.set(id,previous);renderToolbar();return id;}
+    if (!background) {const previous={page:M.page,tab:M.tabs.active};const id=await M.newTab('https://www.youtube.com/watch?v='+encodeURIComponent(videoId));M.watchReturns=M.watchReturns||new Map();if(!M.watchReturns.has(id))M.watchReturns.set(id,previous);renderToolbar();return id;}
     let tab = activeTab();
     let id = tab && tab.id;
     if (!tab) { id = await invoke('tab_new', {}).catch((e) => { M.flash('error', errText(e)); return null; }); if (id == null) return; }
