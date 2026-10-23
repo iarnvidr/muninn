@@ -542,3 +542,48 @@ test('awaitingFrame holds the spinner until a frame is shown after the resume se
   assert.equal(L.showSpinner({ buffering: true, awaitingFrame: true }, true), true);
   assert.equal(L.showSpinner({ buffering: false, awaitingFrame: true }, true), false);
 });
+
+test('failure view: one title, a reason sentence, and retry only where it can help', () => {
+  const dead = ['unavailable', 'auth_restricted', 'geo_age', 'live_stream', 'format_unavailable', 'tools_missing', 'offline'];
+  for (const reason of dead) {
+    const v = L.failureView(reason);
+    assert.equal(v.title, "Couldn't start this video");
+    assert.equal(v.retryable, false, reason);
+    assert.ok(v.detail.length > 10);
+  }
+  for (const reason of ['transport_retryable', 'length_probe_failed', 'no_first_bytes_timeout', 'helper_exit', 'disk_space', 'busy', 'cancelled', 'start_stalled', 'unknown']) {
+    assert.equal(L.failureView(reason).retryable, true, reason);
+  }
+  assert.notEqual(L.failureView('unavailable').detail, L.failureView('auth_restricted').detail);
+  // Unknown categories degrade to the generic retryable message; the service flag wins over the table.
+  assert.equal(L.failureView('from-the-future').reason, 'unknown');
+  assert.equal(L.failureView('transport_retryable', false).retryable, false);
+});
+
+test('playbackFailure maps an error status and never shows technical advice or raw helper text', () => {
+  const status = { playback: { state: 'error', reason: 'unavailable', retryable: false, error: 'ERROR: x https://rr1.example.com/videoplayback' } };
+  const f = L.playbackFailure(status);
+  assert.deepEqual([f.reason, f.retryable], ['unavailable', false]);
+  const all = ['unavailable', 'auth_restricted', 'geo_age', 'live_stream', 'format_unavailable', 'transport_retryable', 'length_probe_failed', 'no_first_bytes_timeout',
+      'resolve_timeout', 'helper_exit', 'disk_space', 'busy', 'tools_pending', 'tools_missing', 'offline', 'cancelled', 'start_stalled', 'media_error', 'engine_unsupported', 'unknown'];
+  for (const reason of all) {
+    const text = JSON.stringify(L.failureView(reason));
+    assert.ok(!/diagnostic|yt-dlp|ffmpeg|https?:/i.test(text), `${reason}: ${text}`);
+  }
+  assert.equal(L.playbackFailure({ playback: { state: 'streaming' } }), null);
+  assert.equal(L.playbackFailure(null), null);
+  // A failure without a reason from an older service still yields a retryable generic message.
+  assert.deepEqual([L.playbackFailure({ playback: { state: 'error' } }).reason, L.playbackFailure({ playback: { state: 'error' } }).retryable], ['unknown', true]);
+});
+
+test('the start watchdog ends an endless spinner but leaves cached, errored and local playback alone', () => {
+  const now = 1_000_000;
+  const waiting = { playback: { state: 'resolving', ready: false } };
+  assert.equal(L.startStalled(now - 1000, now, waiting), false);
+  assert.equal(L.startStalled(now - L.START_WATCHDOG_MS - 1, now, waiting), true);
+  assert.equal(L.startStalled(now - 5000, now, waiting, 4000), true);
+  for (const playback of [{ state: 'cached' }, { state: 'error' }, { state: 'streaming', ready: true }, { local: true, state: 'resolving' }]) {
+    assert.equal(L.startStalled(now - L.START_WATCHDOG_MS - 1, now, { playback }), false, JSON.stringify(playback));
+  }
+  assert.equal(L.startStalled(0, now, waiting), false);
+});

@@ -18,13 +18,14 @@
   const ov = {
     spinner: h('span', { class: 'spinner big' }),
     text: h('p', { class: 'pv-ov-text' }),
+    detail: h('p', { class: 'pv-ov-detail' }),
     bigPlay: h('button', { type: 'button', class: 'pv-bigplay', 'aria-label': 'Play' }),
     retry: h('button', { type: 'button', class: 'primary', text: 'Retry' }),
     ext: h('button', { type: 'button', text: 'Open on youtube.com' }),
   };
   ov.bigPlay.append(icon('play'));
   ov.actions = h('div', { class: 'pv-ov-actions' }, ov.retry, ov.ext);
-  ov.el = h('div', { class: 'pv-overlay', hidden: true }, ov.spinner, ov.text, ov.bigPlay, ov.actions);
+  ov.el = h('div', { class: 'pv-overlay', hidden: true }, ov.spinner, ov.text, ov.detail, ov.bigPlay, ov.actions);
 
   const ctl = {
     play: h('button', { type: 'button', class: 'pc-btn', title: 'Play (space)', 'aria-label': 'Play' }),
@@ -215,10 +216,9 @@
 
   function updateOverlay() {
     const c = cur;
-    let mode = null, text = '';
+    let mode = null, text = '', detail = '', failure = null;
     if (!c) mode = null;
-    else if (c.error) { mode = 'error'; text = c.error; }
-    else if (c.mediaError) { mode = 'error'; text = c.mediaError; }
+    else if (c.error || c.mediaError) { mode = 'error'; failure = c.error || c.mediaError; text = failure.title; detail = failure.detail; }
     else if (!c.sourceSet) { mode = 'message'; text = L.overlayMessage(c.status, c.retrying); }
     else if (c.loadingEngine) { mode = 'message'; text = 'Loading the video engine...'; }
     else if (c.needsClick && video.paused) mode = 'play';
@@ -228,7 +228,9 @@
     setHidden(ov.spinner, !(mode === 'message' || mode === 'spin'));
     setHidden(ov.text, !(mode === 'message' || mode === 'error'));
     setText(ov.text, text);
-    setAttr(ov.text, 'title', mode === 'error' ? text : null);
+    setHidden(ov.detail, mode !== 'error');
+    setText(ov.detail, detail);
+    setHidden(ov.retry, !!failure && !failure.retryable);
     setHidden(ov.bigPlay, mode !== 'play');
     setHidden(ov.actions, mode !== 'error');
   }
@@ -579,8 +581,8 @@
     logPlaybackState(c,'error');
     if(c.kind==='file' && (code===3||code===4) && !c.localAttempted && c.playbackEntry){prepareLocalPlayback(c,c.playbackEntry);return;}
     c.mediaError = c.kind === 'hls' && !c.hlsOk
-      ? 'This browser cannot play the HLS stream.'
-      : 'The video could not be played' + (code ? ` (media error ${code})` : '') + '.';
+      ? L.failureView('engine_unsupported')
+      : L.failureView('media_error');
     c.buffering = false;
     updateOverlay();
   });
@@ -633,7 +635,7 @@
       if(c!==cur||c.sourceGeneration!==selection){stopLocalPlayback(entryId,playback.generation);return;}
       c.localGeneration=playback.generation;
       applyStatus(c,Object.assign({},c.status,{playback}));pollLoop(c);
-    }catch(error){if(c===cur&&c.sourceGeneration===selection){c.error='Could not prepare this local copy: '+M.errText(error);updateOverlay();}}
+    }catch(error){if(c===cur&&c.sourceGeneration===selection){c.error=L.failureView('media_error');updateOverlay();}}
   }
 
   /* ------------------------------------------------------------------ resume */
@@ -738,7 +740,7 @@
       hls = new Hls({ startPosition: 0, maxBufferLength: 30, maxMaxBufferLength: 60, backBufferLength: 30, lowLatencyMode: false, enableWorker: false });
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!ownsSource() || !data || !data.fatal) return;
-        c.mediaError = 'The stream failed (' + (data.details || data.type) + ').';
+        c.mediaError = L.failureView('media_error');
         c.buffering = false;
         updateOverlay();
       });
@@ -750,7 +752,7 @@
     }).catch((e) => {
       if (!ownsSource()) return;
       c.loadingEngine = false;
-      c.mediaError = 'This browser cannot play the HLS stream: ' + M.errText(e);
+      c.mediaError = L.failureView('engine_unsupported');
       updateOverlay();
     });
   }
@@ -763,10 +765,10 @@
     if (st.meta_state === 'ready' && (!prev || prev.meta_state !== 'ready' || prev.comments_count !== st.comments_count || prev.comments_loading && !st.comments_loading)) fetchDetail(c);
     renderMetaState(c);
     if (!c.commentsBusy) setHidden(W.commentsMore, !st.has_more_comments);
-    const err = L.playbackError(st);
-    if (err) {
+    const failure = L.playbackFailure(st);
+    if (failure) {
       if (c.sourceSet) { video.pause(); }
-      c.error = err;
+      c.error = failure;
     } else {
       c.error = null;
       const pb = st.playback || {};
@@ -787,8 +789,9 @@
       }
       if (pb.state === 'none') {
         c.noneSince = c.noneSince || Date.now();
-        if (Date.now() - c.noneSince > 6000) c.error = 'Muninn could not start playback. Check Diagnostics that yt-dlp and ffmpeg are installed.';
+        if (Date.now() - c.noneSince > 6000) c.error = L.failureView('start_stalled');
       } else c.noneSince = 0;
+      if (!c.error && !c.sourceSet && L.startStalled(c.beganAt, Date.now(), st)) c.error = L.failureView('start_stalled');
       if (pb.ready && !c.sourceSet) setSource(c, st);
     }
     updateOverlay();
@@ -826,7 +829,7 @@
       if (!(L.watchSettled(st))) pollLoop(c);
     } catch (e) {
       if (c !== cur || (c.sourceGeneration||0)!==selection) return;
-      c.error = M.errText(e);
+      c.error = L.failureView('unknown');
       updateOverlay();
     }
   }
@@ -956,7 +959,7 @@
         if (playing) detachSource(c);
         try { await M.api('POST', '/api/entries/' + encodeURIComponent(e.id) + '/evict' + (e.protected ? '?force=1' : '')); }
         catch (error) { if (playing && e.status === 'complete') playCopy(e); throw error; }
-        if (playing) { c.error = 'This copy was deleted. Select another saved copy or download a new one.'; updateOverlay(); }
+        if (playing) { c.error = { title: 'This copy was deleted', detail: 'Select another saved copy or download a new one.', reason: 'deleted', retryable: true }; updateOverlay(); }
       });
     } }));
     return h('details',{class:'copy-manage'},h('summary',{text:'Manage copy'}),actions);
@@ -1128,7 +1131,7 @@
       key: tab.id + ':' + tab.video_id, tabId: tab.id, videoId: tab.video_id, gen: ++gen,
       status: null, detail: null, detailAt: 0, detailFailed: false, error: null, mediaError: null,
       sourceSet: false, sourceKey: '', kind: null, hlsOk: true, resumeDone: false, needsClick: false, buffering: false,
-      pollTimer: null, pollDelayMs: 700, noneSince: 0, retrying: false, cacheBusy: false,
+      pollTimer: null, pollDelayMs: 700, noneSince: 0, beganAt: Date.now(), retrying: false, cacheBusy: false,
     };
     cur = c;
     resetUi();

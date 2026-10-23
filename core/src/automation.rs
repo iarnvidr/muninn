@@ -205,7 +205,7 @@ impl Core {
                         self.promote(&e.id)?;
                     }
                     Some(CompletionAction::Delete) => {
-                        self.evict(&e.id, false)?;
+                        self.evict_for(&e.id, false, "completed_cleanup")?;
                     }
                     None => {}
                 }

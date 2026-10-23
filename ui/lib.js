@@ -337,6 +337,54 @@
     return retrying ? 'Retrying...' : 'Starting...';
   }
 
+  /** What the player says when a video cannot start. Technical detail never reaches the screen. */
+  const FAILURE_TITLE = "Couldn't start this video";
+  const FAILURES = {
+    unavailable: { detail: 'This video is unavailable. It may have been removed or made private.', retryable: false },
+    auth_restricted: { detail: 'This video needs a signed-in account, or it is private, members-only or restricted by YouTube.', retryable: false },
+    geo_age: { detail: 'This video is age-restricted or not available in your region.', retryable: false },
+    live_stream: { detail: "Live streams can't be played here. Open it on youtube.com instead.", retryable: false },
+    format_unavailable: { detail: 'YouTube offers no playable format for this video.', retryable: false },
+    transport_retryable: { detail: 'The connection to YouTube was interrupted.', retryable: true },
+    length_probe_failed: { detail: "Muninn couldn't read the video stream from YouTube.", retryable: true },
+    no_first_bytes_timeout: { detail: "The video didn't start downloading in time.", retryable: true },
+    resolve_timeout: { detail: 'YouTube took too long to answer.', retryable: true },
+    helper_exit: { detail: 'The video helper stopped unexpectedly.', retryable: true },
+    disk_space: { detail: 'There is not enough free disk space. Free some space or lower the cache size in Settings.', retryable: true },
+    busy: { detail: 'Muninn is already preparing several videos. Try again in a moment.', retryable: true },
+    tools_pending: { detail: 'Muninn is still setting up its video tools. Try again in a moment.', retryable: true },
+    tools_missing: { detail: "This build of Muninn can't play videos that are not cached yet.", retryable: false },
+    offline: { detail: 'Offline mode is on. Turn it off in Settings to play videos that are not cached.', retryable: false },
+    cancelled: { detail: 'Playback was stopped.', retryable: true },
+    start_stalled: { detail: 'The video is taking too long to start.', retryable: true },
+    media_error: { detail: 'The video was found but could not be played.', retryable: true },
+    engine_unsupported: { detail: 'This browser cannot play the stream.', retryable: true },
+    unknown: { detail: 'Something went wrong while starting the video.', retryable: true },
+  };
+
+  /** `{title, detail, reason, retryable}` for a failure category. `retryable` (from the service) wins over the table. */
+  function failureView(reason, retryable) {
+    const known = FAILURES[reason] ? reason : 'unknown';
+    const f = FAILURES[known];
+    return { title: FAILURE_TITLE, detail: f.detail, reason: known, retryable: typeof retryable === 'boolean' ? retryable : f.retryable };
+  }
+
+  /** The failure to show for a watch status whose playback state is `error`, else null. */
+  function playbackFailure(status) {
+    const p = status && status.playback;
+    if (!p || p.state !== 'error') return null;
+    return failureView(p.reason, p.retryable);
+  }
+
+  /** Backstop against an endless spinner: nothing playable and no error after `limitMs` of waiting. */
+  const START_WATCHDOG_MS = 150000;
+  function startStalled(beganAt, now, status, limitMs) {
+    if (!status || !beganAt || now - beganAt <= (limitMs || START_WATCHDOG_MS)) return false;
+    const p = status.playback || {};
+    if (p.local || p.ready || p.state === 'cached' || p.state === 'error') return false;
+    return true;
+  }
+
   function playbackError(status) {
     const p = status && status.playback;
     if (!p || p.state !== 'error') return null;
@@ -693,7 +741,7 @@
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
-    resumePosition, streamLabel, overlayMessage, playbackError, watchSettled, pollDelay,
+    resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
     statusBanner, roundRect, sameRect,
     TRIGGERS, QUALITIES, splitList, ruleToModel, newRuleModel, rulesSnapshot, rulesValidate,

@@ -113,7 +113,7 @@ async fn audit(State(core): S, req: Request, next: Next) -> Response {
     let route = req.extensions().get::<axum::extract::MatchedPath>().map(|m|m.as_str().to_string()).unwrap_or_default();
     let response = next.run(req).await;
     if response.status().is_server_error() || response.status().is_client_error() {
-        core.log_event("error", "api.failed", json!({"method":method,"route":route,"status":response.status().as_u16()}));
+        core.log_api_failure(&method, &route, response.status().as_u16());
     }
     response
 }
