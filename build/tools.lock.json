@@ -1,0 +1,40 @@
+{
+  "_comment": "Pinned helper binaries bundled into Muninn.app/Contents/Resources/bin. Every download is verified against these SHA-256 values; the build stops on a mismatch. To update a tool: change url + sha256 here (take the digest from the publisher's own checksum file) and rebuild. ffmpeg is the exception: it is compiled from the pinned source tarball (kind ffmpeg-lgpl-source) with an LGPL-only configuration, on an Apple Silicon Mac, because no reputable prebuilt LGPL-only macOS build exists.",
+  "yt-dlp": {
+    "version": "2026.08.19",
+    "license": "yt-dlp source: Unlicense; the standalone executable bundles third-party components (in the macOS build including mutagen, GPL-2.0-or-later, and certifi, MPL-2.0) and is run as a separate program; see licenses/yt-dlp-THIRD_PARTY_LICENSES.txt",
+    "source": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19",
+    "universal": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos",
+      "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202",
+      "kind": "file"
+    }
+  },
+  "deno": {
+    "version": "2.9.7",
+    "license": "MIT",
+    "source": "https://github.com/denoland/deno/releases/tag/v2.9.7",
+    "arm64": {
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-aarch64-apple-darwin.zip",
+      "sha256": "5cd46d6268f6f78f5d88bdc7159d20bd44cdaa4b3303474839f87ec6fe7ae25c",
+      "kind": "zip",
+      "member": "deno"
+    },
+    "x86_64": {
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-apple-darwin.zip",
+      "sha256": "95daaff11c116a52ad54785e7914c8e9c9cdcaba793c5ed929c74ca2d8e6259a",
+      "kind": "zip",
+      "member": "deno"
+    }
+  },
+  "ffmpeg": {
+    "version": "9.0.2",
+    "license": "LGPL-2.1-or-later (no GPL, no non-free), with dav1d 1.5.4 (BSD-2-Clause) linked in; built from the official source release by build/ffmpeg_lgpl.py; see licenses/ffmpeg-COPYING.LGPLv2.1 and licenses/dav1d-COPYING",
+    "source": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+    "arm64": {
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+      "kind": "ffmpeg-lgpl-source"
+    }
+  }
+}

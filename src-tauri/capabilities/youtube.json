@@ -1,0 +1,7 @@
+{
+  "identifier": "youtube",
+  "description": "YouTube pages in tabs: only report the page and hand videos to Muninn's player",
+  "webviews": ["tab-*"],
+  "remote": { "urls": ["https://www.youtube.com/*", "https://m.youtube.com/*", "https://youtube.com/*"] },
+  "permissions": ["allow-page-open-video", "allow-page-state", "allow-e2e-result"]
+}

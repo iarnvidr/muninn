@@ -1,0 +1,13 @@
+node_modules/
+target/
+src-tauri/gen/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+*.sqlite*
+*.jsonl
+muninn-diagnostics-*.zip
+secrets/

@@ -1,0 +1,34 @@
+# Cross-compiles the macOS app from Linux: Rust target + cargo-zigbuild (zig as
+# the linker) + a macOS SDK for the system frameworks, and rcodesign to ad-hoc
+# sign the result. Builds on top of the base toolchain image (Dockerfile).
+ARG BASE=muninn-builder
+FROM ${BASE}
+
+ARG ZIG_VERSION=0.13.0
+ARG MACOS_SDK_VERSION=15.5
+ARG RCODESIGN_VERSION=0.29.0
+
+RUN curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
+      | tar -xJ -C /opt \
+    && ln -s "/opt/zig-linux-x86_64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+
+RUN mkdir -p /opt/macos-sdk \
+    && curl -fsSL "https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/MacOSX${MACOS_SDK_VERSION}.sdk.tar.xz" \
+      | tar -xJ -C /opt/macos-sdk \
+    && ln -s "/opt/macos-sdk/MacOSX${MACOS_SDK_VERSION}.sdk" /opt/macos-sdk/current
+
+RUN curl -fsSL "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+      | tar -xz --strip-components=1 -C /usr/local/bin "apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl/rcodesign" \
+    && rustup target add aarch64-apple-darwin x86_64-apple-darwin \
+    && cargo install --locked cargo-zigbuild \
+    && rm -rf /opt/cargo/registry \
+    && apt-get update && apt-get install -y --no-install-recommends zip \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/cargo/registry \
+    && chmod -R a+rwX /opt/rustup /opt/cargo
+
+ENV SDKROOT=/opt/macos-sdk/current \
+    MACOSX_DEPLOYMENT_TARGET=14.0
+
+# Named volumes copy their ownership from the image on first use.
+RUN mkdir -p /cache/target-macos /cache/tools && chmod -R a+rwX /cache

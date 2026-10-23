@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible problem with Muninn
+body:
+  - type: markdown
+    attributes:
+      value: "Do not post cookies, tokens, browser profiles or full databases. Review diagnostics before sharing; they can contain video IDs and channel names. Report security issues privately using SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Muninn version and macOS version
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant diagnostics or screenshots
+      description: For playback, include file/container/codec, source type and timestamp if known. Never attach media you do not have permission to share.

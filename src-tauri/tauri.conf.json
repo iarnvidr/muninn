@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Muninn",
+  "version": "0.2.13",
+  "identifier": "io.github.iarnvidr.muninn",
+  "build": {
+    "frontendDist": "../shell"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "category": "Productivity",
+    "copyright": "Copyright (c) 2026 Esben Thomsen",
+    "license": "Apache-2.0",
+    "licenseFile": "../LICENSE",
+    "shortDescription": "Disk-backed local-first YouTube browser",
+    "longDescription": "Muninn is a YouTube browser that remembers: feeds, metadata and comments are cached in SQLite, videos play in Muninn's own player while they are cached to disk, and idle tabs hibernate to keep memory small.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-",
+      "minimumSystemVersion": "14.0"
+    }
+  }
+}
