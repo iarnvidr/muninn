@@ -372,6 +372,7 @@ img.missing { opacity: 0; }
 .pv-overlay[data-mode="spin"] { background: transparent; pointer-events: none; }
 .pv-overlay[data-mode="play"] { background: transparent; }
 .pv-ov-text { margin: 0; max-width: 62ch; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; user-select: text; font-size: 14px; }
+.pv-ov-detail { margin: -4px 0 0; max-width: 56ch; font-size: 13px; opacity: .78; user-select: text; }
 .pv-ov-actions { display: flex; gap: 8px; }
 .pv-ov-actions button { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.3); color: #fff; }
 .pv-ov-actions button:hover:not(:disabled) { background: rgba(255,255,255,.24); }

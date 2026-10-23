@@ -120,6 +120,7 @@ impl Core {
             let id = entry.id.clone();
             if std::thread::Builder::new().name(format!("muninn-job-{id}")).spawn(move || {
                 core.run_job(&id, runner.as_ref(), &job);
+                core.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 core.running.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 core.wake_scheduler();
             }).is_err()
@@ -206,7 +207,9 @@ impl Core {
                 self.remove_partial(&out_dir, &entry.id);
                 let _ = self.video.set_progress(id, 0, None, 0.0, None);
                 if message == "canceled" {
-                    let _ = self.video.set_status(id, STATUS_CANCELED, None, now);
+                    // Stopped to make room for explicit playback: back in the queue, not canceled.
+                    let preempted = self.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).remove(id) == Some("preempted");
+                    let _ = self.video.set_status(id, if preempted { STATUS_QUEUED } else { STATUS_CANCELED }, None, now);
                 } else {
                     let mut message = message.chars().take(400).collect::<String>();
                     if message.contains("Requested format is not available") && !tools.ffmpeg.found {
@@ -311,6 +314,11 @@ impl Core {
 
     /// Deletes an entry's files and row. Library entries need `force`.
     pub fn evict(&self, id: &str, force: bool) -> Result<()> {
+        self.evict_for(id, force, "user")
+    }
+
+    /// `evict` that records why, so an `entry.deleted` in the log can be explained.
+    pub(crate) fn evict_for(&self, id: &str, force: bool, cause: &str) -> Result<()> {
         let _guard = self.entry_lock.lock().unwrap_or_else(|e|e.into_inner());
         let entry = self.video.get_entry(id)?.ok_or_else(|| Error::not_found("no such entry"))?;
         if entry.protected && !force {
@@ -340,7 +348,7 @@ impl Core {
         };
         if removed {self.streams.sources.lock().unwrap_or_else(|e|e.into_inner()).retain(|key,_|!key.starts_with(&format!("{}/",entry.video_id)));}
         self.video.delete_entry(id)?;
-        self.log_event("info", "entry.deleted", serde_json::json!({"entry_id":id}));
+        self.log_event("info", "entry.deleted", serde_json::json!({"entry_id":id,"cause":cause,"status":entry.status,"complete":entry.is_complete()}));
         Ok(())
     }
 
@@ -386,7 +394,7 @@ impl Core {
         let caps = Caps { max_disk_bytes: settings.max_disk_bytes, min_free_bytes: settings.min_free_bytes };
         let plan = eviction::plan(&self.eviction_candidates(), self.now(), self.video.cache_bytes(), free_space(&self.paths.data_dir), incoming, caps);
         for id in &plan.evict {
-            let _ = self.evict(id, false);
+            let _ = self.evict_for(id, false, "cap_eviction");
         }
         Ok(plan.shortfall)
     }
