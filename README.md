@@ -1,6 +1,26 @@
-# Muninn
+<p align="center">
+  <img src="ui/raven.png" alt="Muninn's red raven" width="112" height="112">
+</p>
 
-Odin's raven of memory. A **disk-backed, local-first YouTube browser for macOS**.
+<h1 align="center">Muninn</h1>
+
+<p align="center">Odin's raven of memory. Your video library, remembered.</p>
+
+<p align="center">
+  <a href="https://github.com/iarnvidr/muninn/actions/workflows/check.yml"><img src="https://github.com/iarnvidr/muninn/actions/workflows/check.yml/badge.svg?branch=main" alt="Checks on main"></a>
+  <a href="https://github.com/iarnvidr/muninn/actions/workflows/macos.yml"><img src="https://github.com/iarnvidr/muninn/actions/workflows/macos.yml/badge.svg?branch=main" alt="Apple Silicon build on main"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0 license"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14 and later">
+</p>
+
+<p align="center">
+  <a href="#install-on-the-mac">Download &amp; install</a> ·
+  <a href="docs/DEVELOPMENT.md">Build</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a> ·
+  <a href="https://github.com/iarnvidr/muninn/issues/new/choose">Report a bug</a>
+</p>
+
+A **disk-backed, local-first YouTube browser for macOS**.
 Browse YouTube in native webviews, play videos in Muninn's own player, and manage
 cached media, channel policies, collections and tags through the app or CLI.
 
@@ -26,25 +46,25 @@ native shell and real local core; this is not a macOS playback verification.*
   with its own retention, TTLs, rules engine, eviction and disk caps. Rules prefetch at 360p,
   480p or audio-only and can promote entries to a protected library.
 
-Status: **v0.2.13 development preview.** Built and tested on Linux (the real app runs under xvfb with WebKitGTK),
-cross-compiled, ad-hoc signed and structure-verified for macOS. This build has **not been launched
-here on a Mac** (see [What is untested](#what-is-untested)).
+Status: **experimental development preview**. GitHub Actions runs Linux checks and
+native Apple Silicon builds. Compiling and signing an app does not establish that
+its playback and native webview behavior work on a Mac; see
+[What is untested](#what-is-untested).
 
 ## Install on the Mac
 
 Requires **macOS 14 (Sonoma) or newer**.
 
-1. Download `Muninn_<version>_macos-arm64.zip` (Apple Silicon) from the
-   [GitHub releases](https://github.com/iarnvidr/muninn/releases) when a standalone
-   prerelease is available, and check it with
+1. Until a [release](https://github.com/iarnvidr/muninn/releases) is published, open
+   [Apple Silicon builds](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml),
+   select a **successful** run for the branch you want to test, and download
+   **muninn-macos-arm64** under **Artifacts** (GitHub sign-in required). Unzip that
+   artifact to find `Muninn_<version>_macos-arm64.zip` and its checksum. PR builds
+   contain only that PR's changes; check the run's branch and commit before testing.
+   Verify the inner ZIP with
    `shasum -a 256 -c Muninn_<version>_macos-arm64.zip.sha256`.
-
-   Until then, every push to `main` builds a test package: open
-   [Apple Silicon build](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml?query=branch%3Amain+is%3Asuccess),
-   pick the newest run and download **muninn-macos-arm64** from its summary (a GitHub
-   sign-in is needed; kept for 30 days). It contains the same zip and `.sha256`. These
-   builds are not releases; see [known issues](docs/KNOWN_ISSUES.md).
-2. Unzip, and move `Muninn.app` to `/Applications`.
+2. Unzip the inner ZIP. **Quit any running copy of Muninn**, then move `Muninn.app`
+   to `/Applications` and reopen it. Installing a build does not update a running app.
 3. The app is **ad-hoc signed, not notarized**, so Gatekeeper blocks the first launch. Once:
    right-click the app, choose **Open**, confirm; or run
    `xattr -dr com.apple.quarantine /Applications/Muninn.app`.
@@ -80,7 +100,8 @@ The first launch may show a macOS dialog asking you to allow Muninn's local cert
 
 * **Tabs**: new tab, close, back/forward/reload, an address/search box (a URL opens it; words
   search YouTube). Cmd+T / Cmd+W / Cmd+L / Cmd+R.
-* **Sidebar**: Browse, Player, Library, Feeds, Rules, Settings are pages (Diagnostics appears after turning on Developer mode in Settings) of the same window.
+* **Sidebar**: Browse, Player, Library, Feeds, Rules and Settings are pages of the
+  same window. Detailed diagnostics are available from Settings with Developer mode on.
   Browse returns to a YouTube tab; Player returns to the current video. Library Play creates a new
   player tab. Drag tabs to group labels or before another tab; Library → Tab groups supports the
   same moves, with dropdowns as a keyboard alternative.
@@ -132,7 +153,8 @@ The first launch may show a macOS dialog asking you to allow Muninn's local cert
 * **`src-tauri/`**: the Tauri 2 shell (tabs, native web views, hibernation, certificate trust,
   commands) and `inject.js`, the page script for the YouTube tabs.
 * **`ui/`**: Muninn's own UI (plain HTML/JS/CSS), embedded in the binary.
-* **`build/`**: cross-compiles, bundles, signs and verifies the macOS app on a Linux Docker host.
+* **`build/`**: native Apple Silicon packaging, helper builds and bundle verification;
+  also includes a Docker cross-build path.
 * **`e2e/`**: the driver for the Linux/xvfb end-to-end run of the real app.
 
 ### Three independent caches
