@@ -566,14 +566,20 @@ impl Shell {
     pub fn set_viewport_rect(self:&Arc<Self>,rect:Rect,width:Option<f64>,height:Option<f64>) {
         // One mapping (see geometry.rs): the chrome web view's own logical size over its CSS
         // viewport gives a single uniform scale; the window's inner size is not used because
-        // it can include the title bar. The chrome is added at (0,0), so that is the origin.
+        // it can include the title bar. The origin is the chrome web view's real position
+        // (logical points, same scale factor as size()); if it cannot be read, fall back to (0,0).
         let chrome=self.app.get_webview(CHROME).and_then(|c|{
-            let size=c.size().ok()?.to_logical::<f64>(c.window().scale_factor().ok()?);
-            Some(crate::geometry::Bounds{x:0.0,y:0.0,w:size.width,h:size.height})
+            let scale=c.window().scale_factor().ok()?;
+            let size=c.size().ok()?.to_logical::<f64>(scale);
+            let (x,y)=match c.position() {
+                Ok(p)=>{let l=p.to_logical::<f64>(scale);(l.x,l.y)}
+                Err(e)=>{eprintln!("muninn: could not read the chrome web view position, using (0,0): {e}");(0.0,0.0)}
+            };
+            Some(crate::geometry::Bounds{x,y,w:size.width,h:size.height})
         });
         let Some(m)=crate::geometry::map_viewport_rect(crate::geometry::Bounds{x:rect.x,y:rect.y,w:rect.w,h:rect.h},width,height,chrome) else {return};
         let next=Rect{x:m.rect.x,y:m.rect.y,w:m.rect.w,h:m.rect.h};
-        self.core.log_event("info","webview.layout",json!({"x":next.x,"y":next.y,"w":next.w,"h":next.h,"css_x":rect.x,"css_y":rect.y,"css_w":rect.w,"css_h":rect.h,"scale":m.scale,"clamped":m.clamped,"chrome_w":chrome.map(|c|c.w),"chrome_h":chrome.map(|c|c.h),"viewport_width":width,"viewport_height":height}));
+        self.core.log_event("info","webview.layout",json!({"x":next.x,"y":next.y,"w":next.w,"h":next.h,"css_x":rect.x,"css_y":rect.y,"css_w":rect.w,"css_h":rect.h,"scale":m.scale,"clamped":m.clamped,"chrome_x":chrome.map(|c|c.x),"chrome_y":chrome.map(|c|c.y),"chrome_w":chrome.map(|c|c.w),"chrome_h":chrome.map(|c|c.h),"viewport_width":width,"viewport_height":height}));
         self.set_rect(next);
     }
 

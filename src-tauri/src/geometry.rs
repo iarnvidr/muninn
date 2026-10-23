@@ -167,6 +167,36 @@ mod tests {
     }
 
     #[test]
+    fn nonzero_origin_offsets_the_rect_and_not_its_size() {
+        let css = Bounds { x: 224.0, y: 72.0, w: 1136.0, h: 760.0 };
+        let c = Some(Bounds { x: 10.0, y: 28.0, w: 1360.0, h: 832.0 });
+        let m = map_viewport_rect(css, Some(1360.0), Some(832.0), c).unwrap();
+        assert!(close(m.rect.x, 234.0) && close(m.rect.y, 100.0));
+        assert!(close(m.rect.w, 1136.0) && close(m.rect.h, 760.0));
+        assert!(close(m.rect.x + m.rect.w, 10.0 + 1360.0));
+        assert!(close(m.rect.y + m.rect.h, 28.0 + 832.0));
+    }
+
+    #[test]
+    fn nonzero_origin_is_added_after_scaling_and_clamping() {
+        // 125% zoom with a chrome at (6, 28): the origin is in points and is not scaled.
+        let css = Bounds { x: 179.2, y: 57.6, w: 908.8, h: 700.0 };
+        let c = Some(Bounds { x: 6.0, y: 28.0, w: 1360.0, h: 832.0 });
+        let m = map_viewport_rect(css, Some(1088.0), Some(665.6), c).unwrap();
+        assert!(m.clamped && close(m.scale, 1.25));
+        assert!(close(m.rect.x, 230.0) && close(m.rect.y, 100.0));
+        assert!(close(m.rect.y + m.rect.h, 28.0 + 832.0));
+    }
+
+    #[test]
+    fn negative_origin_is_kept() {
+        let css = Bounds { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
+        let c = Some(Bounds { x: -5.0, y: -3.0, w: 500.0, h: 500.0 });
+        let m = map_viewport_rect(css, Some(500.0), Some(500.0), c).unwrap();
+        assert!(close(m.rect.x, -5.0) && close(m.rect.y, -3.0));
+    }
+
+    #[test]
     fn overflow_is_clamped_to_the_viewport_below_the_toolbar() {
         let css = Bounds { x: 224.0, y: 72.0, w: 1136.0, h: 900.0 };
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), chrome(1360.0, 832.0)).unwrap();
