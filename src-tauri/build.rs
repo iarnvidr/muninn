@@ -7,9 +7,32 @@ fn main() {
     // Every command gets its own permission (allow-<name>) so the capability files can
     // give YouTube pages only the two commands they need.
     let commands = &[
-        "app_boot", "tabs_state", "tab_new", "tab_activate", "tab_close", "tab_go", "tab_back", "tab_forward", "tab_reload", "tab_open_video",
-        "tab_hibernate", "layout", "native_visible", "open_external", "trust_status", "trust_install", "signin_popup", "page_open_video",
-        "page_state", "e2e_result", "channel_unsubscribe", "export_diagnostics",
+        "app_boot",
+        "tabs_state",
+        "tab_new",
+        "tab_activate",
+        "tab_close",
+        "tab_go",
+        "tab_back",
+        "tab_forward",
+        "tab_reload",
+        "tab_open_video",
+        "tab_hibernate",
+        "layout",
+        "native_visible",
+        "open_external",
+        "trust_status",
+        "trust_install",
+        "signin_popup",
+        "page_open_video",
+        "page_state",
+        "e2e_result",
+        "channel_unsubscribe",
+        "export_diagnostics",
     ];
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(commands))).expect("tauri build");
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(commands)),
+    )
+    .expect("tauri build");
 }

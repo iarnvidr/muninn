@@ -15,14 +15,21 @@ use tauri::Manager;
 
 fn dir() -> Option<PathBuf> {
     // Native UI automation is restricted to explicit smoke launch and debug builds.
-    if !cfg!(debug_assertions) || std::env::var_os("MUNINN_NATIVE_UI_SMOKE").is_none() ||
-       !std::env::args().any(|a| a == "--native-ui-smoke") { return None; }
+    if !cfg!(debug_assertions)
+        || std::env::var_os("MUNINN_NATIVE_UI_SMOKE").is_none()
+        || !std::env::args().any(|a| a == "--native-ui-smoke")
+    {
+        return None;
+    }
     std::env::var_os("MUNINN_E2E_DIR").map(PathBuf::from)
 }
 
 pub fn store_result(id: &str, value: String) -> Result<(), String> {
     let d = dir().ok_or("automation is off")?;
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err("bad id".into());
     }
     std::fs::write(d.join(format!("{id}.res.json")), value).map_err(|e| e.to_string())
@@ -30,7 +37,10 @@ pub fn store_result(id: &str, value: String) -> Result<(), String> {
 
 fn respond(d: &std::path::Path, id: &str, v: &Value) {
     let _ = std::fs::write(d.join(format!("{id}.res.json.tmp")), v.to_string());
-    let _ = std::fs::rename(d.join(format!("{id}.res.json.tmp")), d.join(format!("{id}.res.json")));
+    let _ = std::fs::rename(
+        d.join(format!("{id}.res.json.tmp")),
+        d.join(format!("{id}.res.json")),
+    );
 }
 
 pub fn start(shell: &Arc<Shell>) {
@@ -41,13 +51,21 @@ pub fn start(shell: &Arc<Shell>) {
         .name("muninn-e2e".into())
         .spawn(move || loop {
             std::thread::sleep(Duration::from_millis(200));
-            let Ok(read) = std::fs::read_dir(&d) else { continue };
-            let mut cmds: Vec<PathBuf> = read.flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".cmd.json")).collect();
+            let Ok(read) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            let mut cmds: Vec<PathBuf> = read
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.to_string_lossy().ends_with(".cmd.json"))
+                .collect();
             cmds.sort();
             for path in cmds {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
                 let _ = std::fs::remove_file(&path);
-                let Ok(cmd) = serde_json::from_str::<Value>(&text) else { continue };
+                let Ok(cmd) = serde_json::from_str::<Value>(&text) else {
+                    continue;
+                };
                 let id = cmd["id"].as_str().unwrap_or("x").to_string();
                 run(&shell, &d, &id, &cmd);
             }
@@ -61,7 +79,10 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
     match cmd["op"].as_str().unwrap_or("") {
         "state" => {
             let mut state = shell.tabs_state();
-            state["window_visible"] = json!(shell.app.get_window(crate::shell::MAIN).is_some_and(|w| w.is_visible().unwrap_or(false)));
+            state["window_visible"] = json!(shell
+                .app
+                .get_window(crate::shell::MAIN)
+                .is_some_and(|w| w.is_visible().unwrap_or(false)));
             respond(d, id, &state);
         }
         "call" => {
@@ -79,9 +100,21 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                 "tab_forward" => shell.forward(u64_of("id")),
                 "tab_open_video" => shell.open_video(u64_of("id"), &str_of("video_id"), false),
                 "app_open_link" => crate::open_app_links(&shell.app, [str_of("url")]),
-                "window_hide" => { if let Some(window) = shell.app.get_window(crate::shell::MAIN) { let _ = window.hide(); } },
-                "hibernate_pass" => return respond(d, id, &json!({"ok": true, "slept": shell.hibernate_pass()})),
-                other => return respond(d, id, &json!({"ok": false, "error": format!("unknown call {other}")})),
+                "window_hide" => {
+                    if let Some(window) = shell.app.get_window(crate::shell::MAIN) {
+                        let _ = window.hide();
+                    }
+                }
+                "hibernate_pass" => {
+                    return respond(d, id, &json!({"ok": true, "slept": shell.hibernate_pass()}))
+                }
+                other => {
+                    return respond(
+                        d,
+                        id,
+                        &json!({"ok": false, "error": format!("unknown call {other}")}),
+                    )
+                }
             }
             respond(d, id, &json!({"ok": true}));
         }
@@ -93,10 +126,18 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                     Some(a) => label(a),
                     None => return respond(d, id, &json!({"ok": false, "error": "no active tab"})),
                 },
-                t => label(t.strip_prefix("tab:").and_then(|n| n.parse().ok()).unwrap_or(0)),
+                t => label(
+                    t.strip_prefix("tab:")
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(0),
+                ),
             };
             let Some(wv) = shell.app.get_webview(&wlabel) else {
-                return respond(d, id, &json!({"ok": false, "error": format!("no web view {wlabel}")}));
+                return respond(
+                    d,
+                    id,
+                    &json!({"ok": false, "error": format!("no web view {wlabel}")}),
+                );
             };
             let js = cmd["js"].as_str().unwrap_or("null");
             let wrapped = format!(
@@ -117,10 +158,18 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                     Some(a) => label(a),
                     None => return respond(d, id, &json!({"ok": false, "error": "no active tab"})),
                 },
-                t => label(t.strip_prefix("tab:").and_then(|n| n.parse().ok()).unwrap_or(0)),
+                t => label(
+                    t.strip_prefix("tab:")
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(0),
+                ),
             };
             let Some(wv) = shell.app.get_webview(&wlabel) else {
-                return respond(d, id, &json!({"ok": false, "error": format!("no web view {wlabel}")}));
+                return respond(
+                    d,
+                    id,
+                    &json!({"ok": false, "error": format!("no web view {wlabel}")}),
+                );
             };
             let js = cmd["js"].as_str().unwrap_or("null");
             let (dir, rid) = (d.to_path_buf(), id.to_string());
@@ -132,6 +181,10 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                 respond(d, id, &json!({"ok": false, "error": e.to_string()}));
             }
         }
-        other => respond(d, id, &json!({"ok": false, "error": format!("unknown op {other}")})),
+        other => respond(
+            d,
+            id,
+            &json!({"ok": false, "error": format!("unknown op {other}")}),
+        ),
     }
 }

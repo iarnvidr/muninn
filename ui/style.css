@@ -523,6 +523,9 @@ table.rules { min-width: 1220px; }
 .fieldgrid .field { margin: 0 0 4px; }
 .fieldgrid input[type="number"], .fieldgrid select { width: 100%; }
 .settings-form { max-width: 1000px; }
+.update-card { max-width: 1000px; }
+.update-progress { display:block; width: min(100%, 420px); height: 8px; accent-color: var(--accent); margin: 12px 0; }
+.update-card [aria-live] { min-height: 1.4em; }
 .page .card { max-width: 1000px; }
 
 /* Classified Terminal: the movement/site hierarchy, rather than a palette swap. */

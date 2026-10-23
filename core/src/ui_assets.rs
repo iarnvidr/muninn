@@ -6,6 +6,7 @@ pub const LIB_JS: &str = include_str!("../../ui/lib.js");
 pub const QUEUE_JS: &str = include_str!("../../ui/queue.js");
 pub const WATCH_JS: &str = include_str!("../../ui/watch.js");
 pub const PAGES_JS: &str = include_str!("../../ui/pages.js");
+pub const UPDATES_JS: &str = include_str!("../../ui/updates.js");
 pub const ORGANIZE_JS: &str = include_str!("../../ui/organize.js");
 pub const CHANNELS_JS: &str = include_str!("../../ui/channels.js");
 pub const BOOT_JS: &str = include_str!("../../ui/boot.js");
@@ -35,6 +36,7 @@ pub fn asset(name: &str) -> Option<(&'static str, &'static str)> {
         "queue.js" => Some((JS, QUEUE_JS)),
         "watch.js" => Some((JS, WATCH_JS)),
         "pages.js" => Some((JS, PAGES_JS)),
+        "updates.js" => Some((JS, UPDATES_JS)),
         "organize.js" => Some((JS, ORGANIZE_JS)),
         "channels.js" => Some((JS, CHANNELS_JS)),
         "boot.js" => Some((JS, BOOT_JS)),
@@ -59,7 +61,7 @@ mod tests {
             let name = src.split('"').next().unwrap();
             assert!(asset(name).is_some() || name == "raven.png", "index.html loads /ui/{name} but it is not embedded");
         }
-        for name in ["lib.js", "app.js", "queue.js", "watch.js", "pages.js", "boot.js", "mock.js", "hls.min.js", "style.css"] {
+        for name in ["lib.js", "app.js", "queue.js", "watch.js", "pages.js", "updates.js", "boot.js", "mock.js", "hls.min.js", "style.css"] {
             assert!(!asset(name).unwrap().1.is_empty(), "{name} is empty");
         }
         assert!(asset("nope.js").is_none());

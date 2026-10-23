@@ -556,6 +556,58 @@
     const retry=h('button',{type:'button',text:'Retry save',hidden:true,onclick:()=>flush()});
     const feedback=h('div',{class:'settings-feedback'},msg,retry);
     const signMsg=slot('slot-xl');
+    const updateState = { value: { state: 'idle' } };
+    const updateStatus = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
+    const updateDetails = h('p', { class: 'muted' });
+    const updateProgress = h('progress', { max: 100, value: 0, class: 'update-progress', hidden: true, 'aria-label': 'Update download progress' });
+    const checkUpdate = h('button', { type: 'button', text: 'Check for updates', onclick: async () => {
+      if (['checking','downloading','installing'].includes(updateState.value.state)) return;
+      updateState.value = { state: 'checking' }; renderUpdate();
+      try { updateState.value = await M.invoke('updater_check'); renderUpdate(); await pollUpdate(); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+    } });
+    const downloadUpdate = h('button', { type: 'button', class: 'primary', text: 'Download update', hidden: true, onclick: async () => {
+      if (updateState.value.state !== 'available' || M.offline) return;
+      downloadUpdate.disabled = true; updateState.value = { ...updateState.value, state: 'downloading', downloaded: 0, content_length: null }; renderUpdate();
+      try { await M.invoke('updater_download'); await pollUpdate(); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+      finally { downloadUpdate.disabled = false; }
+    } });
+    const installUpdate = h('button', { type: 'button', class: 'primary', text: 'Install and restart', hidden: true, onclick: async () => {
+      if (updateState.value.state !== 'ready_to_install' || M.offline) return;
+      if (!(await M.confirm('Install this verified update and restart Muninn? Any unsaved settings changes will be saved first.', 'Install and restart'))) return;
+      installUpdate.disabled = true; updateState.value = { ...updateState.value, state: 'installing' }; renderUpdate();
+      try { await flush(); updateState.value = await M.invoke('updater_install'); renderUpdate(); await pollUpdate(); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+      finally { installUpdate.disabled = false; }
+    } });
+    const cancelUpdate = h('button', { type: 'button', text: 'Cancel update', hidden: true, onclick: async () => {
+      if (!['checking','downloading'].includes(updateState.value.state)) return;
+      cancelUpdate.disabled = true;
+      try { await M.invoke('updater_cancel'); updateState.value = await M.invoke('updater_status'); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; }
+      finally { cancelUpdate.disabled = false; renderUpdate(); }
+    } });
+    async function pollUpdate() {
+      let previous = 0;
+      for (let i = 0; i < 120; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const next = await M.invoke('updater_status');
+        if (next.downloaded != null && updateState.value.downloaded != null) next.downloaded = Math.max(Number(next.downloaded)||0, Number(updateState.value.downloaded)||0, previous);
+        previous = Number(next.downloaded)||previous; updateState.value = next; renderUpdate();
+        if (!['checking','downloading','installing'].includes(updateState.value.state)) break;
+      }
+    }
+    function renderUpdate() {
+      const v = window.MuninnUpdates.view(updateState.value);
+      setText(updateStatus, v.label);
+      const installed = v.installedVersion || v.currentVersion;
+      updateDetails.replaceChildren(document.createTextNode([installed ? 'Installed version ' + installed : '', v.availableVersion ? 'Available version ' + v.availableVersion : '', v.channel === 'stable' ? 'Stable channel: previews are not offered; only a newer stable release can update this installation.' : '', v.notes].filter(Boolean).join('\\n')));
+      updateProgress.hidden = v.state !== 'downloading';
+      if (v.progress != null) updateProgress.value = v.progress;
+      checkUpdate.disabled = !v.canCheck || !!M.offline; downloadUpdate.hidden = !v.canDownload; downloadUpdate.disabled = !!M.offline;
+      installUpdate.hidden = !v.canInstall; installUpdate.disabled = !!M.offline; cancelUpdate.hidden = !v.canCancel; cancelUpdate.disabled = !!M.offline;
+    }
     const accountLine=h('p',{class:'muted',role:'status','aria-live':'polite'});
     let accountPoll=null, accountBusy=false;
 
@@ -678,6 +730,11 @@
     return {
       mount(el) {
         el.append(pageHead('Settings', 'Limits, freshness and browsing behaviour.'), form,
+          h('section', { class: 'card update-card', 'aria-labelledby': 'updates-h' },
+            h('h2', { class: 'h2', id: 'updates-h', text: 'Muninn updates' }),
+            h('p', { class: 'muted', text: 'Check for a trusted Muninn release. Updates are never installed automatically.' }),
+            updateStatus, updateDetails, updateProgress,
+            h('div', { class: 'actions' }, checkUpdate, downloadUpdate, installUpdate, cancelUpdate)),
           h('section', { class: 'card', 'aria-labelledby': 'setup-h' },
             h('h2', { class: 'h2', id: 'setup-h', text: 'Setup and repair' }),
             toolsLine, h('div', { class: 'actions' }, updateBtn, toolsMsg),
