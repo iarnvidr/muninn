@@ -19,7 +19,8 @@ pub fn plugin_builder() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_u
 
 fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     let mut builder = app.updater_builder();
-    let current = current_version();
+    let smoke_mode = debug_smoke_mode();
+    let smoke_current = smoke_mode.then(current_version);
     #[cfg(debug_assertions)]
     if debug_smoke_mode() {
         if let (Ok(endpoint), Ok(pubkey)) = (
@@ -33,8 +34,11 @@ fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, 
         }
     }
     Ok(builder
-        .version_comparator(move |_installed, release| {
-            compare_versions_policy(&current, &release.version.to_string(), debug_smoke_mode())
+        .version_comparator(move |installed, release| {
+            let installed = smoke_current
+                .as_deref()
+                .unwrap_or_else(|| installed.as_str());
+            compare_versions_policy(installed, &release.version.to_string(), smoke_mode)
                 .is_ok_and(|order| order == std::cmp::Ordering::Greater)
         })
         .build()
@@ -137,7 +141,13 @@ fn compare_versions_policy(
         .map_err(|e| format!("invalid installed version: {e}"))?;
     let b = semver::Version::parse(candidate.trim_start_matches('v'))
         .map_err(|e| format!("invalid release version: {e}"))?;
-    if !b.pre.is_empty() && !allow_smoke_prerelease {
+    // Preview releases are never production updates. The explicit smoke policy
+    // permits only smoke-to-smoke comparisons; semver ordering still determines
+    // whether the smoke build is newer (and prevents cross-family upgrades).
+    if !b.pre.is_empty() && (!allow_smoke_prerelease || !b.pre.as_str().starts_with("smoke.")) {
+        return Ok(std::cmp::Ordering::Less);
+    }
+    if allow_smoke_prerelease && !a.pre.is_empty() && !a.pre.as_str().starts_with("smoke.") {
         return Ok(std::cmp::Ordering::Less);
     }
     Ok(b.cmp(&a))
@@ -379,8 +389,16 @@ mod tests {
             compare_versions_policy("0.2.14", "0.2.14-smoke.2", false).unwrap(),
             std::cmp::Ordering::Greater
         );
-        assert_eq!(
+        assert_ne!(
             compare_versions_policy("0.2.14", "0.2.14-smoke.2", true).unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions_policy("0.2.14-smoke.1", "0.2.14-smoke.2", true).unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert_ne!(
+            compare_versions_policy("0.2.14-smoke.3", "0.2.14-smoke.2", true).unwrap(),
             std::cmp::Ordering::Greater
         );
         assert_ne!(
@@ -400,7 +418,7 @@ mod tests {
     #[test]
     fn comparator_uses_supplied_current_version() {
         assert_eq!(
-            compare_versions("0.2.14-smoke.2", "0.2.14-smoke.3").unwrap(),
+            compare_versions_policy("0.2.14-smoke.2", "0.2.14-smoke.3", true).unwrap(),
             std::cmp::Ordering::Greater
         );
         assert_ne!(
