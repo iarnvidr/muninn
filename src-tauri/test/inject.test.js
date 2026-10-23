@@ -138,7 +138,7 @@ test('account identity is opaque, changes with the selected account and is not g
 });
 test('page observations distinguish unknown, signed in and signed out without sending raw identity',async()=>{
   const config={LOGGED_IN:true,DATASYNC_ID:'fixture-private-identity',SESSION_INDEX:0};const p=fakePage(config);
-  p.winListeners.load.forEach(f=>f());
+  for(let i=0;i<200&&!p.calls.some(c=>c[1].account_key);i++)await new Promise(resolve=>setTimeout(resolve,10));
   for(let i=0;i<30&&!p.calls.some(c=>c[1].account_key);i++)await new Promise(resolve=>setImmediate(resolve));
   const states=()=>p.calls.filter(c=>c[0]==='page_state').map(c=>c[1]);
   assert.equal(states().at(-1).signed_in,true);assert.match(states().at(-1).account_key,/^[a-f0-9]{64}$/);assert.ok(!JSON.stringify(p.calls).includes(config.DATASYNC_ID));
