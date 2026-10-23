@@ -226,7 +226,7 @@
     clearTimeout(sysTimer);
     try { const r = await api('GET', '/api/setup'); M.setup = r && r.setup; M.tools = r && r.tools; } catch (e) { /* offline banner */ }
     try { M.trust = await invoke('trust_status'); } catch (e) { M.trust = null; }
-    try { const offline=M.settings?.offline_mode; M.settings = await api('GET', '/api/settings'); M.applyAppearance(); M.watch?.applySettings(); if(offline!==M.settings.offline_mode)render(); } catch (e) { /* keep the last playback policy */ }
+    try { const offline=M.settings?.offline_mode,developer=L.developerMode(M.settings); M.settings = await api('GET', '/api/settings'); M.applyAppearance(); M.watch?.applySettings(); if(offline!==M.settings.offline_mode||developer!==L.developerMode(M.settings))render(); } catch (e) { /* keep the last playback policy */ }
     await M.refreshOrganization().catch(() => {});
     M.refreshFeatured?.();
     renderStatus();
@@ -535,25 +535,36 @@
     scheduleLayout();
   }
   $('#side-toggle').addEventListener('click', () => setSidebar($('#app').dataset.sidebar !== 'collapsed', true));
-  for (const b of $$('#sidebar [data-page]')) {
-    b.addEventListener('click', () => {
-      M.watch?.prepareBackground();
-      const p = b.dataset.page;
-      if (p==='browse') {
-        const tab=M.tabs.list.find(t=>t.id===M.lastBrowseTab && t.face!=='watch') || M.tabs.list.find(t=>t.face!=='watch');
-        if(tab) M.activateTab(tab.id); else M.newTab('https://www.youtube.com/');
-        return;
-      }
-      if(p==='player') {
-        const tab=M.tabs.list.find(t=>t.id===M.watch?.state()?.tabId) || M.tabs.list.find(t=>t.face==='watch');
-        if(tab) M.activateTab(tab.id); else M.flash('info','Open a video from Library or YouTube to start playing.');
-        return;
-      }
-      M.page = p === 'browse' ? null : p;
-      render();
-    });
+  function onSidebarClick(b) {
+    M.watch?.prepareBackground();
+    const p = b.dataset.page;
+    if (p==='browse') {
+      const tab=M.tabs.list.find(t=>t.id===M.lastBrowseTab && t.face!=='watch') || M.tabs.list.find(t=>t.face!=='watch');
+      if(tab) M.activateTab(tab.id); else M.newTab('https://www.youtube.com/');
+      return;
+    }
+    if(p==='player') {
+      const tab=M.tabs.list.find(t=>t.id===M.watch?.state()?.tabId) || M.tabs.list.find(t=>t.face==='watch');
+      if(tab) M.activateTab(tab.id); else M.flash('info','Open a video from Library or YouTube to start playing.');
+      return;
+    }
+    M.page = L.resolvePage(p === 'browse' ? null : p, M.settings);
+    render();
   }
+  for (const b of $$('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
+  /* Diagnostics is a developer-mode page: its button exists only while the mode is on. */
+  function syncDeveloperNav() {
+    const existing = $('#sidebar [data-page="diagnostics"]');
+    if (!L.developerMode(M.settings)) { existing?.remove(); return; }
+    if (existing) return;
+    const b = h('button', { type: 'button', class: 'side-item', 'data-page': 'diagnostics', title: 'Diagnostics' }, h('span', { class: 'side-icon', 'data-icon': 'pulse' }), h('span', { class: 'side-label', text: 'Diagnostics' }));
+    b.addEventListener('click', () => onSidebarClick(b));
+    $('#sidebar [data-page="settings"]').before(b);
+    fillIcons(b);
+  }
+  M.syncDeveloperNav = syncDeveloperNav;
   function renderSidebar() {
+    syncDeveloperNav();
     const tab=activeTab();
     if(tab?.face!=='watch' && tab) M.lastBrowseTab=tab.id;
     for (const b of $$('#sidebar [data-page]')) {
@@ -629,6 +640,9 @@
   let mountedPage = null, lastView = null;
 
   function render() {
+    // Developer-only pages close when the mode goes off (the page's pollers stop on unmount).
+    const allowed = L.resolvePage(M.page, M.settings);
+    if (allowed !== M.page) M.page = allowed;
     renderStatus();
     renderTabs();
     renderToolbar();
