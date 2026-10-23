@@ -564,14 +564,16 @@ impl Shell {
     }
 
     pub fn set_viewport_rect(self:&Arc<Self>,rect:Rect,width:Option<f64>,height:Option<f64>) {
-        // CSS pixels can differ from native logical points after page zoom.
-        // Align the YouTube child to the actual content viewport in either case.
-        let size=self.app.get_window(MAIN).and_then(|w|Some(w.inner_size().ok()?.to_logical::<f64>(w.scale_factor().ok()?)));
-        let scale=|actual:f64,css:Option<f64>|css.filter(|n|n.is_finite()&&*n>0.0).map(|n|(actual/n).clamp(0.25,4.0)).unwrap_or(1.0);
-        let (sx,sy)=size.map(|s|(scale(s.width,width),scale(s.height,height))).unwrap_or((1.0,1.0));
-        let next=Rect{x:rect.x*sx,y:rect.y*sy,w:rect.w*sx,h:rect.h*sy};
-        if ![next.x,next.y,next.w,next.h].iter().all(|n|n.is_finite())||next.w<0.0||next.h<0.0{return;}
-        self.core.log_event("info","webview.layout",json!({"x":next.x,"y":next.y,"w":next.w,"h":next.h,"scale_x":sx,"scale_y":sy,"viewport_width":width,"viewport_height":height}));
+        // One mapping (see geometry.rs): the chrome web view's own logical size over its CSS
+        // viewport gives a single uniform scale; the window's inner size is not used because
+        // it can include the title bar. The chrome is added at (0,0), so that is the origin.
+        let chrome=self.app.get_webview(CHROME).and_then(|c|{
+            let size=c.size().ok()?.to_logical::<f64>(c.window().scale_factor().ok()?);
+            Some(crate::geometry::Bounds{x:0.0,y:0.0,w:size.width,h:size.height})
+        });
+        let Some(m)=crate::geometry::map_viewport_rect(crate::geometry::Bounds{x:rect.x,y:rect.y,w:rect.w,h:rect.h},width,height,chrome) else {return};
+        let next=Rect{x:m.rect.x,y:m.rect.y,w:m.rect.w,h:m.rect.h};
+        self.core.log_event("info","webview.layout",json!({"x":next.x,"y":next.y,"w":next.w,"h":next.h,"css_x":rect.x,"css_y":rect.y,"css_w":rect.w,"css_h":rect.h,"scale":m.scale,"clamped":m.clamped,"chrome_w":chrome.map(|c|c.w),"chrome_h":chrome.map(|c|c.h),"viewport_width":width,"viewport_height":height}));
         self.set_rect(next);
     }
 

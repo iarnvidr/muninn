@@ -6,6 +6,7 @@
 mod commands;
 mod deep_link;
 mod e2e;
+mod geometry;
 #[cfg(target_os = "linux")]
 mod linux_overlay;
 mod shell;

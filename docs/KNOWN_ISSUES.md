@@ -13,7 +13,8 @@ packages are supported; Linux is used for core and WebKitGTK regression testing.
   ([timeline contract](LOCAL_PLAYBACK_WINDOW.md)); this is verified only with
   synthetic media on Linux, not yet on a Mac.
 - **Theatre:** pane-height expansion and toggle-back pass the real Linux Tauri
-  regression at three sizes. Native macOS child-webview layout still needs validation.
+  regression at three sizes. Native macOS child-webview layout (YouTube view vs. toolbar, zoom, display change,
+  favourites carousel) still needs validation on a Mac; see `webview.layout` log entries.
 - **Google sign-in and YouTube integration:** embedded sign-in can be rejected.
   YouTube page/API changes can affect browsing, subscriptions, comments or downloads.
 - **PiP:** availability and automatic activation depend on the webview engine and
