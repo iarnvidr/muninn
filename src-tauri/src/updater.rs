@@ -31,15 +31,21 @@ pub fn plugin_builder() -> tauri_plugin_updater::Builder {
         }
     }
     builder.version_comparator(|current, release| {
-        compare_versions(&current_version(), &release.version)
+        compare_versions_policy(current, &release.version, debug_smoke_mode())
             .is_ok_and(|order| order == std::cmp::Ordering::Greater)
     })
 }
-fn current_version() -> String {
-    #[cfg(debug_assertions)]
-    if std::env::args().any(|a| a == "--updater-smoke")
+#[cfg(debug_assertions)]
+fn debug_smoke_mode() -> bool {
+    std::env::args().any(|a| a == "--updater-smoke")
         && std::env::var_os("MUNINN_NATIVE_UI_SMOKE").is_some()
-    {
+}
+#[cfg(not(debug_assertions))]
+fn debug_smoke_mode() -> bool {
+    false
+}
+fn current_version() -> String {
+    if debug_smoke_mode() {
         if let Ok(version) = std::env::var("MUNINN_UPDATER_SMOKE_CURRENT_VERSION") {
             return version;
         }
@@ -117,15 +123,22 @@ async fn wait_cancelled(state: Arc<UpdaterState>, generation: u64) {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }
-fn compare_versions(current: &str, candidate: &str) -> Result<std::cmp::Ordering, String> {
+fn compare_versions_policy(
+    current: &str,
+    candidate: &str,
+    allow_smoke_prerelease: bool,
+) -> Result<std::cmp::Ordering, String> {
     let a = semver::Version::parse(current.trim_start_matches('v'))
         .map_err(|e| format!("invalid installed version: {e}"))?;
     let b = semver::Version::parse(candidate.trim_start_matches('v'))
         .map_err(|e| format!("invalid release version: {e}"))?;
-    if !b.pre.is_empty() {
+    if !b.pre.is_empty() && !allow_smoke_prerelease {
         return Ok(std::cmp::Ordering::Less);
     }
     Ok(b.cmp(&a))
+}
+fn compare_versions(current: &str, candidate: &str) -> Result<std::cmp::Ordering, String> {
+    compare_versions_policy(&current_version(), candidate, debug_smoke_mode())
 }
 fn trusted(w: &tauri::Webview) -> Result<(), String> {
     if w.label() == "chrome" {
@@ -356,6 +369,25 @@ mod tests {
         );
         assert_eq!(
             compare_versions("1.2.0-preview.3", "1.2.0").unwrap(),
+            std::cmp::Ordering::Greater
+        );
+    }
+    #[test]
+    fn prereleases_are_gated_by_smoke_policy() {
+        assert_ne!(
+            compare_versions_policy("0.2.14", "0.2.14-smoke.2", false).unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions_policy("0.2.14", "0.2.14-smoke.2", true).unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert_ne!(
+            compare_versions_policy("0.2.15", "0.2.14-smoke.2", true).unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert_ne!(
+            compare_versions_policy("0.2.14-smoke.2", "0.2.14-smoke.2", true).unwrap(),
             std::cmp::Ordering::Greater
         );
     }

@@ -54,7 +54,7 @@ class NativeSmokeWiringTests(unittest.TestCase):
     def test_preview_version_agrees_across_metadata_and_lockfile(self):
         import json
         import tomllib
-        version = "0.2.14-preview.3"
+        version = "0.2.14-preview.4"
         config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text())
         cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())
         lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
