@@ -22,7 +22,7 @@ impl Core {
         self.log_event("info", "watch.open", json!({"video_id":video_id,"cached":cached.is_some(),"entry_id":cached.as_ref().map(|e|&e.id),"container":cached.as_ref().and_then(|e|e.ext.as_ref()),"bytes":cached.as_ref().map(|e|e.size_bytes)}));
         self.ensure_meta(video_id);
         if let Some(entry)=self.best_complete_entry(video_id) {
-            if matches!(entry.ext.as_deref(),Some("mkv"|"webm")) {self.prepare_local_playback(&entry.id)?;}
+            if matches!(entry.ext.as_deref(),Some("mkv"|"webm")) {self.prepare_local_playback_at(&entry.id,None)?;}
         }
         if self.best_complete_entry(video_id).is_none() {
             // Failures are reported through the status, not raised here.

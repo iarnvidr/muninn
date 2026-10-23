@@ -254,12 +254,14 @@ async fn channel_videos(State(core):S,Path(id):Path<String>,Query(q):Query<HashM
 }
 async fn effective_subscriptions(State(core):S)->Json<Value>{Json(json!(core.effective_subscriptions()))}
 async fn put_channel_groups(State(core):S,body:Bytes)->ApiResult {let groups:Vec<crate::channel_groups::ChannelGroup>=parse(&body)?;core.put_channel_groups(&groups)?;Ok(Json(json!(groups)))}
-async fn local_playback(State(core): S, Path(id): Path<String>) -> ApiResult {
-    Ok(Json(tokio::task::spawn_blocking(move||core.prepare_local_playback(&id)).await.map_err(|e|ApiError(Error::other(e.to_string())))??))
+async fn local_playback(State(core): S, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+    let position=q.get("position").map(|p|p.parse::<f64>().ok().filter(|p|p.is_finite()&&*p>=0.0).ok_or_else(||Error::bad("invalid position"))).transpose()?;
+    Ok(Json(tokio::task::spawn_blocking(move||core.prepare_local_playback_at(&id,position)).await.map_err(|e|ApiError(Error::other(e.to_string())))??))
 }
 async fn local_playback_state(State(core): S, Path(id): Path<String>) -> ApiResult {core.resolve_media_entry(&id)?;Ok(Json(core.local_playback_status(&id).ok_or_else(||Error::not_found("no local playback"))?))}
-async fn stop_local_playback(State(core): S, Path(id): Path<String>) -> ApiResult {
-    tokio::task::spawn_blocking(move||core.stop_local_playback(&id)).await.map_err(|e|ApiError(Error::other(e.to_string())))??;
+async fn stop_local_playback(State(core): S, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+    let generation=q.get("generation").map(|g|g.parse::<u64>().map_err(|_|Error::bad("invalid generation"))).transpose()?;
+    tokio::task::spawn_blocking(move||core.stop_local_playback_generation(&id,generation)).await.map_err(|e|ApiError(Error::other(e.to_string())))??;
     Ok(Json(json!({"ok":true})))
 }
 async fn put_subscriptions(State(core): S, body:Bytes) -> ApiResult {
