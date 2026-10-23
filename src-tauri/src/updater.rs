@@ -11,29 +11,32 @@ pub const ENDPOINT: &str =
     "https://github.com/iarnvidr/muninn/releases/latest/download/latest.json";
 
 /// Isolated updater fixture overrides are intentionally unavailable in release builds.
-pub fn plugin_builder() -> tauri_plugin_updater::Builder {
-    let mut builder = tauri_plugin_updater::Builder::new();
+pub fn plugin_builder() -> tauri_plugin_updater::TauriPlugin<tauri::Wry> {
+    // Endpoint and key are pinned in the application configuration. Overrides and
+    // comparator policy are configured on each updater operation below.
+    tauri_plugin_updater::Builder::new().build()
+}
+
+fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    let mut builder = app.updater_builder();
     #[cfg(debug_assertions)]
-    {
-        let smoke = std::env::args().any(|a| a == "--updater-smoke")
-            && std::env::var_os("MUNINN_NATIVE_UI_SMOKE").is_some();
-        if smoke {
-            if let (Ok(endpoint), Ok(pubkey)) = (
-                std::env::var("MUNINN_UPDATER_SMOKE_ENDPOINT"),
-                std::env::var("MUNINN_UPDATER_SMOKE_PUBKEY"),
-            ) {
-                if let Ok(url) = url::Url::parse(&endpoint) {
-                    if let Ok(b) = builder.endpoints(vec![url]) {
-                        builder = b.pubkey(pubkey);
-                    }
-                }
+    if debug_smoke_mode() {
+        if let (Ok(endpoint), Ok(pubkey)) = (
+            std::env::var("MUNINN_UPDATER_SMOKE_ENDPOINT"),
+            std::env::var("MUNINN_UPDATER_SMOKE_PUBKEY"),
+        ) {
+            if let Ok(url) = url::Url::parse(&endpoint) {
+                builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
+                builder = builder.pubkey(pubkey);
             }
         }
     }
-    builder.version_comparator(|current, release| {
-        compare_versions_policy(current, &release.version, debug_smoke_mode())
-            .is_ok_and(|order| order == std::cmp::Ordering::Greater)
-    })
+    Ok(builder
+        .version_comparator(|current, release| {
+            compare_versions_policy(&current.to_string(), &release.version, debug_smoke_mode())
+                .is_ok_and(|order| order == std::cmp::Ordering::Greater)
+        })
+        .build())
 }
 #[cfg(debug_assertions)]
 fn debug_smoke_mode() -> bool {
@@ -180,9 +183,7 @@ pub async fn updater_check(
     let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         let result = async {
-            let update = app
-                .updater()
-                .map_err(|e| e.to_string())?
+            let update = configured_updater(&app)?
                 .check()
                 .await
                 .map_err(|e| e.to_string())?
@@ -234,9 +235,7 @@ pub async fn updater_download(
     state.set(UpdateStatus::Checking);
     tauri::async_runtime::spawn(async move {
         let result = async {
-            let update = app
-                .updater()
-                .map_err(|e| e.to_string())?
+            let update = configured_updater(&app)?
                 .check()
                 .await
                 .map_err(|e| e.to_string())?
