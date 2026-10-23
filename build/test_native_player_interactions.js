@@ -1,0 +1,38 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const fixture = fs.readFileSync(path.join(__dirname, 'native-player-interactions.js'), 'utf8');
+test('native player fixture uses real API schemas, valid ids, blob media, and observes routing', () => {
+  assert.match(fixture, /__muninnNativePlayerInteractions/);
+  assert.match(fixture, /async function runNativePlayerInteractions/);
+  assert.match(fixture, /requires playlistId and local mediaBase64/);
+  const ids = [...fixture.matchAll(/'((?:Sm0keVid\d{3}))'/g)].map(match => match[1]);
+  assert.ok(ids.length >= 3);
+  for (const id of new Set(ids)) assert.match(id, /^[A-Za-z0-9_-]{11}$/, `${id} must be 11 characters at runtime`);
+  assert.match(fixture, /Uint8Array\.from\(atob/);
+  assert.match(fixture, /new Blob\(\[mediaBytes\], \{type:'video\/mp4'\}\)/);
+  assert.match(fixture, /M\.invoke\('tab_open_video',\{id:tabId,video_id:videoId,playlist:/);
+  assert.match(fixture, /M\.api = async function fixtureApi/);
+  assert.match(fixture, /\/api\/watch\//);
+  assert.match(fixture, /\/api\/playlist\?/);
+  assert.match(fixture, /\/api\/video\/\' \+ activeId/);
+  assert.match(fixture, /playback:\{ready:false,state:'resolving',phase:'resolving'/);
+  for (const key of ['J','L','k','T']) assert.ok(fixture.includes("key('"+key+"')"), `missing ${key} event`);
+  assert.match(fixture, /activeVideo\.dispatchEvent\(new Event\('ended'\)\)/);
+  assert.match(fixture, /currentPlayer = async expectedId/);
+  assert.match(fixture, /tab\?\.video_id===expectedId/);
+  assert.match(fixture, /key\('N',document\.body\)/);
+  assert.match(fixture, /key\('P',document\.body\)/);
+  assert.match(fixture, /ended on current third mounted player/);
+  assert.match(fixture, /previous queue control routes second id/);
+  assert.match(fixture, /queueIds\[1\].*playlist\?\.index===2/);
+  assert.match(fixture, /queueIds\.some\(id => !\/\^\[A-Za-z0-9_-\]\{11\}\$\//);
+  assert.match(fixture, /queueIds\[2\].*playlist\?\.index===3/);
+  assert.match(fixture, /M\.invoke = async function observeInvoke/);
+  assert.match(fixture, /queueButton\.click\(\)/);
+  assert.match(fixture, /M\.api = originalApi/);
+  assert.doesNotMatch(fixture, /M\.watch\.[A-Za-z_$]+\s*=/, 'must not monkeypatch player actions');
+});

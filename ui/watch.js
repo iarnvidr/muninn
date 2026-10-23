@@ -376,7 +376,7 @@
   }
   window.addEventListener('resize',sizeTheatre);
   if(window.ResizeObserver){const observer=new ResizeObserver(sizeTheatre);observer.observe(document.querySelector('#content'));observer.observe(ctl.bar);}
-  theatre.addEventListener('click', async () => {
+  async function toggleTheatre() {
     const before=player.getBoundingClientRect().toJSON();
     const wasFullscreen=!!fsEl()||player.classList.contains('expanded');
     if(fsEl()) {try{await (document.exitFullscreen||document.webkitExitFullscreen).call(document);}catch(e){M.flashError(e);return;}}
@@ -386,7 +386,8 @@
     setAttr(theatre, 'aria-pressed', String(on));
     setAttr(theatre, 'title', on ? 'Exit theatre mode' : 'Theatre mode');
     requestAnimationFrame(()=>M.api('POST','/api/logs',{event:'ui.player.theatre',message:JSON.stringify({enabled:on,before,after:player.getBoundingClientRect().toJSON(),stage:video.parentElement.getBoundingClientRect().toJSON(),was_fullscreen:wasFullscreen,background:!!cur?.background,width:innerWidth,height:innerHeight,version:M.boot?.version})}).catch(()=>{}));
-  });
+  }
+  theatre.addEventListener('click', toggleTheatre);
   const inPip = () => document.pictureInPictureElement === video || video.webkitPresentationMode === 'picture-in-picture';
   async function exitPip() {
     try {
@@ -524,6 +525,7 @@
     if (act === 'toggle') togglePlay();
     else if (act === 'fullscreen') toggleFullscreen();
     else if (act === 'mute') toggleMute();
+    else if (act === 'theatre') toggleTheatre();
     else if (act.seek) seekBy(act.seek);
     else if (act.percent != null && duration() > 0) commitSeek(duration() * act.percent / 100);
     else if (act.start) commitSeek(0);

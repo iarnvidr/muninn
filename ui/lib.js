@@ -206,6 +206,7 @@
       case 'f': case 'F': return 'fullscreen';
       case 'm': case 'M': return 'mute';
       case 'i': case 'I': return 'pip';
+      case 't': case 'T': return 'theatre';
       case ',': return 'frame-back';
       case '.': return 'frame-forward';
       case '<': return { speed: -1 };

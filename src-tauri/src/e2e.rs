@@ -14,6 +14,9 @@ use std::time::Duration;
 use tauri::Manager;
 
 fn dir() -> Option<PathBuf> {
+    // Native UI automation is restricted to explicit smoke launch and debug builds.
+    if !cfg!(debug_assertions) || std::env::var_os("MUNINN_NATIVE_UI_SMOKE").is_none() ||
+       !std::env::args().any(|a| a == "--native-ui-smoke") { return None; }
     std::env::var_os("MUNINN_E2E_DIR").map(PathBuf::from)
 }
 

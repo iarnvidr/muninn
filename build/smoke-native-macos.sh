@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
+# Release launch/localhost health check only (debug-only e2e interactions run separately).
 # Launch the just-built ad-hoc app in the hosted Apple Silicon login session.
 # This checks app startup + its loopback health/UI endpoints; it is not a UI automation test.
 set -euo pipefail
 app="${1:?usage: smoke-native-macos.sh /path/to/Muninn.app}"
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { echo 'requires hosted Apple Silicon macOS' >&2; exit 2; }
 [[ -d "$app/Contents/MacOS" ]] || { echo "app bundle missing: $app" >&2; exit 2; }
-evidence="${SMOKE_EVIDENCE_DIR:-$RUNNER_TEMP/macos-smoke-evidence}"
+evidence="${SMOKE_EVIDENCE_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/macos-smoke-evidence}"
 mkdir -p "$evidence"
+# Keep application state away from any real user profile; smoke data is disposable/synthetic.
+smoke_home="${MUNINN_SMOKE_HOME:-$(mktemp -d "${TMPDIR:-/tmp}/muninn-smoke-home.XXXXXX") }"
+mkdir -p "$smoke_home"
+printf 'synthetic-only isolated home\n' > "$evidence/README.txt"
 app="$(cd "$(dirname "$app")" && pwd)/$(basename "$app")"
 plutil -lint "$app/Contents/Info.plist" | tee "$evidence/plist.txt"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist" > "$evidence/executable-name.txt"
