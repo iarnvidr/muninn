@@ -2,13 +2,14 @@ import AVFoundation
 import CoreVideo
 import Foundation
 
+@main
 struct GenerateNativeFixture {
     static func fail(_ message: String) -> Never {
         fputs("native fixture: \(message)\n", stderr)
         exit(1)
     }
 
-    static func run() {
+    static func main() async {
         guard CommandLine.arguments.count == 2 else {
             fail("usage: generate-native-fixture.swift /path/to/output.mp4")
         }
@@ -72,4 +73,3 @@ struct GenerateNativeFixture {
     }
 }
 
-GenerateNativeFixture.run()
