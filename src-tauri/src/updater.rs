@@ -38,7 +38,7 @@ fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, 
                 .is_ok_and(|order| order == std::cmp::Ordering::Greater)
         })
         .build()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?)
 }
 #[cfg(debug_assertions)]
 fn debug_smoke_mode() -> bool {
@@ -399,7 +399,13 @@ mod tests {
     }
     #[test]
     fn comparator_uses_supplied_current_version() {
-        assert_eq!(compare_versions("0.2.14-smoke.2", "0.2.14-smoke.3").unwrap(), std::cmp::Ordering::Greater);
-        assert_ne!(compare_versions("0.2.14-preview.4", "0.2.14-smoke.2").unwrap(), std::cmp::Ordering::Greater);
+        assert_eq!(
+            compare_versions("0.2.14-smoke.2", "0.2.14-smoke.3").unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert_ne!(
+            compare_versions("0.2.14-preview.4", "0.2.14-smoke.2").unwrap(),
+            std::cmp::Ordering::Greater
+        );
     }
 }
