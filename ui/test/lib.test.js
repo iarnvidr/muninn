@@ -480,3 +480,65 @@ test('a stop carries its session generation, also when it is retried', async () 
   await stops.queue('video.720', 9);
   assert.deepEqual(calls[2], ['video.720', 9]);
 });
+
+test('a queued stop keeps the generation it was queued with, not a later stop\'s', async () => {
+  const calls = [];
+  const gates = [];
+  const stops = L.stopBarrier((id, generation) => { calls.push([id, generation]); return new Promise(resolve => gates.push(resolve)); });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const first = stops.queue('v.720', 4);
+  const second = stops.queue('v.720', 8);   // queued while the first is still in flight
+  await tick();
+  gates[0]();
+  await first;
+  await tick();
+  gates[1]();
+  await second;
+  assert.deepEqual(calls, [['v.720', 4], ['v.720', 8]]);
+  // A stop queued behind slower ones must still use its own value when it finally runs.
+  const slow = [];
+  const lazy = L.stopBarrier((id, generation) => { calls.push(['lazy', generation]); return new Promise(resolve => slow.push(resolve)); });
+  const a = lazy.queue('w', 1);
+  const b = lazy.queue('w', 2);
+  const c = lazy.queue('w', 3);
+  await tick(); slow[0](); await a; await tick(); slow[1](); await b; await tick(); slow[2](); await c;
+  assert.deepEqual(calls.slice(2), [['lazy', 1], ['lazy', 2], ['lazy', 3]]);
+});
+
+test('the seek debounce is 250 ms and a superseded or abandoned seek never fires', () => {
+  assert.equal(L.SEEK_DEBOUNCE_MS, 250);
+  const c = { seekTarget: 500 };
+  assert.equal(L.seekDue(c, c, 500), true);
+  assert.equal(L.seekDue(c, c, 400), false, 'a newer seek changed the target');
+  c.seekTarget = null;
+  assert.equal(L.seekDue(c, c, 500), false, 'cleared by commitSeek / prepareLocalPlayback');
+  assert.equal(L.seekDue({ seekTarget: 500 }, {}, 500), false, 'another video is on screen');
+  assert.equal(L.seekDue(null, null, 500), false);
+});
+
+test('window restarts are capped at three per session and never overlap', () => {
+  const c = {};
+  assert.equal(L.MAX_LOCAL_RESTARTS, 3);
+  for (let i = 0; i < 3; i++) { assert.equal(L.mayRestartLocal(c), true); c.localRestarts = (c.localRestarts || 0) + 1; }
+  assert.equal(L.mayRestartLocal(c), false, 'cap reached');
+  assert.equal(L.mayRestartLocal({ localRestarts: 1, localRestarting: true }), false, 'one restart at a time');
+  assert.equal(L.mayRestartLocal({ localRestarts: 2 }), true);
+});
+
+test('awaitingFrame holds the spinner until a frame is shown after the resume seek', () => {
+  const ready = { readyState: 4, seeking: false, videoWidth: 640 };
+  const base = { awaitingFrame: true, sourceSet: true, resumeDone: true };
+  assert.equal(L.frameSettled(base, ready), true);
+  assert.equal(L.frameSettled({ ...base, awaitingFrame: false }, ready), false, 'nothing to settle');
+  assert.equal(L.frameSettled({ ...base, sourceSet: false }, ready), false);
+  assert.equal(L.frameSettled({ ...base, resumeDone: false }, ready), false, 'resume seek pending');
+  assert.equal(L.frameSettled(base, { ...ready, seeking: true }), false);
+  assert.equal(L.frameSettled(base, { ...ready, readyState: 1 }), false, 'metadata only');
+  assert.equal(L.frameSettled(base, { readyState: 2, seeking: false, videoWidth: 0 }), false, 'no frame size yet');
+  assert.equal(L.frameSettled(base, { readyState: 3, seeking: false, videoWidth: 0 }), true, 'audio-only is playable');
+  // Spinner: buffering shows it while playing; a paused player still spins until the first frame.
+  assert.equal(L.showSpinner({ buffering: true }, false), true);
+  assert.equal(L.showSpinner({ buffering: true }, true), false);
+  assert.equal(L.showSpinner({ buffering: true, awaitingFrame: true }, true), true);
+  assert.equal(L.showSpinner({ buffering: false, awaitingFrame: true }, true), false);
+});
