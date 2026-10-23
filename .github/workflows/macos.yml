@@ -31,10 +31,23 @@ jobs:
         run: rustup show active-toolchain
       - name: Build, test and sign locally
         run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: muninn-macos-arm64
           path: ${{ runner.temp }}/muninn/*
           if-no-files-found: error
-          retention-days: 7
+          # Builds of main stay downloadable for a month; PR builds for a week.
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+      - name: Show where to download this build
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          {
+            echo "### Muninn test build (Apple Silicon)"
+            echo
+            echo "Download: [muninn-macos-arm64]($ARTIFACT_URL) (sign in to GitHub; zip with Muninn.app and its .sha256)."
+            echo "Not a release: ad-hoc signed and not notarized. See README, Install on the Mac."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Download: $ARTIFACT_URL"
 # Deliberately no automatic GitHub release. See docs/PUBLICATION.md before releasing.

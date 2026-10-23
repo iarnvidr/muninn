@@ -38,6 +38,12 @@ Requires **macOS 14 (Sonoma) or newer**.
    [GitHub releases](https://github.com/iarnvidr/muninn/releases) when a standalone
    prerelease is available, and check it with
    `shasum -a 256 -c Muninn_<version>_macos-arm64.zip.sha256`.
+
+   Until then, every push to `main` builds a test package: open
+   [Apple Silicon build](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml?query=branch%3Amain+is%3Asuccess),
+   pick the newest run and download **muninn-macos-arm64** from its summary (a GitHub
+   sign-in is needed; kept for 30 days). It contains the same zip and `.sha256`. These
+   builds are not releases; see [known issues](docs/KNOWN_ISSUES.md).
 2. Unzip, and move `Muninn.app` to `/Applications`.
 3. The app is **ad-hoc signed, not notarized**, so Gatekeeper blocks the first launch. Once:
    right-click the app, choose **Open**, confirm; or run
