@@ -127,11 +127,13 @@
   function stopBarrier(stop) {
     const pending = new Map();
     const extras = new Map();
-    // `extra` (the session generation) travels with every attempt, retries included,
-    // so a retried stop still cannot end a newer session of the same entry.
+    // `extra` (the session generation) is captured when the stop is queued and travels with
+    // every attempt, retries included, so a retried stop still cannot end a newer session of
+    // the same entry, and a stop queued earlier never picks up a later stop's generation.
     function queue(id, extra) {
       if (arguments.length > 1) extras.set(id, extra);
-      const next = (pending.get(id) || Promise.resolve()).catch(() => {}).then(() => stop(id, extras.get(id)));
+      const own = extras.get(id);
+      const next = (pending.get(id) || Promise.resolve()).catch(() => {}).then(() => stop(id, own));
       pending.set(id, next);
       return next;
     }
@@ -147,6 +149,35 @@
       for (const entry of pending.keys()) if (entry.startsWith(id + '.')) await wait(entry);
     }
     return { queue, wait, waitVideo };
+  }
+
+  /* Pure helpers for the local-playback seek / restart / loading-frame state machine. */
+
+  const SEEK_DEBOUNCE_MS = 250;
+  const MAX_LOCAL_RESTARTS = 3;
+
+  // A debounced window preparation fires only if it is still the wanted one: the same
+  // viewing session is on screen and no newer seek (or other prepare) replaced its target.
+  function seekDue(c, current, target) {
+    return !!c && c === current && c.seekTarget === target;
+  }
+
+  // The backend prepared a window that does not cover the resume position: ask again, but
+  // only once at a time and at most MAX_LOCAL_RESTARTS times per viewing session.
+  function mayRestartLocal(c) {
+    return !c.localRestarting && (c.localRestarts || 0) < MAX_LOCAL_RESTARTS;
+  }
+
+  // The loading feedback (awaitingFrame) ends once the source is attached, the resume seek is
+  // done and the player shows a frame: not while seeking, nor before a frame is decodable.
+  function frameSettled(c, v) {
+    if (!c || !c.awaitingFrame || !c.sourceSet || !c.resumeDone) return false;
+    return v.readyState >= 2 && !v.seeking && (v.videoWidth > 0 || v.readyState >= 3);
+  }
+
+  // Whether the loading spinner shows: buffering while playing, or until the first frame.
+  function showSpinner(c, paused) {
+    return !!c.buffering && (!paused || !!c.awaitingFrame);
   }
 
   function isTypingTarget(t) {
@@ -661,7 +692,7 @@
   return {
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
-    SEEK_STEP, SEEK_MARGIN, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
+    SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
     statusBanner, roundRect, sameRect,

@@ -50,6 +50,9 @@ non-zero media start time as `currentTime`.
   quarter of the cache budget) and the least recently used is evicted.
 * `POST .../playback/stop?generation=N` only stops the job if `N` is still its
   latest session, so a late stop from a replaced session cannot end the current one.
+* `POST ...?position=&client=TOKEN&seq=N`: the UI numbers its prepares per page. A prepare
+  with a `seq` lower than the newest already seen for that entry and `client` is refused
+  (HTTP 400, nothing changes), so one handled late cannot hand the UI a stale generation.
 * The running job is bounded by `max_disk_bytes / 4` and `min_free_bytes`.
 
 ## Codec-dependent path

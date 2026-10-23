@@ -293,6 +293,8 @@ fn a_stale_stop_cannot_end_the_current_session() {
     f.core.stop_local_playback_generation(&id, first["generation"].as_u64()).unwrap();
     assert_eq!(f.core.local_playback_status(&id).unwrap()["job_id"], second["job_id"], "stale stop killed the new session");
     // A seek far outside the window replaces the job (and cancels the old one).
+    // Let the first job actually launch ffmpeg before it is replaced (else it can be cancelled unspawned).
+    assert_eq!(wait_spawns(&f.log, 1).len(), 1);
     let third = f.core.prepare_local_playback_at(&id, Some(400.0)).unwrap();
     assert_ne!(third["job_id"], second["job_id"]);
     assert_eq!(third["offset_seconds"], 396.0);
@@ -304,6 +306,32 @@ fn a_stale_stop_cannot_end_the_current_session() {
     // ...while the stop for the current session ends it.
     f.core.stop_local_playback_generation(&id, third["generation"].as_u64()).unwrap();
     assert!(f.core.local_playback_status(&id).is_none());
+    f.core.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_late_handled_older_prepare_cannot_replace_the_newer_session() {
+    let f = fixture(false, PROBE_VP9_OPUS);
+    let source = f.root.join("clip.webm");
+    std::fs::write(&source, b"not real media").unwrap();
+    let id = import(&f.core, &source, VIDEO);
+    let newer = f.core.prepare_local_playback_for(&id, Some(100.0), Some(("page-a", 2))).unwrap();
+    assert_eq!(wait_spawns(&f.log, 1).len(), 1);
+    // The older request (seq 1, a far seek) is handled after seq 2: refused, nothing changes.
+    let late = f.core.prepare_local_playback_for(&id, Some(400.0), Some(("page-a", 1)));
+    assert!(late.is_err(), "stale prepare was served: {late:?}");
+    let now = f.core.local_playback_status(&id).unwrap();
+    assert_eq!((now["job_id"].clone(), now["generation"].clone()), (newer["job_id"].clone(), newer["generation"].clone()));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(spawns(&f.log).len(), 1, "stale prepare started an ffmpeg");
+    // The same sequence number again (a retry) and later ones are served.
+    let again = f.core.prepare_local_playback_for(&id, Some(105.0), Some(("page-a", 2))).unwrap();
+    assert!(again["generation"].as_u64() > newer["generation"].as_u64());
+    // A reloaded page restarts its counter under a new token.
+    assert!(f.core.prepare_local_playback_for(&id, Some(106.0), Some(("page-b", 1))).is_ok());
+    // Requests without a token keep working.
+    assert!(f.core.prepare_local_playback_at(&id, Some(107.0)).is_ok());
     f.core.shutdown();
 }
 

@@ -110,6 +110,8 @@ pub struct LocalPlaybacks {
     jobs: Vec<Arc<LocalPlayback>>,
     next_job: u64,
     next_generation: u64,
+    /// Newest prepare request seen per entry: (client session token, its sequence number).
+    last_request: std::collections::HashMap<String, (String, u64)>,
 }
 
 /// Window progress derived from an HLS playlist.
@@ -187,6 +189,15 @@ impl Core {
     /// Prepares (or reuses) a window near `position` (original time, seconds).
     /// `None` means the saved resume position. Returns the status.
     pub fn prepare_local_playback_at(self: &Arc<Self>, id: &str, position: Option<f64>) -> Result<Value> {
+        self.prepare_local_playback_for(id, position, None)
+    }
+
+    /// Like `prepare_local_playback_at`, for a UI session that numbers its requests
+    /// (`client` = a token of the page, `seq` = its monotonic counter). Requests may be
+    /// handled out of order; one older than the newest already seen for the same entry
+    /// and client is refused without touching any session, so it cannot hand the UI
+    /// a stale generation or cancel the newer request's window.
+    pub fn prepare_local_playback_for(self: &Arc<Self>, id: &str, position: Option<f64>, request: Option<(&str, u64)>) -> Result<Value> {
         let entry = self.resolve_media_entry(id)?;
         if !entry.is_complete() {
             return Err(Error::bad("finish importing this copy first"));
@@ -199,6 +210,17 @@ impl Core {
             .ok_or_else(|| Error::other("ffmpeg is not ready for local compatibility playback"))?;
         // One preparation at a time: probing and spawning must not interleave.
         let _gate = self.local_playback_gate.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((client, seq)) = request {
+            let mut set = self.local_playbacks.lock().unwrap_or_else(|e| e.into_inner());
+            match set.last_request.get(id) {
+                Some((c, last)) if c == client && seq < *last => {
+                    return Err(Error::bad("superseded by a newer playback request"));
+                }
+                _ => {
+                    set.last_request.insert(id.to_string(), (client.to_string(), seq));
+                }
+            }
+        }
         let known_duration = entry.duration_seconds.map(f64::from).filter(|d| *d > 0.0);
         let requested = match position {
             Some(p) => p,

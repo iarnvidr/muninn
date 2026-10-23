@@ -222,7 +222,7 @@
     else if (!c.sourceSet) { mode = 'message'; text = L.overlayMessage(c.status, c.retrying); }
     else if (c.loadingEngine) { mode = 'message'; text = 'Loading the video engine...'; }
     else if (c.needsClick && video.paused) mode = 'play';
-    else if (c.buffering && (!video.paused || c.awaitingFrame)) mode = 'spin';
+    else if (L.showSpinner(c, video.paused)) mode = 'spin';
     setHidden(ov.el, !mode);
     setAttr(ov.el, 'data-mode', mode);
     setHidden(ov.spinner, !(mode === 'message' || mode === 'spin'));
@@ -239,7 +239,7 @@
   // done and a frame is available, not when the player merely accepted the URL.
   function settleFrame(c) {
     if (!c || !c.awaitingFrame || !c.sourceSet || !c.resumeDone) return;
-    if (video.readyState >= 2 && !video.seeking && (video.videoWidth > 0 || video.readyState >= 3)) { c.awaitingFrame = false; c.buffering = false; updateOverlay(); }
+    if (L.frameSettled(c, video)) { c.awaitingFrame = false; c.buffering = false; updateOverlay(); }
   }
 
   let dragging = false;
@@ -354,7 +354,7 @@
       else {
         const c = cur;
         c.seekTarget = plan.target; c.buffering = true; c.awaitingFrame = true; updateOverlay();
-        c.seekTimer = setTimeout(() => { if (c === cur && c.seekTarget === plan.target) prepareLocalPlayback(c, c.localEntry, plan.target); }, 250);
+        c.seekTimer = setTimeout(() => { if (L.seekDue(c, cur, plan.target)) prepareLocalPlayback(c, c.localEntry, plan.target); }, L.SEEK_DEBOUNCE_MS);
       }
       updateControls();
       return;
@@ -608,7 +608,12 @@
 
   // Prepares (or reuses) a local window near `target` (original seconds; default: the
   // resume position). The window is attached by applyStatus once the backend reports it ready.
+  // Each prepare carries this page's token and a counter so the backend can refuse one that
+  // is handled after a newer one (it would otherwise hand back, and act on, a stale session).
+  const prepareClient=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+  let prepareSeq=0;
   async function prepareLocalPlayback(c,entryId,target) {
+    const seq=++prepareSeq;
     const selection=c.sourceGeneration=(c.sourceGeneration||0)+1;
     c.localAttempted=true;c.localEntry=entryId;
     clearTimeout(c.seekTimer);c.seekTarget=null;
@@ -624,7 +629,7 @@
     try {
       await awaitLocalStop(entryId);
       if(c!==cur||c.sourceGeneration!==selection)return;
-      const playback=await M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback?position='+encodeURIComponent(Math.max(0,Math.floor(position*1000)/1000)),{});
+      const playback=await M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback?position='+encodeURIComponent(Math.max(0,Math.floor(position*1000)/1000))+'&client='+prepareClient+'&seq='+seq,{});
       if(c!==cur||c.sourceGeneration!==selection){stopLocalPlayback(entryId,playback.generation);return;}
       c.localGeneration=playback.generation;
       applyStatus(c,Object.assign({},c.status,{playback}));pollLoop(c);
@@ -772,7 +777,7 @@
         const saved=c.resumeTarget!=null ? c.resumeTarget : L.resumePosition(c.detail?.position_seconds,duration());
         // The window is chosen around the resume position, so it must be known before attaching.
         if(c.resumeTarget==null && !c.detail && !c.detailFailed)pb.ready=false;
-        else if(!L.localFits(pb,saved) && pb.entry_id && !c.localRestarting && (c.localRestarts||0)<3){
+        else if(!L.localFits(pb,saved) && pb.entry_id && L.mayRestartLocal(c)){
           c.localRestarts=(c.localRestarts||0)+1;
           // The backend prepared another window (for example from the saved position of an
           // earlier session): ask for one that covers where this session resumes.
