@@ -11,7 +11,7 @@ pub const ENDPOINT: &str =
     "https://github.com/iarnvidr/muninn/releases/latest/download/latest.json";
 
 /// Isolated updater fixture overrides are intentionally unavailable in release builds.
-pub fn plugin_builder() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+pub fn plugin_builder() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config> {
     // Endpoint and key are pinned in the application configuration. Overrides and
     // comparator policy are configured on each updater operation below.
     tauri_plugin_updater::Builder::new().build()
@@ -34,7 +34,7 @@ fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, 
     }
     Ok(builder
         .version_comparator(move |_installed, release| {
-            compare_versions_policy(&current, &release.version, debug_smoke_mode())
+            compare_versions_policy(&current, &release.version.to_string(), debug_smoke_mode())
                 .is_ok_and(|order| order == std::cmp::Ordering::Greater)
         })
         .build()
