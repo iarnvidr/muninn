@@ -69,7 +69,7 @@
   function chooseView(internalPage, tab) {
     if (internalPage) return 'internal';
     if (!tab) return 'empty';
-    if (tab.face === 'watch' && tab.video_id) return 'watch';
+    if (tab.face === 'watch' && (tab.video_id || tab.playlist)) return 'watch';
     return tab.live ? 'native' : 'restore';
   }
 
@@ -190,16 +190,31 @@
 
   /** Player shortcut for a keydown ({key, metaKey, ctrlKey, altKey}, target {tag,type,editable}). */
   function playerKeyAction(e, target) {
-    if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(target)) return null;
-    const onButton = target && String(target.tag || '').toUpperCase() === 'BUTTON';
-    switch (e.key) {
-      case ' ': return onButton ? null : 'toggle';     // a focused button handles space itself
-      case 'k': case 'K': return 'toggle';
-      case 'ArrowLeft': return { seek: -SEEK_STEP };
-      case 'ArrowRight': return { seek: SEEK_STEP };
+    if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(target)) return null;
+    const tag = target && String(target.tag || '').toUpperCase();
+    // Native controls and buttons own their activation/navigation keys.
+    if (['BUTTON', 'SELECT', 'TEXTAREA'].includes(tag) || (tag === 'INPUT')) return null;
+    const key = String(e.key || '');
+    switch (key) {
+      case ' ': case 'k': case 'K': return 'toggle';
+      case 'j': case 'J': return { seek: -10 };
+      case 'l': case 'L': return { seek: 10 };
+      case 'ArrowLeft': return { seek: -5 };
+      case 'ArrowRight': return { seek: 5 };
+      case 'ArrowUp': return { volume: 5 };
+      case 'ArrowDown': return { volume: -5 };
       case 'f': case 'F': return 'fullscreen';
       case 'm': case 'M': return 'mute';
-      default: return null;
+      case 'i': case 'I': return 'pip';
+      case ',': return 'frame-back';
+      case '.': return 'frame-forward';
+      case '<': return { speed: -1 };
+      case '>': return { speed: 1 };
+      case 'Home': return 'start';
+      case 'End': return 'end';
+      default:
+        if (/^[0-9]$/.test(key)) return { percent: Number(key) * 10 };
+        return null;
     }
   }
 
@@ -548,11 +563,12 @@
       return { kind: 'error', text: 'Could not trust the local certificate' + (trust.detail ? ': ' + trust.detail : ''), progress: null, action: 'Retry' };
     }
     const phase = setup && setup.phase;
+    if (phase === 'finding') return { kind: 'setup', text: 'Finding video downloader…', progress: null, action: null };
     if (phase === 'installing' || phase === 'updating' || phase === 'starting') {
       const p = setup.progress == null ? null : Math.max(0, Math.min(1, Number(setup.progress)));
       return { kind: 'setup', text: 'Setting up tools: ' + (setup.message || phase), progress: p, action: null };
     }
-    if (phase === 'error') return { kind: 'error', text: setup.message || 'Tool setup failed', progress: null, action: null };
+    if (phase === 'error') return { kind: 'error', text: setup.message || 'Tool setup failed', progress: null, action: 'settings' };
     return null;
   }
 
@@ -668,7 +684,6 @@
   /** Sidebar pages in order; developer pages are absent unless the mode is on. */
   function sidebarPages(settings) {
     const pages = ['browse', 'player', 'library', 'feeds', 'rules'];
-    if (developerMode(settings)) pages.push('diagnostics');
     pages.push('settings');
     return pages;
   }
@@ -790,7 +805,27 @@
     ];
   }
 
+  /** Safe user-facing label from the live /api/channels/status account observation. */
+  function observedAccountState(account) {
+    const state = account && account.state;
+    if (state === 'signed_in') return { state, label: 'Signed in to YouTube', canSignIn: false };
+    if (state === 'signed_out') return { state, label: 'Signed out of YouTube', canSignIn: true };
+    return { state: 'not_observed', label: 'YouTube sign-in has not been observed yet', canSignIn: true };
+  }
+
+  /** Keep independent readiness dimensions explicit; helper presence is not playback health. */
+  function settingsReadiness(tools, trust, playback) {
+    const t = tools || {}, y = t.ytdlp || {}, f = t.ffmpeg || {};
+    return {
+      downloader: y.installed ? 'available' : 'unavailable',
+      ffmpeg: f.found ? 'available' : 'unavailable',
+      trust: !trust ? 'unavailable' : (trust.state || 'unknown'),
+      playback: playback && playback.state ? playback.state : 'not_observed',
+    };
+  }
+
   return {
+    observedAccountState, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,

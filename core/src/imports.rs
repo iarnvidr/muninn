@@ -170,7 +170,7 @@ impl Core {
             }
             if !matches!(
                 crate::tabs::classify_input(&url),
-                crate::tabs::Input::Yt(_) | crate::tabs::Input::Video(_)
+                crate::tabs::Input::Yt(_) | crate::tabs::Input::Video(_) | crate::tabs::Input::VideoInPlaylist { .. }
             ) {
                 return Err(Error::bad("tab imports accept YouTube URLs only"));
             }

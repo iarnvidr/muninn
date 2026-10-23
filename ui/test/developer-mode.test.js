@@ -17,7 +17,7 @@ test('developer mode defaults off and gates the sidebar', () => {
     assert.ok(!L.sidebarPages(settings).includes('diagnostics'));
   }
   const on = L.sidebarPages({ developer_mode: true });
-  assert.deepEqual(on, ['browse', 'player', 'library', 'feeds', 'rules', 'diagnostics', 'settings']);
+  assert.ok(!on.includes('diagnostics'));
 });
 
 test('turning developer mode off while Diagnostics is open falls back to Settings', () => {

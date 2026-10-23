@@ -61,6 +61,7 @@ struct TabView {
     url: String,
     face: Face,
     video_id: Option<String>,
+    playlist: Option<muninn_core::tabs::PlaylistContext>,
     state: &'static str,
     live: bool,
     kind: &'static str,
@@ -178,6 +179,7 @@ impl Shell {
                     url: t.shown_url(),
                     face: t.face(),
                     video_id: t.video_id.clone(),
+                    playlist: t.playlist.clone(),
                     state,
                     live: t.live && !t.restoring,
                     kind: t.kind_str(),
@@ -306,6 +308,7 @@ impl Shell {
         self.core.log_event("info", "tab.new", json!({"has_url":url.is_some()}));
         let loc = match url.map(classify_input) {
             Some(Input::Video(v)) => Loc::Watch(v),
+            Some(Input::VideoInPlaylist { video_id, playlist }) => Loc::WatchInPlaylist { video_id, playlist },
             Some(Input::Yt(u)) => Loc::Yt(u),
             Some(Input::Search(q)) => Loc::Yt(tabs::search_url(&q)),
             Some(Input::External(u)) => {
@@ -386,18 +389,24 @@ impl Shell {
     /// tab is focused (unless `background`) and playback in it is not touched. The tab that
     /// asked stays where it was.
     pub fn open_video(self: &Arc<Self>, tab_id: u64, video_id: &str, background: bool) {
+        self.open_video_loc(tab_id, Loc::Watch(video_id.to_string()), background);
+    }
+
+    pub fn open_video_loc(self: &Arc<Self>, tab_id: u64, loc: Loc, background: bool) {
+        let video_id = match &loc { Loc::Watch(v) | Loc::WatchInPlaylist { video_id: v, .. } => v.clone(), _ => return };
         let browsing = self.lock().tabs.iter().any(|tab|tab.id==tab_id && tab.face()==Face::Yt);
         if background || browsing {
-            self.open_dest(Loc::Watch(video_id.to_string()), background);
+            self.open_dest(loc.clone(), background);
             return;
         }
-        let key = tabs::loc_key(&Loc::Watch(video_id.to_string()));
+        let key = tabs::loc_key(&loc);
         let other = {
             let mut inner = self.lock();
             let other = tabs::find_by_dest(&inner.tabs, &key, Some(tab_id));
             if other.is_none() {
                 let Some(tab) = inner.tabs.iter_mut().find(|t| t.id == tab_id) else { return };
-                tab.open_video(video_id);
+                if let Loc::WatchInPlaylist { playlist, .. } = &loc { tab.playlist = Some(playlist.clone()); }
+                tab.open_video(&video_id);
                 Self::bump(&mut inner);
             }
             other
@@ -414,6 +423,7 @@ impl Shell {
     pub fn go(self: &Arc<Self>, tab_id: u64, input: &str) {
         match classify_input(input) {
             Input::Video(v) => self.open_video(tab_id, &v, false),
+            Input::VideoInPlaylist { video_id, playlist } => self.open_video_loc(tab_id, Loc::WatchInPlaylist { video_id, playlist }, false),
             Input::External(u) => {
                 let _ = crate::commands::open_in_browser(&u);
             }
@@ -750,7 +760,8 @@ impl Shell {
                     if let Some(v) = tabs::video_id_of_url(u.as_str()) {
                         // A full page load of a video (typed link, redirect): Muninn's player takes it.
                         let shell = s_nav.clone();
-                        tauri::async_runtime::spawn(async move { shell.open_video(id, &v, false) });
+                        let loc = match tabs::playlist_context_of_url(u.as_str()) { Some(playlist) => Loc::WatchInPlaylist { video_id: v, playlist }, None => Loc::Watch(v) };
+                        tauri::async_runtime::spawn(async move { shell.open_video_loc(id, loc, false) });
                         return false;
                     }
                 }
@@ -908,7 +919,7 @@ impl Shell {
     /// destination is already open, in which case the existing tab is kept untouched.
     fn adopt_imported_tabs(&self) {
         for row in self.core.browsing.tabs().unwrap_or_default().into_iter().filter(|r|r.tab_id.starts_with("import-") && r.state!="closed") {
-            let loc=match tabs::video_id_of_url(&row.url) {Some(v)=>Loc::Watch(v),None=>Loc::Yt(row.url.clone())};
+            let loc=match tabs::video_id_of_url(&row.url) {Some(v)=>match tabs::playlist_context_of_url(&row.url){Some(playlist)=>Loc::WatchInPlaylist{video_id:v,playlist},None=>Loc::Watch(v)},None=>Loc::Yt(row.url.clone())};
             let (id, created) = self.find_or_open(loc);
             if created {
                 let tab = {

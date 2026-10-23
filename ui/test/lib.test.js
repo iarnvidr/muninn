@@ -2,6 +2,27 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const L = require('../lib.js');
+test('playlist-only watch tab enters player view without a video id', () => {
+  assert.equal(L.chooseView(null, { face: 'watch', video_id: null, playlist: { list_id: 'PLtest' }, live: false }), 'watch');
+  assert.equal(L.chooseView(null, { face: 'watch', video_id: null, playlist: null, live: true }), 'native');
+});
+
+test('Settings account state follows only observed live account state and stays privacy-safe', () => {
+  assert.deepEqual(L.observedAccountState(null), { state: 'not_observed', label: 'YouTube sign-in has not been observed yet', canSignIn: true });
+  assert.equal(L.observedAccountState({state:'signed_in',verified:false}).label, 'Signed in to YouTube');
+  assert.equal(L.observedAccountState({state:'signed_out'}).state, 'signed_out');
+  assert.equal(JSON.stringify(L.observedAccountState({state:'signed_in', account_key:'secret'})).includes('secret'), false);
+  assert.equal(L.observedAccountState({state:'logged_in'}).state, 'not_observed');
+});
+
+test('Settings readiness separates tools, trust, and observed playback health', () => {
+  assert.deepEqual(L.settingsReadiness({ytdlp:{installed:true},ffmpeg:{found:false}}, null, null), {
+    downloader:'available', ffmpeg:'unavailable', trust:'unavailable', playback:'not_observed'
+  });
+  assert.deepEqual(L.settingsReadiness({ytdlp:{installed:true},ffmpeg:{found:true}}, {state:'needed'}, {state:'error'}), {
+    downloader:'available', ffmpeg:'available', trust:'needed', playback:'error'
+  });
+});
 
 test('playback diagnostics do not query native ranges before metadata', () => {
   const video = { readyState: 0 };
@@ -175,7 +196,7 @@ test('window shortcuts', () => {
   assert.equal(k('t', { metaKey: true, shiftKey: true }), null);
 });
 
-test('player keys: space, arrows, f, m, and never while typing', () => {
+test('YouTube-style player keys and protected editing/native contexts', () => {
   const div = { tag: 'DIV' };
   assert.equal(L.playerKeyAction({ key: ' ' }, div), 'toggle');
   assert.deepEqual(L.playerKeyAction({ key: 'ArrowLeft' }, div), { seek: -5 });
@@ -187,11 +208,24 @@ test('player keys: space, arrows, f, m, and never while typing', () => {
   assert.equal(L.playerKeyAction({ key: 'm' }, { tag: 'INPUT', type: 'search' }), null);
   assert.equal(L.playerKeyAction({ key: 'f' }, { tag: 'SELECT' }), null);
   assert.equal(L.playerKeyAction({ key: 'f' }, { tag: 'DIV', editable: true }), null);
-  // the seek bar is a range input: arrows must still work there
-  assert.deepEqual(L.playerKeyAction({ key: 'ArrowRight' }, { tag: 'INPUT', type: 'range' }), { seek: 5 });
+  // Range sliders own their arrow navigation; player shortcuts must not intercept them.
+  assert.equal(L.playerKeyAction({ key: 'ArrowRight' }, { tag: 'INPUT', type: 'range' }), null);
   // a focused button handles space itself
   assert.equal(L.playerKeyAction({ key: ' ' }, { tag: 'BUTTON' }), null);
   assert.equal(L.playerKeyAction({ key: 'f', metaKey: true }, div), null);
+  assert.deepEqual(L.playerKeyAction({ key: 'J' }, div), { seek: -10 });
+  assert.deepEqual(L.playerKeyAction({ key: 'l' }, div), { seek: 10 });
+  assert.deepEqual(L.playerKeyAction({ key: 'ArrowUp' }, div), { volume: 5 });
+  assert.deepEqual(L.playerKeyAction({ key: 'ArrowDown' }, div), { volume: -5 });
+  assert.deepEqual(L.playerKeyAction({ key: '7' }, div), { percent: 70 });
+  assert.equal(L.playerKeyAction({ key: 'Home' }, div), 'start');
+  assert.equal(L.playerKeyAction({ key: 'End' }, div), 'end');
+  assert.equal(L.playerKeyAction({ key: '.' }, div), 'frame-forward');
+  assert.deepEqual(L.playerKeyAction({ key: '>' }, div), { speed: 1 });
+  assert.equal(L.playerKeyAction({ key: 'i' }, div), 'pip');
+  assert.equal(L.playerKeyAction({ key: 'k', isComposing: true }, div), null);
+  assert.equal(L.playerKeyAction({ key: 'j', ctrlKey: true }, div), null);
+  assert.equal(L.playerKeyAction({ key: 'j' }, { tag: 'BUTTON' }), null);
 });
 
 test('mediaUrl: files carry the token, HLS already has it in the path', () => {
@@ -327,6 +361,8 @@ test('status banner: trust first, then setup progress, then errors', () => {
   const s = L.statusBanner({ phase: 'installing', message: 'Downloading yt-dlp', progress: 0.4 }, { state: 'ok' });
   assert.deepEqual(s, { kind: 'setup', text: 'Setting up tools: Downloading yt-dlp', progress: 0.4, action: null });
   assert.equal(L.statusBanner({ phase: 'starting', message: 'Checking tools' }, null).progress, null);
+  assert.deepEqual(L.statusBanner({ phase: 'finding' }, null), { kind: 'setup', text: 'Finding video downloader…', progress: null, action: null });
+  assert.equal(L.statusBanner({ phase: 'error', message: 'No network' }, null).action, 'settings');
   assert.equal(L.statusBanner({ phase: 'error', message: 'No network' }, null).kind, 'error');
   assert.equal(L.statusBanner(null, { state: 'failed', detail: 'denied' }).text, 'Could not trust the local certificate: denied');
   assert.equal(L.statusBanner(null, { state: 'installing' }).action, null);
