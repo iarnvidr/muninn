@@ -83,6 +83,15 @@ impl FailureReason {
     }
 }
 
+/// Whole-word match, so "dns" does not fire inside another word.
+fn has_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(i, _)| {
+        let before = text[..i].chars().next_back().is_none_or(|c| !c.is_ascii_alphanumeric());
+        let after = text[i + word.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric());
+        before && after
+    })
+}
+
 /// Maps yt-dlp / ffmpeg / transport text to a reason. Text only decides when the
 /// code path itself did not already know the cause.
 pub fn classify_text(text: &str) -> FailureReason {
@@ -93,17 +102,17 @@ pub fn classify_text(text: &str) -> FailureReason {
         DiskSpace
     } else if has(&["not available in your country", "blocked it in your country", "geo restrict", "geo-restrict", "age-restricted", "age restricted", "confirm your age", "inappropriate for some users", "not made this video available"]) {
         GeoAge
-    } else if has(&["sign in", "log in to", "login required", "members-only", "members only", "join this channel", "private video", "cookies", "not a bot"]) {
+    } else if has(&["sign in", "log in to", "login required", "members-only", "members only", "join this channel", "private video", "--cookies", "cookies are no longer valid", "not a bot"]) {
         AuthRestricted
     } else if has(&["live event", "this live stream", "is live", "premieres in", "will begin in", "live stream;"]) {
         LiveStream
     } else if has(&["requested format is not available", "no video formats", "no stream urls"]) {
         FormatUnavailable
-    } else if has(&["video unavailable", "this video is unavailable", "video is not available", "has been removed", "no longer available", "account associated with this video has been terminated", "does not exist", "video has been deleted", "copyright"]) {
+    } else if has(&["video unavailable", "this video is unavailable", "video is not available", "has been removed", "no longer available", "account associated with this video has been terminated", "video does not exist", "video has been deleted", "copyright"]) {
         Unavailable
     } else if t.starts_with("probing stream length") || t.contains("did not report its length") {
         LengthProbeFailed
-    } else if has(&["timed out", "timeout", "connection reset", "connection refused", "connection failed", "connection closed", "temporary failure", "name resolution", "dns", "network is unreachable", "http error 5", "http error 429", "too many requests", "broken pipe", "unexpected eof", "tls", "ssl", "try again", "i/o error", "input/output error", "upstream", "service unavailable", "bad gateway", "transport"]) {
+    } else if has(&["timed out", "timeout", "connection reset", "connection refused", "connection failed", "connection closed", "temporary failure", "name resolution", "network is unreachable", "http error 5", "http error 429", "too many requests", "broken pipe", "unexpected eof", "try again", "i/o error", "input/output error", "upstream", "service unavailable", "bad gateway"]) || ["dns", "tls", "ssl", "transport"].iter().any(|w| has_word(&t, w)) {
         TransportRetryable
     } else {
         Unknown
@@ -159,8 +168,27 @@ impl Default for StreamTuning {
     }
 }
 
-const TLDS: &[&str] = &[
-    "com", "net", "org", "io", "tv", "be", "co", "me", "gov", "edu", "info", "app", "dev", "cloud", "xyz", "ru", "de", "uk", "fr", "jp", "br", "in", "ca", "au", "nl", "local", "internal", "lan",
+/// Per-request limits of the upstream length probe (connect + read), see `upstream_agent`.
+pub const PROBE_REQUEST_LIMIT: Duration = Duration::from_secs(45);
+/// A video is fed to ffmpeg as at most this many inputs (video + audio).
+const MAX_INPUTS: u32 = 2;
+
+impl StreamTuning {
+    /// Longest a start can legitimately keep working without reporting: every attempt resolves twice,
+    /// probes each input on every try and waits for first bytes, and a transient failure repeats all of it.
+    pub fn worst_case_start(&self) -> Duration {
+        let resolve = self.resolve_timeout * 2 + self.resolve_backoff;
+        let tries = self.probe_attempts.max(1);
+        let backoffs: Duration = (1..tries).map(|n| self.probe_backoff * n).sum();
+        let probe = (PROBE_REQUEST_LIMIT * tries + backoffs) * MAX_INPUTS;
+        let attempts = self.max_attempts.max(1);
+        (resolve + probe + self.no_first_bytes_timeout) * attempts + self.retry_backoff * (attempts - 1)
+    }
+}
+
+/// Final labels that are file names, not hosts. Any other alphabetic final label is treated as a host.
+const FILE_EXTS: &[&str] = &[
+    "txt", "log", "json", "mkv", "webm", "m4a", "mp3", "ogg", "opus", "wav", "flac", "aac", "mov", "avi", "srt", "vtt", "jpg", "jpeg", "png", "gif", "webp", "exe", "dll", "yaml", "yml", "xml", "html", "part", "tmp", "ytdl", "conf", "ini", "toml", "cfg",
 ];
 
 fn looks_like_host(token: &str) -> bool {
@@ -172,7 +200,32 @@ fn looks_like_host(token: &str) -> bool {
     if host.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
         return host.split('.').count() == 4;
     }
-    host.rsplit('.').next().is_some_and(|tld| TLDS.contains(&tld.to_ascii_lowercase().as_str()))
+    if host.split('.').any(|p| p.is_empty()) {
+        return false;
+    }
+    let tld = host.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_alphabetic()) && !FILE_EXTS.contains(&tld.as_str())
+}
+
+fn looks_like_ipv6(s: &str) -> bool {
+    let colons = s.bytes().filter(|b| *b == b':').count();
+    colons >= 2 && (s.contains("::") || colons >= 7) && s.bytes().all(|b| b.is_ascii_hexdigit() || matches!(b, b':' | b'.' | b'%'))
+}
+
+/// `[::1]:8080`-style bracketed IPv6 host inside a word.
+fn mask_bracketed_ipv6(word: &str) -> Option<String> {
+    let p = word.find('[')?;
+    let q = p + word[p..].find(']')?;
+    let inner = &word[p + 1..q];
+    if !inner.contains(':') || !looks_like_ipv6(inner.split('%').next().unwrap_or(inner)) {
+        return None;
+    }
+    let rest = &word[q + 1..];
+    let rest = match rest.strip_prefix(':') {
+        Some(port) if port.bytes().take_while(u8::is_ascii_digit).count() > 0 => port.trim_start_matches(|c: char| c.is_ascii_digit()),
+        _ => rest,
+    };
+    Some(format!("{}[ip]{}", &word[..p], rest))
 }
 
 fn looks_like_id(token: &str) -> bool {
@@ -186,13 +239,116 @@ fn sensitive_key(key: &str) -> bool {
     ["token", "key", "sig", "signature", "auth", "cookie", "password", "secret", "session"].iter().any(|s| k.contains(s))
 }
 
+/// `name:` forms: the name must end in a credential word ("x-goog-api-key", "access_token").
+fn credential_label(label: &str) -> bool {
+    let k: String = label.bytes().filter(u8::is_ascii_alphanumeric).map(|b| b.to_ascii_lowercase() as char).collect();
+    ["token", "key", "secret", "password", "passwd", "pwd", "authorization", "auth", "cookie", "cookies", "signature", "sig", "session", "sessionid", "credential", "credentials", "apikey"].iter().any(|s| k.ends_with(s))
+}
+
+const EDGE: &[char] = &['(', ')', '[', ']', '<', '>', '"', '\'', '`', ',', ';', '{', '}'];
+const PUNCT: &[char] = &[':', '.', '!', '?'];
+const QUOTES: &[char] = &['"', '\'', '`'];
+
+fn path_start(core: &str) -> bool {
+    let b = core.as_bytes();
+    core.starts_with('/') || core.starts_with("~/") || core.starts_with("\\\\") || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'))
+}
+
+/// A word whose last path component carries a file extension (`x.mp4`) ends an unquoted path.
+fn ends_with_file_ext(core: &str) -> bool {
+    let last = core.rsplit(['/', '\\']).next().unwrap_or("");
+    match last.rsplit_once('.') {
+        Some((stem, ext)) => !stem.is_empty() && (2..=5).contains(&ext.len()) && ext.bytes().all(|b| b.is_ascii_alphanumeric()) && ext.bytes().any(|b| b.is_ascii_alphabetic()),
+        None => false,
+    }
+}
+
+fn split_word(word: &str) -> (&str, &str, &str) {
+    let lead_len = word.len() - word.trim_start_matches(EDGE).len();
+    let rest = &word[lead_len..];
+    let core = rest.trim_end_matches(|c: char| EDGE.contains(&c) || PUNCT.contains(&c));
+    (&word[..lead_len], core, &rest[core.len()..])
+}
+
+fn redact_line(line: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // Inside a path that contained spaces: Some(quoted) until a clear boundary.
+    let mut in_path: Option<bool> = None;
+    let mut mask_next = false;
+    for word in line.split_whitespace() {
+        let (lead, core, tail) = split_word(word);
+        if let Some(quoted) = in_path {
+            let closes = tail.contains(QUOTES);
+            let ends = closes || (!quoted && (tail.contains([':', '.', '!', '?', ',', ';']) || ends_with_file_ext(core)));
+            if let Some(last) = out.last_mut() {
+                if ends {
+                    last.push_str(tail);
+                }
+            }
+            if ends {
+                in_path = None;
+            }
+            continue;
+        }
+        if mask_next {
+            mask_next = false;
+            out.push(format!("{lead}[redacted]{tail}"));
+            continue;
+        }
+        if core.is_empty() {
+            out.push(word.to_string());
+            continue;
+        }
+        let replaced: String = if word.contains("://") || looks_like_host(core) {
+            "[url]".into()
+        } else if let Some(masked) = mask_bracketed_ipv6(word) {
+            out.push(masked);
+            continue;
+        } else if core.contains('@') {
+            "[email]".into()
+        } else if looks_like_ipv6(core) {
+            "[ip]".into()
+        } else if path_start(core) {
+            let quoted = lead.contains(QUOTES);
+            let ends = if quoted { tail.contains(QUOTES) } else { !tail.is_empty() && tail.contains([':', '.', '!', '?', ',', ';']) || ends_with_file_ext(core) };
+            if !ends {
+                in_path = Some(quoted);
+            }
+            "[path]".into()
+        } else if core.contains('/') || core.contains('\\') {
+            "[path]".into()
+        } else if let Some((k, v)) = core.split_once('=') {
+            if v.is_empty() && sensitive_key(k) {
+                mask_next = true;
+                core.to_string()
+            } else if sensitive_key(k) || v.len() > 12 {
+                format!("{k}=[redacted]")
+            } else {
+                core.to_string()
+            }
+        } else if tail.contains(':') && credential_label(core) {
+            mask_next = true;
+            core.to_string()
+        } else if looks_like_id(core) {
+            "[id]".into()
+        } else if core.len() >= 24 && core.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'%' | b'+')) {
+            "[token]".into()
+        } else {
+            core.to_string()
+        };
+        out.push(format!("{lead}{replaced}{tail}"));
+    }
+    out
+}
+
 /// Strips everything that identifies a video, host, file or credential from helper
 /// output and bounds it to `max` characters. Whole words are replaced, never
-/// partially masked, so no fragment of a URL or ID survives.
+/// partially masked, so no fragment of a URL or ID survives. Redaction runs on the
+/// complete text; only the result is truncated.
 pub fn redact_error(text: &str, video_id: &str, secrets: &[String], home: &str, max: usize) -> String {
-    let mut text: String = text.chars().take(2000).collect();
+    let mut text = text.to_string();
     for s in secrets {
-        if s.len() >= 8 {
+        if s.len() >= 3 {
             text = text.replace(s.as_str(), "[redacted]");
         }
     }
@@ -202,35 +358,7 @@ pub fn redact_error(text: &str, video_id: &str, secrets: &[String], home: &str, 
     if home.len() > 1 {
         text = text.replace(home, "~");
     }
-    let edge: &[char] = &['(', ')', '[', ']', '<', '>', '"', '\'', '`', ',', ';', '{', '}'];
-    let words: Vec<String> = text
-        .split_whitespace()
-        .map(|word| {
-            let lead: String = word.chars().take_while(|c| edge.contains(c)).collect();
-            let rest = &word[lead.len()..];
-            let core = rest.trim_end_matches(edge);
-            let tail = &rest[core.len()..];
-            let (core, trailing_colon) = match core.strip_suffix(':') {
-                Some(c) if !c.contains("://") => (c, ":"),
-                _ => (core, ""),
-            };
-            let replaced: String = if core.contains("://") || looks_like_host(core) {
-                "[url]".into()
-            } else if core.starts_with('/') || core.starts_with("~/") || core.starts_with("\\\\") || core.as_bytes().get(1..3) == Some(b":\\") || core.matches('/').count() >= 2 {
-                "[path]".into()
-            } else if let Some((k, v)) = core.split_once('=') {
-                if sensitive_key(k) || v.len() > 12 { format!("{k}=[redacted]") } else { core.to_string() }
-            } else if looks_like_id(core) {
-                "[id]".into()
-            } else if core.len() >= 24 && core.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'%' | b'+')) {
-                "[token]".into()
-            } else {
-                core.to_string()
-            };
-            format!("{lead}{replaced}{trailing_colon}{tail}")
-        })
-        .collect();
-    let joined = words.join(" ");
+    let joined = text.lines().flat_map(redact_line).collect::<Vec<_>>().join(" ");
     let lower = joined.to_ascii_lowercase();
     if ["bearer ", "cookie:", "authorization:", "-----begin"].iter().any(|s| lower.contains(s)) {
         return "[redacted credential-bearing message]".into();
@@ -290,5 +418,80 @@ mod tests {
         assert_eq!(redact_error("Authorization: Bearer abc", "", &[], "", 200), "[redacted credential-bearing message]");
         assert_eq!(redact_error("HTTP Error 403: Forbidden", "", &[], "", 200), "HTTP Error 403: Forbidden");
         assert_eq!(redact_error("ffmpeg exited: file.mp4 not found", "", &[], "", 200), "ffmpeg exited: file.mp4 not found");
+    }
+
+    fn red(text: &str) -> String {
+        redact_error(text, "", &[], "", 400)
+    }
+
+    #[test]
+    fn paths_with_spaces_are_masked_whole() {
+        for (raw, tail_word) in [
+            ("open /srv/someone/Videos/My Movie/x.mp4", "Movie"),
+            ("Error: '/srv/someone/Videos/My Movie/x.mp4' failed", "Movie"),
+            ("cannot read /srv/someone/Videos/My Movie: Permission denied", "Movie"),
+            ("cannot read C:\\Users\\Bob\\My Movie\\x.mp4 now", "Movie"),
+            ("no such file Movie Night/x.mp4", "x.mp4"),
+            ("no such file dir/x.mp4", "x.mp4"),
+        ] {
+            let out = red(raw);
+            assert!(!out.contains(tail_word) && !out.contains("someone") && !out.contains("Bob") && !out.contains("dir/"), "{raw} -> {out}");
+        }
+        assert_eq!(red("cannot read /srv/someone/Videos/My Movie: Permission denied"), "cannot read [path]: Permission denied");
+        assert_eq!(red("open /srv/someone/My Movie/x.mp4 failed"), "open [path] failed");
+        assert!(red("file.mp4 not found").contains("file.mp4 not found"));
+    }
+
+    #[test]
+    fn emails_ipv6_unlisted_hosts_and_colon_credentials_are_masked() {
+        for (raw, leaked) in [
+            ("mail bob@example.com failed", "bob"),
+            ("connect to [::1]:8080 failed", "::1"),
+            ("connect to [::1]:8080 failed", "8080"),
+            ("connect to [2001:db8::7]:443 failed", "db8"),
+            ("connect to 2001:db8::7 failed", "db8"),
+            ("reach cdn.example.zzz failed", "example"),
+            ("reach cdn.example.museum. failed", "museum"),
+            ("x-goog-api-key: v", "key: v"),
+            ("Password: pw", "pw"),
+            ("access_token: q", "token: q"),
+        ] {
+            let out = red(raw);
+            assert!(!out.contains(leaked), "{leaked} leaked from {raw}: {out}");
+        }
+        assert_eq!(red("token: abc"), "token: [redacted]");
+        assert_eq!(red("x-goog-api-key: v"), "x-goog-api-key: [redacted]");
+        assert!(!redact_error("secret abc12 here", "", &["abc12".into()], "", 100).contains("abc12"));
+        assert_eq!(red("Error 5: retry in 12:30:45 [youtube] e.g. ok"), "Error 5: retry in 12:30:45 [youtube] e.g. ok");
+    }
+
+    #[test]
+    fn redaction_happens_before_truncation() {
+        // A secret straddling the cut would survive as a fragment if the text were cut first.
+        let raw = format!("{} /srv/someone/Secret Place/data.bin", "x ".repeat(95));
+        let out = redact_error(&raw, "", &[], "", 200);
+        assert!(!out.contains("Secret") && !out.contains("someone"), "{out}");
+        let long = format!("{} https://h.example.com/p?sig=abcdefghijklmnop", "word ".repeat(450));
+        assert!(!redact_error(&long, "", &[], "", 5000).contains("example"));
+    }
+
+    #[test]
+    fn loose_classifier_matches_are_tightened() {
+        use FailureReason::*;
+        for text in ["warning: cookies enabled for example", "the folder does not exist", "undns resolution", "settlsomething", "classlss"] {
+            assert_eq!(classify_text(text), Unknown, "{text}");
+        }
+        assert_eq!(classify_text("DNS lookup failed"), TransportRetryable);
+        assert_eq!(classify_text("ERROR: This video does not exist"), Unavailable);
+        assert_eq!(classify_text("Use --cookies-from-browser for the authentication"), AuthRestricted);
+    }
+
+    #[test]
+    fn the_start_budget_covers_the_documented_worst_case() {
+        let t = StreamTuning::default();
+        // Two resolves of 120 s per attempt alone already exceed the old 150 s UI watchdog.
+        assert!(t.worst_case_start() > Duration::from_secs(2 * 120 * 2));
+        // ui/lib.js START_WATCHDOG_MS fallback must stay above this.
+        assert!(t.worst_case_start() < Duration::from_millis(1_200_000), "{:?}", t.worst_case_start());
     }
 }

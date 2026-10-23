@@ -120,8 +120,9 @@ impl Core {
             let id = entry.id.clone();
             if std::thread::Builder::new().name(format!("muninn-job-{id}")).spawn(move || {
                 core.run_job(&id, runner.as_ref(), &job);
-                core.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 core.running.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                // After the registration is gone, so a late cancel cannot leave a stale cause behind.
+                core.streams.cancel_causes.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 core.wake_scheduler();
             }).is_err()
             {

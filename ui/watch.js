@@ -550,10 +550,21 @@
     c.mediaError = c.kind === 'hls' && !c.hlsOk
       ? L.failureView('engine_unsupported')
       : L.failureView('media_error');
+    logFailureDetail(c, 'media_element', c.mediaError, 'media error ' + code + ' ' + (err && err.message || ''));
     c.buffering = false;
     updateOverlay();
   });
   window.addEventListener('pagehide', () => report());
+
+  /** Breadcrumb for a failure the player replaces with a generic message: category plus redacted, bounded detail. */
+  function logFailureDetail(c, source, failure, detail) {
+    if (!c) return;
+    const text = L.redactDetail(detail, 300);
+    const key = source + '|' + (failure && failure.reason) + '|' + text;
+    if (c.loggedFailure === key) return;
+    c.loggedFailure = key;
+    M.api('POST', '/api/logs', { event: 'ui.playback.error', message: JSON.stringify({ video_id: c.videoId, failure: source, reason: failure && failure.reason, detail: text, version: M.boot?.version }) }).catch(() => {});
+  }
 
   function logPlaybackState(c,event,reason) {
     const haveMetadata = video.readyState >= 1;
@@ -592,7 +603,7 @@
       const playback=await M.api('POST','/api/entries/'+encodeURIComponent(entryId)+'/playback',{});
       if(c!==cur||c.sourceGeneration!==selection){if(cur?.localEntry!==entryId)stopLocalPlayback(entryId);return;}
       applyStatus(c,Object.assign({},c.status,{playback}));pollLoop(c);
-    }catch(error){if(c===cur&&c.sourceGeneration===selection){c.error=L.failureView('media_error');updateOverlay();}}
+    }catch(error){if(c===cur&&c.sourceGeneration===selection){c.error=L.failureView('media_error');logFailureDetail(c,'local_prepare',c.error,M.errText(error));updateOverlay();}}
   }
 
   /* ------------------------------------------------------------------ resume */
@@ -692,6 +703,7 @@
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!ownsSource() || !data || !data.fatal) return;
         c.mediaError = L.failureView('media_error');
+        logFailureDetail(c, 'hls', c.mediaError, [data.type, data.details].filter(Boolean).join(' '));
         c.buffering = false;
         updateOverlay();
       });
@@ -704,6 +716,7 @@
       if (!ownsSource()) return;
       c.loadingEngine = false;
       c.mediaError = L.failureView('engine_unsupported');
+      logFailureDetail(c, 'engine', c.mediaError, M.errText(e));
       updateOverlay();
     });
   }
@@ -720,6 +733,7 @@
     if (failure) {
       if (c.sourceSet) { video.pause(); }
       c.error = failure;
+      logFailureDetail(c, st.playback.local ? 'local_status' : 'status', failure, st.playback.error || st.playback.phase);
     } else {
       c.error = null;
       const pb = st.playback || {};
@@ -770,6 +784,7 @@
     } catch (e) {
       if (c !== cur || (c.sourceGeneration||0)!==selection) return;
       c.error = L.failureView('unknown');
+      logFailureDetail(c, 'status_poll', c.error, M.errText(e));
       updateOverlay();
     }
   }

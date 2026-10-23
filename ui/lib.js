@@ -283,14 +283,42 @@
   function playbackFailure(status) {
     const p = status && status.playback;
     if (!p || p.state !== 'error') return null;
-    return failureView(p.reason, p.retryable);
+    // A status without a category (local ffmpeg playback reports only text) is classified from its error text.
+    return failureView(p.reason || classifyFailureText(p.error, !!p.local), p.retryable);
+  }
+
+  /** Best-effort category for helper text that arrived without one. Anything unrecognised from a local (ffmpeg) job is a helper exit. */
+  function classifyFailureText(text, local) {
+    const t = String(text || '').toLowerCase();
+    if (/no space left|not enough disk|disk full/.test(t)) return 'disk_space';
+    if (/timed out|timeout|connection (reset|refused|closed|failed)|network is unreachable|\bdns\b/.test(t)) return 'transport_retryable';
+    if (/invalid data|moov atom|unsupported|decoder|codec|no such file|does not contain any stream|corrupt/.test(t)) return 'media_error';
+    return local ? 'helper_exit' : 'unknown';
+  }
+
+  /** Bounded text without URLs, e-mail addresses, paths or long tokens, safe to write to the log. */
+  function redactDetail(text, max) {
+    const limit = max || 300;
+    return String(text == null ? '' : text)
+      .replace(/[^\s"'<>()]*:\/\/[^\s"'<>()]*/g, '[url]')
+      .replace(/[^\s"'<>()]+@[^\s"'<>()]+/g, '[email]')
+      .replace(/(^|[\s"'(])(?:[A-Za-z]:\\|~?\/|\\\\)[^\n"'<>]*?(?:\.[A-Za-z0-9]{2,5}\b|$)/gm, '$1[path]')
+      .replace(/\b[A-Za-z0-9_\-.%+]{24,}\b/g, '[token]')
+      .replace(/\b(token|key|secret|password|authorization|cookie|sig|signature)(\s*[:=]\s*)\S+/gi, '$1$2[redacted]')
+      .slice(0, limit);
   }
 
   /** Backstop against an endless spinner: nothing playable and no error after `limitMs` of waiting. */
-  const START_WATCHDOG_MS = 150000;
+  // Above the service's worst case for one start (StreamTuning::worst_case_start with defaults, ~1118 s:
+  // two resolves of 120 s, probes and first-bytes wait per attempt, two attempts), so Retry never just
+  // rejoins a job that is still working. The service also reports its own budget as `start_budget_ms`.
+  const START_WATCHDOG_MS = 1200000;
+  const START_BUDGET_GRACE_MS = 30000;
   function startStalled(beganAt, now, status, limitMs) {
-    if (!status || !beganAt || now - beganAt <= (limitMs || START_WATCHDOG_MS)) return false;
+    if (!status || !beganAt) return false;
     const p = status.playback || {};
+    const limit = limitMs || (p.start_budget_ms > 0 ? p.start_budget_ms + START_BUDGET_GRACE_MS : START_WATCHDOG_MS);
+    if (now - beganAt <= limit) return false;
     if (p.local || p.ready || p.state === 'cached' || p.state === 'error') return false;
     return true;
   }
@@ -651,7 +679,7 @@
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, stopBarrier, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
-    resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
+    resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
     statusBanner, roundRect, sameRect,
     TRIGGERS, QUALITIES, splitList, ruleToModel, newRuleModel, rulesSnapshot, rulesValidate,

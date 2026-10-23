@@ -107,7 +107,7 @@ impl Core {
                 "phase": s.phase, "kind": "hls", "entry_id": s.entry_id, "variant": s.variant, "height": s.height, "ready": ready,
                 "progress": s.progress, "error": s.error, "reason": s.reason, "retryable": s.retryable, "attempt": s.attempt, "segments": segments, "duration_seconds": s.duration_seconds, "audio_only": s.audio_only,
                 "url_path": format!("/h/{}/{}/index.m3u8", self.token(), dir),
-                "started_ms": s.started_ms, "first_segment_ms": s.first_segment_ms,
+                "started_ms": s.started_ms, "start_budget_ms": self.streams.tuning.lock().unwrap_or_else(|e| e.into_inner()).worst_case_start().as_millis() as u64, "first_segment_ms": s.first_segment_ms,
                 "time_to_first_segment_ms": s.first_segment_ms.map(|f| f - s.started_ms),
             })
         } else if let Some(err) = self.streams.errors.lock().unwrap_or_else(|e| e.into_inner()).get(video_id).cloned() {
