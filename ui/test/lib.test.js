@@ -408,3 +408,75 @@ test('library helpers: filter, counts and disk meters', () => {
   assert.equal(m[2].warn, true, 'free space below the minimum is flagged');
   assert.equal(L.diskMeters({ cache_bytes: 0, library_bytes: 0, max_disk_bytes: 0, free_bytes: null })[2].text, '-');
 });
+
+/* ---- local playback window: original time = offset + window time ---- */
+
+const win = (extra) => Object.assign({ offset: 348, until: 360, complete: false }, extra);
+
+test('window time maps to the original timeline and back', () => {
+  assert.equal(L.toOriginal(win(), 5), 353);
+  assert.equal(L.toWindow(win(), 353), 5);
+  assert.equal(L.toWindow(win(), 340), 0, 'never negative');
+  assert.equal(L.toOriginal(null, 12), 12, 'ordinary sources are not offset');
+  assert.equal(L.toOriginal(win(), NaN), 348);
+  assert.equal(L.windowOffset({ offset: -3 }), 0);
+  for (const t of [348, 350.5, 400, 7200]) assert.equal(L.toOriginal(win(), L.toWindow(win(), t)), t);
+});
+
+test('the playable limit of a window is original time, the full duration once complete', () => {
+  assert.equal(L.windowLimit(win(), 900), 360);
+  assert.equal(L.windowLimit(win({ complete: true }), 900), 900);
+  assert.equal(L.windowLimit(win({ until: undefined }), 900), 348);
+  assert.equal(L.windowLimit(null, 900), 0);
+});
+
+test('a seek inside the prepared window is a window-time seek, anything else prepares near the target', () => {
+  assert.deepEqual(L.seekPlan(win(), 353, 900), { kind: 'window', original: 353, time: 5 });
+  assert.equal(L.seekPlan(win(), 359.5, 900).kind, 'prepare', 'too close to the prepared end');
+  assert.equal(L.seekPlan(win(), 359, 900).kind, 'window');
+  assert.deepEqual(L.seekPlan(win(), 100, 900), { kind: 'prepare', original: 100, target: 100 }, 'before the window start');
+  assert.deepEqual(L.seekPlan(win(), 600, 900), { kind: 'prepare', original: 600, target: 600 }, 'beyond the prepared end');
+  // A complete window reaches the end of the video, so every later position is inside it.
+  assert.deepEqual(L.seekPlan(win({ complete: true }), 880, 900), { kind: 'window', original: 880, time: 532 });
+  assert.equal(L.seekPlan(win({ complete: true }), 340, 900).kind, 'prepare');
+  assert.equal(L.seekPlan(win({ complete: true }), 5000, 900).original, 900, 'clamped to the duration');
+  assert.equal(L.seekPlan(win({ offset: 0, complete: true }), -4, 900).original, 0);
+  assert.deepEqual(L.seekPlan(null, 77, 900), { kind: 'window', original: 77, time: 77 });
+});
+
+test('a local status is attached only when its window covers the resume target', () => {
+  const status = (extra) => Object.assign({ local: true, ready: true, progress: 0, offset_seconds: 348, prepared_until: 356, prepared_seconds: 8, mode: 'encode' }, extra);
+  assert.equal(L.localReady(status(), 353), true, 'ready as soon as the window covers the target, not after a prefix from 0');
+  assert.equal(L.localReady(status({ prepared_until: 352 }), 353), false);
+  assert.equal(L.localReady(status({ ready: false }), 353), false);
+  assert.equal(L.localReady(status(), 100), false, 'the window starts after the target');
+  assert.equal(L.localReady(status({ window_complete: true, progress: 1 }), 900), true);
+  // A backend that predates windows prepares from zero: wait for the prefix as before.
+  const legacy = { local: true, ready: true, progress: 0, prepared_seconds: 100 };
+  assert.equal(L.localReady(legacy, 353), false);
+  assert.equal(L.localReady(Object.assign({}, legacy, { prepared_seconds: 355 }), 353), true);
+  assert.equal(L.localReady(legacy, 0), true);
+});
+
+test('a status whose window cannot serve the resume target needs another prepare', () => {
+  const status = (extra) => Object.assign({ local: true, ready: true, offset_seconds: 348, prepared_until: 356, mode: 'encode' }, extra);
+  assert.equal(L.localFits(status(), 353), true);
+  assert.equal(L.localFits(status(), 360), true, 'a running encode will reach it');
+  assert.equal(L.localFits(status(), 400), false);
+  assert.equal(L.localFits(status(), 100), false);
+  assert.equal(L.localFits(status({ mode: 'remux', offset_seconds: 0, prepared_until: 5 }), 400), true, 'stream copy reaches any position quickly');
+  assert.equal(L.localFits(status({ window_complete: true }), 800), true);
+  assert.equal(L.localFits({ local: true, ready: true }, 800), true, 'older backend');
+  assert.equal(L.localFits({ kind: 'file' }, 800), true);
+});
+
+test('a stop carries its session generation, also when it is retried', async () => {
+  const calls = [];
+  let fail = true;
+  const stops = L.stopBarrier((id, generation) => { calls.push([id, generation]); if (fail) { fail = false; return Promise.reject(new Error('busy')); } return Promise.resolve(); });
+  stops.queue('video.720', 7).catch(() => {});
+  await stops.wait('video.720');
+  assert.deepEqual(calls, [['video.720', 7], ['video.720', 7]], 'the retry keeps the generation of the session it stops');
+  await stops.queue('video.720', 9);
+  assert.deepEqual(calls[2], ['video.720', 9]);
+});

@@ -126,8 +126,12 @@
   // the same entry and must finish before that entry can be reopened.
   function stopBarrier(stop) {
     const pending = new Map();
-    function queue(id) {
-      const next = (pending.get(id) || Promise.resolve()).catch(() => {}).then(() => stop(id));
+    const extras = new Map();
+    // `extra` (the session generation) travels with every attempt, retries included,
+    // so a retried stop still cannot end a newer session of the same entry.
+    function queue(id, extra) {
+      if (arguments.length > 1) extras.set(id, extra);
+      const next = (pending.get(id) || Promise.resolve()).catch(() => {}).then(() => stop(id, extras.get(id)));
       pending.set(id, next);
       return next;
     }
@@ -185,6 +189,61 @@
     const cands = [playback && playback.duration_seconds, meta && meta.duration_seconds, videoDuration];
     for (const c of cands) if (c != null && isFinite(c) && c > 0) return Number(c);
     return 0;
+  }
+
+
+  /* ------------------------------------------------------------------ local playback window
+   * Local compatibility playback is prepared as a window of the original video.
+   * Playlist time 0 is original time `offset_seconds` (see core/src/local_playback.rs), so
+   * original time = offset + video.currentTime. `win` is {offset, until, complete}: the
+   * original-time start and prepared end of the window, and whether it reaches the end. */
+
+  const WINDOW_SEEK_MARGIN = 1;       // seconds before the prepared end that a seek may still land
+  const WINDOW_REUSE_AHEAD = 12;      // the backend reuses a running window this far past its end
+
+  function windowOffset(win) {
+    return win && isFinite(win.offset) && win.offset > 0 ? Number(win.offset) : 0;
+  }
+  function toOriginal(win, windowTime) {
+    return windowOffset(win) + (isFinite(windowTime) && windowTime > 0 ? Number(windowTime) : 0);
+  }
+  function toWindow(win, originalTime) {
+    return Math.max(0, (isFinite(originalTime) ? Number(originalTime) : 0) - windowOffset(win));
+  }
+  /** The end of the playable original-time region of a window (0 when nothing is known). */
+  function windowLimit(win, duration) {
+    if (!win) return 0;
+    if (win.complete && duration > 0) return duration;
+    return isFinite(win.until) && win.until > 0 ? Number(win.until) : windowOffset(win);
+  }
+  /**
+   * How to seek to original time `time`: inside the prepared window it is a plain
+   * seek in window time; anywhere else the backend has to prepare a window near it.
+   */
+  function seekPlan(win, time, duration) {
+    let t = Number(time);
+    if (!isFinite(t) || t < 0) t = 0;
+    if (duration > 0 && t > duration) t = duration;
+    if (!win) return { kind: 'window', original: t, time: t };
+    const inside = t >= windowOffset(win) - 0.001 && (win.complete || t <= windowLimit(win, duration) - WINDOW_SEEK_MARGIN);
+    return inside ? { kind: 'window', original: t, time: toWindow(win, t) } : { kind: 'prepare', original: t, target: t };
+  }
+  /** Can the window described by a local status serve `target` without another prepare? */
+  function localFits(pb, target) {
+    if (!pb || !pb.local || pb.offset_seconds == null) return true;       // status from an older backend
+    const offset = Number(pb.offset_seconds) || 0, t = Number(target) || 0;
+    if (t + 0.001 < offset) return false;
+    if (pb.window_complete || pb.mode === 'remux') return true;
+    return t <= (Number(pb.prepared_until) || offset) + WINDOW_REUSE_AHEAD;
+  }
+  /** May the player attach a local status now? Requires the window to cover the target. */
+  function localReady(pb, target) {
+    if (!pb || !pb.ready) return false;
+    if (pb.offset_seconds == null) {                                       // older backend: prefix from 0
+      return !(target > 0 && pb.progress < 1 && (pb.prepared_seconds || 0) < target + 1);
+    }
+    const offset = Number(pb.offset_seconds) || 0, t = Number(target) || 0;
+    return t + 0.001 >= offset && (!!pb.window_complete || (Number(pb.prepared_until) || 0) >= t);
   }
 
   // Reading native ranges before metadata can change WebKit's interpretation
@@ -602,7 +661,7 @@
   return {
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
-    SEEK_STEP, SEEK_MARGIN, stopBarrier, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
+    SEEK_STEP, SEEK_MARGIN, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
     statusBanner, roundRect, sameRect,
