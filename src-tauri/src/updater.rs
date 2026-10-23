@@ -11,7 +11,7 @@ pub const ENDPOINT: &str =
     "https://github.com/iarnvidr/muninn/releases/latest/download/latest.json";
 
 /// Isolated updater fixture overrides are intentionally unavailable in release builds.
-pub fn plugin_builder() -> tauri_plugin_updater::TauriPlugin<tauri::Wry> {
+pub fn plugin_builder() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     // Endpoint and key are pinned in the application configuration. Overrides and
     // comparator policy are configured on each updater operation below.
     tauri_plugin_updater::Builder::new().build()
@@ -19,6 +19,7 @@ pub fn plugin_builder() -> tauri_plugin_updater::TauriPlugin<tauri::Wry> {
 
 fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     let mut builder = app.updater_builder();
+    let current = current_version();
     #[cfg(debug_assertions)]
     if debug_smoke_mode() {
         if let (Ok(endpoint), Ok(pubkey)) = (
@@ -32,11 +33,12 @@ fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, 
         }
     }
     Ok(builder
-        .version_comparator(|current, release| {
-            compare_versions_policy(&current.to_string(), &release.version, debug_smoke_mode())
+        .version_comparator(move |_installed, release| {
+            compare_versions_policy(&current, &release.version, debug_smoke_mode())
                 .is_ok_and(|order| order == std::cmp::Ordering::Greater)
         })
-        .build())
+        .build()
+        .map_err(|e| e.to_string())
 }
 #[cfg(debug_assertions)]
 fn debug_smoke_mode() -> bool {
@@ -141,7 +143,7 @@ fn compare_versions_policy(
     Ok(b.cmp(&a))
 }
 fn compare_versions(current: &str, candidate: &str) -> Result<std::cmp::Ordering, String> {
-    compare_versions_policy(&current_version(), candidate, debug_smoke_mode())
+    compare_versions_policy(current, candidate, debug_smoke_mode())
 }
 fn trusted(w: &tauri::Webview) -> Result<(), String> {
     if w.label() == "chrome" {
@@ -394,5 +396,10 @@ mod tests {
     fn malformed_rejected() {
         assert!(compare_versions("garbage", "1.0.0").is_err());
         assert!(compare_versions("1.0.0", "garbage").is_err());
+    }
+    #[test]
+    fn comparator_uses_supplied_current_version() {
+        assert_eq!(compare_versions("0.2.14-smoke.2", "0.2.14-smoke.3").unwrap(), std::cmp::Ordering::Greater);
+        assert_ne!(compare_versions("0.2.14-preview.4", "0.2.14-smoke.2").unwrap(), std::cmp::Ordering::Greater);
     }
 }
