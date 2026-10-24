@@ -53,6 +53,18 @@ class NativeSmokeWiringTests(unittest.TestCase):
         self.assertIn('NATIVE_SMOKE_MEDIA_FILE', ui_smoke)
         self.assertIn('reports/media-fixture.txt', ui_smoke)
 
+    def test_native_ui_tab_snapshot_focus_contract_is_consistent(self):
+        driver = (ROOT / "build/native-ui-driver.py").read_text()
+        # Exercise the source-level JS snapshot contract and Python consumers:
+        # focus is reported as focusedTab and remains asserted during sync/cycling.
+        snapshot = re.search(r"def tabstate\(\): return ev\(\"(.*?)\"\)", driver)
+        self.assertIsNotNone(snapshot)
+        self.assertIn("focusedTab:document.activeElement.closest('.tab')?.dataset.id", snapshot.group(1))
+        self.assertNotIn("focused:", snapshot.group(1))
+        self.assertGreaterEqual(driver.count("['focusedTab']"), 2)
+        self.assertIn("str(state['focusedTab'])==str(tab_id)", driver)
+        self.assertIn("str(after['focusedTab'])==str(expected)", driver)
+
     def test_preview_version_agrees_across_metadata_and_lockfile(self):
         import json
         import tomllib

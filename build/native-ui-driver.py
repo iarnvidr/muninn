@@ -62,14 +62,14 @@ try:
         if not r.get('ok'): raise RuntimeError(r)
         tabs.append(r['id'])
     report['synthetic_tabs']=tabs
-    def tabstate(): return ev("({active:window.Muninn.tabs.active,count:window.Muninn.tabs.list.length,focused:document.activeElement.closest('.tab')?.dataset.id,buttons:[...document.querySelectorAll('#tabstrip .tab-main')].map(x=>({id:x.parentNode.dataset.id,selected:x.getAttribute('aria-selected')}))})")
+    def tabstate(): return ev("({active:window.Muninn.tabs.active,count:window.Muninn.tabs.list.length,focusedTab:document.activeElement.closest('.tab')?.dataset.id,buttons:[...document.querySelectorAll('#tabstrip .tab-main')].map(x=>({id:x.parentNode.dataset.id,selected:x.getAttribute('aria-selected')}))})")
     base=tabstate(); check('synthetic tabs setup',base['count']>=2,base)
     def select_and_sync(tab_id):
         ev(f"(()=>{{const n=[...document.querySelectorAll('#tabstrip .tab-main')].find(x=>Number(x.parentNode.dataset.id)==={int(tab_id)});if(!n)throw Error('missing tab '+{int(tab_id)});n.click();return true}})()")
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             state=tabstate()
-            if str(state['active'])==str(tab_id) and str(state['focused'])==str(tab_id) and any(str(b['id'])==str(tab_id) and b['selected']=='true' for b in state['buttons']): return state
+            if str(state['active'])==str(tab_id) and str(state['focusedTab'])==str(tab_id) and any(str(b['id'])==str(tab_id) and b['selected']=='true' for b in state['buttons']): return state
             time.sleep(.05)
         raise TimeoutError(f'tab {tab_id} activation/render/focus did not synchronize: {state!r}')
     # Probe unmodified keys from a separately selected/focused tab: they must
@@ -89,7 +89,7 @@ try:
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             after=tabstate()
-            if str(after['active'])==str(expected) and str(after['focused'])==str(expected): break
+            if str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected): break
             time.sleep(.05)
         check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected) and str(after['focused'])==str(expected),{'before':before,'after':after,'expected':expected})
     media=os.environ.get('NATIVE_SMOKE_MEDIA_FILE')
