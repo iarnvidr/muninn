@@ -3,7 +3,7 @@
 //! unit tested on any machine; `src-tauri` applies the results to real web views.
 
 use crate::extract::{page_context, parse_url, Kind};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const HOME_URL: &str = "https://www.youtube.com/";
 
@@ -11,7 +11,11 @@ pub const HOME_URL: &str = "https://www.youtube.com/";
 pub enum Loc {
     Yt(String),
     Watch(String),
+    WatchInPlaylist { video_id: String, playlist: PlaylistContext },
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistContext { pub list_id: String, pub index: Option<usize> }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -27,6 +31,8 @@ pub struct Tab {
     /// The YouTube page of this tab (what the native view shows or will show).
     pub yt_url: String,
     pub video_id: Option<String>,
+    /// Optional playlist navigation context for this watch destination.
+    pub playlist: Option<PlaylistContext>,
     pub hist: Vec<Loc>,
     pub idx: usize,
     /// A native web view exists for this tab.
@@ -53,12 +59,15 @@ impl Tab {
         let (yt_url, video_id) = match &loc {
             Loc::Yt(u) => (u.clone(), None),
             Loc::Watch(v) => (HOME_URL.to_string(), Some(v.clone())),
+            Loc::WatchInPlaylist { video_id, .. } => (HOME_URL.to_string(), Some(video_id.clone())),
         };
+        let playlist = match &loc { Loc::Yt(u) => playlist_context_of_url(u), Loc::Watch(_) => None, Loc::WatchInPlaylist { playlist, .. } => Some(playlist.clone()) };
         Tab {
             id,
             title: String::new(),
             yt_url,
             video_id,
+            playlist,
             hist: vec![loc],
             idx: 0,
             live: false,
@@ -80,7 +89,7 @@ impl Tab {
     pub fn face(&self) -> Face {
         match self.loc() {
             Loc::Yt(_) => Face::Yt,
-            Loc::Watch(_) => Face::Watch,
+            Loc::Watch(_) | Loc::WatchInPlaylist { .. } => Face::Watch,
         }
     }
 
@@ -133,6 +142,7 @@ impl Tab {
         match self.loc() {
             Loc::Yt(u) => u.clone(),
             Loc::Watch(v) => format!("https://www.youtube.com/watch?v={v}"),
+            Loc::WatchInPlaylist { video_id, playlist } => format!("https://www.youtube.com/watch?v={video_id}&list={}{}", encode_component(&playlist.list_id), playlist.index.map(|i| format!("&index={i}")).unwrap_or_default()),
         }
     }
 
@@ -150,7 +160,8 @@ impl Tab {
         if self.loc() == &Loc::Watch(video_id.to_string()) {
             return;
         }
-        self.push(Loc::Watch(video_id.to_string()));
+        let loc = match self.playlist.clone() { Some(playlist) => Loc::WatchInPlaylist { video_id: video_id.to_string(), playlist }, None => Loc::Watch(video_id.to_string()) };
+        self.push(loc);
         self.video_id = Some(video_id.to_string());
     }
 
@@ -159,6 +170,7 @@ impl Tab {
         self.push(Loc::Yt(url.to_string()));
         self.yt_url = url.to_string();
         self.video_id = None;
+        self.playlist = playlist_context_of_url(url);
         self.native_depth += 1;
         self.native_fwd = 0;
     }
@@ -213,8 +225,14 @@ impl Tab {
     fn apply_move(&mut self, from_yt: bool, back: bool) -> Move {
         match self.loc().clone() {
             Loc::Watch(v) => {
+                self.playlist = None;
                 self.video_id = Some(v.clone());
                 Move::ShowWatch(v)
+            }
+            Loc::WatchInPlaylist { video_id, playlist } => {
+                self.playlist = Some(playlist);
+                self.video_id = Some(video_id.clone());
+                Move::ShowWatch(video_id)
             }
             Loc::Yt(u) => {
                 self.video_id = None;
@@ -274,10 +292,19 @@ pub enum Move {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     Video(String),
+    VideoInPlaylist { video_id: String, playlist: PlaylistContext },
     Yt(String),
     /// A page outside YouTube; Muninn hands it to the default browser.
     External(String),
     Search(String),
+}
+
+pub fn playlist_context_of_url(url: &str) -> Option<PlaylistContext> {
+    let u = parse_url(url)?;
+    let params = crate::extract::parse_query(&u.query);
+    let list_id = params.iter().find(|(k, v)| k == "list" && !v.is_empty())?.1.clone();
+    let index = params.iter().find(|(k, _)| k == "index").and_then(|(_, v)| v.parse::<usize>().ok()).filter(|i| *i > 0);
+    Some(PlaylistContext { list_id, index })
 }
 
 pub fn video_id_of_url(url: &str) -> Option<String> {
@@ -346,7 +373,14 @@ pub fn normalize_page_url(url: &str) -> String {
 
 /// Identity of a destination: `v:<id>` for anything that plays one video (watch, Shorts,
 /// youtu.be, embed, live forms), `u:<normalised url>` for browsing pages.
+fn playlist_key(playlist: &PlaylistContext) -> String {
+    format!("p:{}", encode_component(&playlist.list_id))
+}
+
 pub fn url_key(url: &str) -> String {
+    if let Some(playlist) = playlist_context_of_url(url) {
+        return playlist_key(&playlist);
+    }
     match video_id_of_url(url) {
         Some(v) => format!("v:{v}"),
         None => format!("u:{}", normalize_page_url(url)),
@@ -356,6 +390,7 @@ pub fn url_key(url: &str) -> String {
 pub fn loc_key(loc: &Loc) -> String {
     match loc {
         Loc::Watch(v) => format!("v:{v}"),
+        Loc::WatchInPlaylist { playlist, .. } => playlist_key(playlist),
         Loc::Yt(u) => url_key(u),
     }
 }
@@ -468,7 +503,7 @@ pub fn reconcile(tabs: Vec<Tab>, active: Option<u64>, playing: &[u64]) -> Reconc
 /// A sleeping tab from its persisted row.
 pub fn tab_from_row(id: u64, r: &crate::browsing::TabRow) -> Tab {
     let loc = match video_id_of_url(&r.url) {
-        Some(v) => Loc::Watch(v),
+        Some(v) => match playlist_context_of_url(&r.url) { Some(playlist) => Loc::WatchInPlaylist { video_id: v, playlist }, None => Loc::Watch(v) },
         None => Loc::Yt(if r.url.is_empty() { HOME_URL.into() } else { r.url.clone() }),
     };
     let mut tab = Tab::new(id, loc, r.updated_at);
@@ -506,7 +541,7 @@ pub fn classify_input(text: &str) -> Input {
     };
     if let Some(u) = with_scheme {
         if let Some(id) = video_id_of_url(&u) {
-            return Input::Video(id);
+            return match playlist_context_of_url(&u) { Some(playlist) => Input::VideoInPlaylist { video_id: id, playlist }, None => Input::Video(id) };
         }
         return match parse_url(&u) {
             Some(p) if is_youtube_host(&p.host) => Input::Yt(u.replace("http://", "https://")),
@@ -557,6 +592,44 @@ mod tests {
     const B: &str = "https://www.youtube.com/feed/subscriptions";
 
     #[test]
+    fn native_search_urls_are_distinct_destinations_and_reuse_tabs() {
+        let first = "https://www.youtube.com/?native_smoke=native-smoke-123-456-1";
+        let second = "https://www.youtube.com/?native_smoke=native-smoke-123-456-2";
+        let first_input = classify_input(first);
+        let second_input = classify_input(second);
+        assert_eq!(first_input, Input::Yt(first.into()));
+        assert_eq!(second_input, Input::Yt(second.into()));
+        let to_loc = |input| match input { Input::Yt(url) => Loc::Yt(url), other => panic!("expected native YouTube input, got {other:?}") };
+        let first_loc = to_loc(first_input);
+        let second_loc = to_loc(second_input);
+        assert_ne!(loc_key(&first_loc), loc_key(&second_loc));
+
+        let mut tabs = vec![yt(1, A, 0)];
+        let mut next_id = 2;
+        let created = find_or_open(&mut tabs, &mut next_id, first_loc.clone(), 1);
+        assert_eq!(created, Opened::Created(2));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, first_loc, 2), Opened::Existing(2));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, second_loc.clone(), 3), Opened::Created(3));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, second_loc, 4), Opened::Existing(3));
+        assert_eq!(tabs.iter().map(|tab| tab.id).collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn updater_results_search_is_classified_and_reused_as_native_youtube_tab() {
+        let url = "https://www.youtube.com/results?search_query=updater-smoke-marker";
+        let input = classify_input(url);
+        assert_eq!(input, Input::Yt(url.into()));
+        let loc = match input { Input::Yt(url) => Loc::Yt(url), other => panic!("expected native YouTube input, got {other:?}") };
+        assert_eq!(loc_key(&loc), url_key(url));
+        let mut tabs = Vec::new();
+        let mut next_id = 1;
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, loc.clone(), 0), Opened::Created(1));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, loc, 1), Opened::Existing(1));
+        assert_eq!(tabs[0].yt_url, url, "the search marker survives classification and opening");
+        assert_eq!(classify_input("about:blank"), Input::Search("about:blank".into()), "record actual legacy input classification");
+    }
+
+    #[test]
     fn address_bar_classification() {
         assert_eq!(classify_input("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5"), Input::Video("dQw4w9WgXcQ".into()));
         assert_eq!(classify_input("youtu.be/dQw4w9WgXcQ"), Input::Video("dQw4w9WgXcQ".into()));
@@ -568,6 +641,25 @@ mod tests {
         assert_eq!(classify_input("dQw4w9WgXcQ"), Input::Search("dQw4w9WgXcQ".into()), "bare ids are searched like any text");
         assert_eq!(classify_input("  "), Input::Yt(HOME_URL.into()));
         assert_eq!(search_url("a b&c"), "https://www.youtube.com/results?search_query=a+b%26c");
+    }
+
+    #[test]
+    fn playlist_context_survives_navigation_dedup_and_restore() {
+        let url = "https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLxyz&index=3";
+        let mut t = Tab::new(1, Loc::Yt(url.into()), 0);
+        assert_eq!(t.playlist, Some(PlaylistContext { list_id: "PLxyz".into(), index: Some(3) }));
+        t.open_video("bbbbbbbbbbb");
+        assert_eq!(t.url(), "https://www.youtube.com/watch?v=bbbbbbbbbbb&list=PLxyz&index=3");
+        assert_eq!(t.back(), Some(Move::ShowYt));
+        assert_eq!(t.forward(), Some(Move::ShowWatch("bbbbbbbbbbb".into())));
+        assert_eq!(url_key(url), url_key("https://youtu.be/aaaaaaaaaaa?list=PLxyz&index=3"));
+        assert_ne!(url_key(url), url_key("https://www.youtube.com/watch?v=aaaaaaaaaaa"));
+        assert_eq!(url_key(url), loc_key(&Loc::WatchInPlaylist { video_id: "differentid".into(), playlist: PlaylistContext { list_id: "PLxyz".into(), index: Some(3) } }));
+        let row = crate::browsing::TabRow { tab_id: "7".into(), url: url.into(), title: None, scroll_y: None, video_id: None, position_seconds: None, duration_seconds: None, watch_height: None, state: "hidden".into(), updated_at: 9 };
+        let restored = tab_from_row(7, &row);
+        assert_eq!(restored.url(), url);
+        assert_eq!(restored.playlist, t.playlist);
+        assert_eq!(url_key(url), url_key("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLxyz&index=4"));
     }
 
     #[test]
@@ -654,7 +746,7 @@ mod tests {
         let v = "v:aaaaaaaaaaa";
         for u in [
             "https://www.youtube.com/watch?v=aaaaaaaaaaa",
-            "https://m.youtube.com/watch?v=aaaaaaaaaaa&t=30s&list=PLxxxx&utm_source=x",
+            "https://m.youtube.com/watch?v=aaaaaaaaaaa&t=30s&utm_source=x",
             "https://youtu.be/aaaaaaaaaaa?si=zzz",
             "https://www.youtube.com/shorts/aaaaaaaaaaa",
             "https://www.youtube.com/embed/aaaaaaaaaaa",
@@ -664,6 +756,9 @@ mod tests {
         }
         assert_ne!(url_key("https://www.youtube.com/watch?v=bbbbbbbbbbb"), v);
         assert_eq!(loc_key(&Loc::Watch("aaaaaaaaaaa".into())), v);
+        assert_ne!(url_key("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLx"), v);
+        assert_eq!(url_key("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLx&index=2"), url_key("https://youtu.be/aaaaaaaaaaa?index=2&list=PLx"));
+        assert_eq!(url_key("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLx&index=2"), url_key("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLx&index=3"));
     }
 
     #[test]
@@ -694,7 +789,14 @@ mod tests {
         assert_eq!(find_or_open(&mut tabs, &mut next, Loc::Yt("https://youtube.com/?utm_source=x".into()), 5), Opened::Existing(1));
         assert_eq!(find_or_open(&mut tabs, &mut next, Loc::Watch("aaaaaaaaaaa".into()), 5), Opened::Created(2));
         assert_eq!(find_or_open(&mut tabs, &mut next, Loc::Watch("aaaaaaaaaaa".into()), 6), Opened::Existing(2));
-        assert_eq!((tabs.len(), next), (2, 3));
+        // A playlist watch URL must not be swallowed by an existing ordinary video tab.
+        let mut ordinary = vec![Tab::new(1, Loc::Watch("aaaaaaaaaaa".into()), 0)];
+        let opened = find_or_open(&mut ordinary, &mut next, Loc::Yt("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLxyz&index=3".into()), 7);
+        assert_eq!(opened, Opened::Created(3));
+        assert_eq!(ordinary.len(), 2);
+        assert_eq!(ordinary[1].playlist, Some(PlaylistContext { list_id: "PLxyz".into(), index: Some(3) }));
+        assert_eq!(ordinary[1].url(), "https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLxyz&index=3");
+        assert_eq!((tabs.len(), next), (2, 4));
         let mut stale = 1;
         assert_eq!(find_or_open(&mut tabs, &mut stale, Loc::Yt(B.into()), 7).id(), 3, "a stale counter never reuses an id");
     }

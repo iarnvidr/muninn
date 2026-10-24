@@ -76,11 +76,21 @@ def build_ffmpeg_lgpl(spec, cache):
         return Path(override).read_bytes()
     recipe = sha256_of((HERE / "ffmpeg_lgpl.py").read_bytes())[:16]
     built = cache / f"ffmpeg-lgpl-{spec['sha256']}-{recipe}"
-    if built.is_file():
-        try:
-            ffmpeg_lgpl.verify(built)
-            return built.read_bytes()
-        except ffmpeg_lgpl.LicenseError:
+    # Cache entries must be executable regular files. A stale/corrupt cache may
+    # instead be an extraction directory (or a non-executable file); never pass
+    # either to subprocess as the FFmpeg executable. Remove only the exact cache
+    # entry, then rebuild from the pinned source and verify it as usual.
+    if built.exists() or built.is_symlink():
+        usable = built.is_file() and os.access(built, os.X_OK)
+        if usable:
+            try:
+                ffmpeg_lgpl.verify(built)
+                return built.read_bytes()
+            except (ffmpeg_lgpl.LicenseError, OSError):
+                pass
+        if built.is_dir() and not built.is_symlink():
+            shutil.rmtree(built)
+        else:
             built.unlink()
     try:
         data = ffmpeg_lgpl.build(download(spec["url"], spec["sha256"], cache))
@@ -89,6 +99,7 @@ def build_ffmpeg_lgpl(spec, cache):
     cache.mkdir(parents=True, exist_ok=True)
     partial = built.with_suffix(".part")
     partial.write_bytes(data)
+    partial.chmod(0o755)
     partial.rename(built)
     return data
 

@@ -164,10 +164,10 @@ pub fn variant_for_height(h: u32) -> Quality {
 
 pub fn selector_for(height: u32, audio_only: bool) -> String {
     if audio_only {
-        return "ba[ext=m4a]/ba".into();
+        return "ba[ext=m4a][protocol=http]/ba[ext=m4a][protocol=https]/ba[protocol=http]/ba[protocol=https]".into();
     }
     format!(
-        "bv*[height<={height}][vcodec^=avc1]+ba[ext=m4a]/b[height<={height}][vcodec^=avc1][acodec^=mp4a]/bv*[height<={height}]+ba/b[height<={height}]"
+        "bv*[height<={height}][vcodec^=avc1][protocol=http]+ba[ext=m4a][protocol=http]/bv*[height<={height}][vcodec^=avc1][protocol=https]+ba[ext=m4a][protocol=https]/b[height<={height}][vcodec^=avc1][acodec^=mp4a][protocol=http]/b[height<={height}][vcodec^=avc1][acodec^=mp4a][protocol=https]/bv*[height<={height}][protocol=http]+ba[protocol=http]/bv*[height<={height}][protocol=https]+ba[protocol=https]/b[height<={height}][protocol=http]/b[height<={height}][protocol=https]"
     )
 }
 
@@ -239,6 +239,7 @@ pub struct ResolvedStream {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub len: Option<u64>,
+    pub protocol: Option<String>,
     pub has_video: bool,
     pub has_audio: bool,
 }
@@ -248,9 +249,10 @@ pub fn parse_resolved(json: &Value) -> Result<Resolved> {
         let url = f["url"].as_str()?.to_string();
         let headers = f["http_headers"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
         let len = f["filesize"].as_u64().or_else(|| clen_from_url(&url));
+        let protocol = f["protocol"].as_str().map(str::to_owned);
         let has_video = f["vcodec"].as_str().is_some_and(|v| v != "none");
         let has_audio = f["acodec"].as_str().is_some_and(|v| v != "none");
-        Some(ResolvedStream { url, headers, len, has_video, has_audio })
+        Some(ResolvedStream { url, headers, len, protocol, has_video, has_audio })
     };
     let formats: Vec<&Value> = match json["requested_formats"].as_array() {
         Some(a) if !a.is_empty() => a.iter().collect(),
@@ -260,7 +262,27 @@ pub fn parse_resolved(json: &Value) -> Result<Resolved> {
     if streams.is_empty() {
         return Err(Error::other("yt-dlp returned no stream URLs"));
     }
+    if streams.iter().any(|s| !matches!(s.protocol.as_deref(), Some("http" | "https"))) {
+        return Err(Error::other("selected format is not a byte-range HTTP source; choose an HTTP(S) format instead of an HLS/DASH manifest"));
+    }
+    if streams.iter().any(|s| !matches!(url_scheme(&s.url), Some("http" | "https"))) {
+        return Err(Error::other("selected format protocol does not match its HTTP(S) source URL; choose another format"));
+    }
+    if streams.iter().any(|s| manifest_path(&s.url)) {
+        return Err(Error::other("selected format is a playlist/manifest, not a byte-range HTTP source; choose another format"));
+    }
     Ok(Resolved { is_live: json["is_live"].as_bool().unwrap_or(false), duration: json["duration"].as_f64(), height: json["height"].as_u64().map(|h| h as u32), streams })
+}
+
+fn url_scheme(url: &str) -> Option<&str> { url.split_once("://").map(|(scheme, _)| scheme) }
+
+/// Match the URL path only: signed query tokens may contain arbitrary suffixes.
+fn manifest_path(url: &str) -> bool {
+    let authority_and_path = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let path = authority_and_path.find('/').map(|i| &authority_and_path[i..]).unwrap_or("");
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".m3u8") || lower.ends_with(".mpd")
 }
 
 fn clen_from_url(url: &str) -> Option<u64> {
@@ -720,7 +742,7 @@ impl Core {
             return Err(Failure::from_text(line, FailureReason::HelperExit).with_status(&status));
         }
         let json: Value = serde_json::from_slice(&stdout).map_err(|_| Failure::new(FailureReason::HelperExit, "yt-dlp returned unreadable output"))?;
-        parse_resolved(&json).map_err(|e| Failure::from_text(e.to_string(), FailureReason::Unknown))
+        parse_resolved(&json).map_err(|e| { let message=e.to_string(); if message.contains("selected format") { Failure::new(FailureReason::FormatUnavailable,message) } else { Failure::from_text(message, FailureReason::Unknown) } })
     }
 
     /// Resolves with one re-resolve for failures that can be transient (network trouble or an
@@ -1072,15 +1094,16 @@ mod tests {
     #[test]
     fn selectors_prefer_h264_and_aac_that_copy_into_mp4() {
         let s = selector_for(480, false);
-        assert!(s.starts_with("bv*[height<=480][vcodec^=avc1]+ba[ext=m4a]"), "{s}");
-        assert_eq!(selector_for(0, true), "ba[ext=m4a]/ba");
+        assert!(s.starts_with("bv*[height<=480][vcodec^=avc1][protocol=http]+ba[ext=m4a][protocol=http]"), "{s}");
+        assert!(s.contains("/bv*[height<=480][vcodec^=avc1][protocol=https]+ba[ext=m4a][protocol=https]"), "{s}");
+        assert_eq!(selector_for(0, true), "ba[ext=m4a][protocol=http]/ba[ext=m4a][protocol=https]/ba[protocol=http]/ba[protocol=https]");
     }
 
     #[test]
     fn resolved_formats_carry_urls_headers_and_exact_lengths() {
         let j = json!({"duration": 213.0, "height": 480, "requested_formats": [
-            {"url": "https://rr1.googlevideo.com/videoplayback?clen=1000&itag=135", "http_headers": {"User-Agent": "UA", "Accept": "*/*"}, "vcodec": "avc1.4d401f", "acodec": "none"},
-            {"url": "https://rr1.googlevideo.com/videoplayback?itag=140", "filesize": 55, "http_headers": {"User-Agent": "UA"}, "vcodec": "none", "acodec": "mp4a.40.2"}]});
+            {"url": "https://rr1.googlevideo.com/videoplayback?clen=1000&itag=135", "http_headers": {"User-Agent": "UA", "Accept": "*/*"}, "protocol":"https", "vcodec": "avc1.4d401f", "acodec": "none"},
+            {"url": "https://rr1.googlevideo.com/videoplayback?itag=140", "filesize": 55, "protocol":"https", "http_headers": {"User-Agent": "UA"}, "vcodec": "none", "acodec": "mp4a.40.2"}]});
         let r = parse_resolved(&j).unwrap();
         assert_eq!(r.streams.len(), 2);
         assert_eq!((r.streams[0].len, r.streams[0].has_video, r.streams[0].has_audio), (Some(1000), true, false));
@@ -1088,10 +1111,27 @@ mod tests {
         assert!(r.streams[0].headers.contains(&("User-Agent".to_string(), "UA".to_string())));
         assert_eq!(r.duration, Some(213.0));
         assert!(!r.is_live);
-        assert!(parse_resolved(&json!({"is_live": true, "url": "https://x/y?clen=1"})).unwrap().is_live);
+        assert!(parse_resolved(&json!({"is_live": true, "url": "https://x/y?clen=1", "protocol":"https"})).unwrap().is_live);
         assert!(parse_resolved(&json!({"title": "x"})).is_err());
+        // yt-dlp's http_dash_segments/http_dash_manifest are not byte-addressable HTTP URLs.
+        // Even if a resolver labels one as http(s), never hand a playlist/manifest to range feeder.
+        for (protocol, url) in [
+            ("http_dash_segments", "https://host/video.m4s"),
+            ("http_dash_manifest", "https://host/manifest.m3u8"),
+            ("https", "https://host/index.m3u8"),
+            ("http", "http://host/master.m3u8?token=redacted"),
+            ("https", "https://host/manifest.mpd"),
+            ("https", "https://host/media.M3U8?token=opaque"),
+        ] {
+            let selected = json!({"url":url,"protocol":protocol,"vcodec":"avc1","acodec":"mp4a","http_headers":{"User-Agent":"fixture-agent"}});
+            assert!(parse_resolved(&selected).is_err(), "must reject {protocol} {url}");
+        }
+        for protocol in ["http", "https"] {
+            let valid = json!({"url":format!("{protocol}://host/media.mp4?clen=9"),"protocol":protocol,"vcodec":"avc1","acodec":"mp4a"});
+            assert_eq!(parse_resolved(&valid).unwrap().streams[0].len, Some(9));
+        }
         // A single combined format (no requested_formats) is one stream.
-        let single = parse_resolved(&json!({"url": "https://x/y?clen=9", "vcodec": "avc1", "acodec": "mp4a"})).unwrap();
+        let single = parse_resolved(&json!({"url": "https://x/y?clen=9", "protocol":"https", "vcodec": "avc1", "acodec": "mp4a"})).unwrap();
         assert_eq!(single.streams.len(), 1);
     }
 
@@ -1148,6 +1188,7 @@ mod tests {
                     let n = stream.read(&mut buf).unwrap_or(0);
                     let req = String::from_utf8_lossy(&buf[..n]).to_string();
                     let range = req.lines().find(|l| l.to_ascii_lowercase().starts_with("range:")).unwrap_or("").to_string();
+                    assert!(req.lines().any(|l| l.eq_ignore_ascii_case("x-test: 1")), "custom source header must be preserved: {req}");
                     s.lock().unwrap().push(range.clone());
                     let spec = range.split('=').nth(1).unwrap_or("0-0").trim().to_string();
                     let (a, b) = spec.split_once('-').unwrap();
@@ -1259,7 +1300,7 @@ mod tests {
 
     fn ytdlp_json(url: &str, with_len: bool) -> String {
         let len = if with_len { ",\"filesize\":1000" } else { "" };
-        format!("cat <<'EOF'\n{{\"duration\":10.0,\"height\":360,\"requested_formats\":[{{\"url\":\"{url}\"{len},\"vcodec\":\"avc1\",\"acodec\":\"none\"}},{{\"url\":\"{url}\"{len},\"vcodec\":\"none\",\"acodec\":\"mp4a\"}}]}}\nEOF")
+        format!("cat <<'EOF'\n{{\"duration\":10.0,\"height\":360,\"requested_formats\":[{{\"url\":\"{url}\",\"protocol\":\"http\"{len},\"vcodec\":\"avc1\",\"acodec\":\"none\"}},{{\"url\":\"{url}\",\"protocol\":\"http\"{len},\"vcodec\":\"none\",\"acodec\":\"mp4a\"}}]}}\nEOF")
     }
 
     #[test]
@@ -1280,6 +1321,17 @@ mod tests {
         assert_eq!(r.core.video.get_entry(&format!("{ID}.{}", s.variant)).unwrap().unwrap().status, STATUS_FAILED);
         let status = r.core.watch_status(ID);
         assert_eq!((status["playback"]["state"].as_str(), status["playback"]["reason"].as_str(), status["playback"]["retryable"].as_bool()), (Some("error"), Some("unavailable"), Some(false)));
+    }
+
+    #[test]
+    fn selected_manifest_is_format_unavailable_and_not_retried() {
+        let r = rig("cat <<'EOF'\n{\"url\":\"https://example.invalid/master.m3u8\",\"protocol\":\"https\",\"vcodec\":\"avc1\",\"acodec\":\"mp4a\",\"http_headers\":{\"User-Agent\":\"fixture-agent\"}}\nEOF", FFMPEG_OK, None);
+        let job = r.core.start_stream(ID, false).unwrap();
+        wait_terminal(&job);
+        assert_eq!(job.state.lock().unwrap().reason.as_deref(), Some("format_unavailable"));
+        assert_eq!(r.ytdlp_calls(), 1, "format rejection must not trigger resolution retry");
+        assert_eq!(r.events("source.resolve_retry").len(), 0);
+        assert_eq!(r.events("helper.launched").len(), 1, "only yt-dlp version probe; ffmpeg must not launch");
     }
 
     #[test]

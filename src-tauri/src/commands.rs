@@ -87,11 +87,19 @@ pub async fn tab_open_video(
     id: u64,
     video_id: String,
     background: Option<bool>,
+    playlist: Option<muninn_core::tabs::PlaylistContext>,
 ) -> Result<(), String> {
     if !muninn_core::util::valid_video_id(&video_id) {
         return Err("invalid video id".into());
     }
-    shell.open_video(id, &video_id, background.unwrap_or(false));
+    let loc = match playlist {
+        Some(playlist) if muninn_core::playlist::valid_list_id(&playlist.list_id) => {
+            muninn_core::tabs::Loc::WatchInPlaylist { video_id, playlist }
+        }
+        Some(_) => return Err("invalid playlist context".into()),
+        None => muninn_core::tabs::Loc::Watch(video_id),
+    };
+    shell.open_video_loc(id, loc, background.unwrap_or(false));
     Ok(())
 }
 
@@ -102,8 +110,16 @@ pub async fn tab_hibernate(shell: Sh<'_>, id: u64) -> Result<(), String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn layout(shell: Sh<'_>, x: f64, y: f64, w: f64, h: f64, viewport_width:Option<f64>,viewport_height:Option<f64>) -> Result<(), String> {
-    shell.set_viewport_rect(Rect { x, y, w, h },viewport_width,viewport_height);
+pub async fn layout(
+    shell: Sh<'_>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    viewport_width: Option<f64>,
+    viewport_height: Option<f64>,
+) -> Result<(), String> {
+    shell.set_viewport_rect(Rect { x, y, w, h }, viewport_width, viewport_height);
     Ok(())
 }
 
@@ -143,7 +159,11 @@ fn choose_export_path() -> Result<Option<std::path::PathBuf>, String> {
         "POSIX path of (choose file name with prompt \"Save Muninn diagnostics\" default name \"{}\")",
         muninn_core::diagnostics::default_export_name_today()
     );
-    let out = std::process::Command::new("osascript").arg("-e").arg(script).output().map_err(|e| e.to_string())?;
+    let out = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| e.to_string())?;
     muninn_core::diagnostics::parse_save_dialog(
         out.status.success(),
         &String::from_utf8_lossy(&out.stdout),
@@ -163,7 +183,8 @@ pub async fn export_diagnostics(shell: Sh<'_>) -> Result<Value, String> {
     let data_dir = shell.core.paths.data_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let destination = choose_export_path()?;
-        muninn_core::diagnostics::export_to(&data_dir, destination.as_deref()).map_err(|e| e.to_string())
+        muninn_core::diagnostics::export_to(&data_dir, destination.as_deref())
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -172,8 +193,10 @@ pub async fn export_diagnostics(shell: Sh<'_>) -> Result<Value, String> {
 // --- called by the YouTube pages (inject.js) ------------------------------------------------------
 #[tauri::command(rename_all = "snake_case")]
 pub async fn channel_unsubscribe(shell: Sh<'_>, channel_id: String) -> Result<(), String> {
-    let shell=shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move ||shell.unsubscribe_channel(&channel_id)).await.map_err(|e|e.to_string())?
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || shell.unsubscribe_channel(&channel_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -206,11 +229,19 @@ pub async fn page_state(
 ) -> Result<(), String> {
     let id = tab_id_of(webview.label()).ok_or("not a tab")?;
     shell.page_state(id, &url, &title, scroll_y);
-    let actual=webview.url().map_err(|e|e.to_string())?;
-    let youtube=actual.scheme()=="https"&&actual.host_str().is_some_and(|host|host=="www.youtube.com"||host=="youtube.com");
-    let mut account_current=false;
+    let actual = webview.url().map_err(|e| e.to_string())?;
+    let youtube = actual.scheme() == "https"
+        && actual
+            .host_str()
+            .is_some_and(|host| host == "www.youtube.com" || host == "youtube.com");
+    let mut account_current = false;
     if youtube {
-        if let (Some(signed_in),Some(changed_at))=(signed_in,account_changed_at){account_current=shell.core.observe_youtube_account(signed_in,account_key.as_deref(),changed_at).map_err(|e|e.to_string())?;}
+        if let (Some(signed_in), Some(changed_at)) = (signed_in, account_changed_at) {
+            account_current = shell
+                .core
+                .observe_youtube_account(signed_in, account_key.as_deref(), changed_at)
+                .map_err(|e| e.to_string())?;
+        }
     }
     if let Some(channels) = channels {
         if youtube && account_current && actual.path() == "/feed/channels" {

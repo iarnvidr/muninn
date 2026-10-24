@@ -100,6 +100,7 @@
 
   const W = {
     title: h('h1', { class: 'w-title' }),
+    queue: h('section', { class: 'playlist-queue', hidden: true, 'aria-label': 'Playlist queue' }),
     channel: h('button', { type: 'button', class: 'link w-channel' }),
     views: h('span', { class: 'w-views muted' }),
     metaNote: h('p', { class: 'w-note', hidden: true }),
@@ -131,6 +132,7 @@
   root.replaceChildren(
     h('div', { class: 'watch-grid' },
       h('div', { class: 'watch-main' },
+        W.queue,
         player,
         h('div', { class: 'player-notes' }, notes.notice, notes.engine, notes.stream),
         W.title,
@@ -374,7 +376,7 @@
   }
   window.addEventListener('resize',sizeTheatre);
   if(window.ResizeObserver){const observer=new ResizeObserver(sizeTheatre);observer.observe(document.querySelector('#content'));observer.observe(ctl.bar);}
-  theatre.addEventListener('click', async () => {
+  async function toggleTheatre() {
     const before=player.getBoundingClientRect().toJSON();
     const wasFullscreen=!!fsEl()||player.classList.contains('expanded');
     if(fsEl()) {try{await (document.exitFullscreen||document.webkitExitFullscreen).call(document);}catch(e){M.flashError(e);return;}}
@@ -384,7 +386,8 @@
     setAttr(theatre, 'aria-pressed', String(on));
     setAttr(theatre, 'title', on ? 'Exit theatre mode' : 'Theatre mode');
     requestAnimationFrame(()=>M.api('POST','/api/logs',{event:'ui.player.theatre',message:JSON.stringify({enabled:on,before,after:player.getBoundingClientRect().toJSON(),stage:video.parentElement.getBoundingClientRect().toJSON(),was_fullscreen:wasFullscreen,background:!!cur?.background,width:innerWidth,height:innerHeight,version:M.boot?.version})}).catch(()=>{}));
-  });
+  }
+  theatre.addEventListener('click', toggleTheatre);
   const inPip = () => document.pictureInPictureElement === video || video.webkitPresentationMode === 'picture-in-picture';
   async function exitPip() {
     try {
@@ -513,15 +516,24 @@
 
   // Player keyboard shortcuts: only while the watch view is up and no dialog is open.
   window.addEventListener('keydown', (ev) => {
-    if (!cur || cur.background || document.querySelector('dialog[open]')) return;
+    if (!cur || cur.background || document.querySelector('dialog[open]') || ev.isComposing) return;
     const t = ev.target || {};
     const act = L.playerKeyAction(ev, { tag: t.tagName, type: t.type, editable: !!t.isContentEditable });
     if (!act) return;
+    if(ev.shiftKey&&(ev.key==='N'||ev.key==='P')&&cur.queue){ev.preventDefault();advanceQueue(ev.key==='N'?1:-1,false);return;}
     ev.preventDefault();
     if (act === 'toggle') togglePlay();
     else if (act === 'fullscreen') toggleFullscreen();
     else if (act === 'mute') toggleMute();
+    else if (act === 'theatre') toggleTheatre();
     else if (act.seek) seekBy(act.seek);
+    else if (act.percent != null && duration() > 0) commitSeek(duration() * act.percent / 100);
+    else if (act.start) commitSeek(0);
+    else if (act.end && duration() > 0) commitSeek(duration());
+    else if (act.volume) { video.volume = Math.max(0, Math.min(1, video.volume + act.volume / 100)); video.muted = false; updateControls(); }
+    else if (act.speed) { const rates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]; const i = rates.indexOf(video.playbackRate); const next = rates[Math.max(0, Math.min(rates.length - 1, i + act.speed))]; video.playbackRate = next; video.defaultPlaybackRate = next; ctl.speed.value = String(next); savePref('speed', next); }
+    else if (act === 'pip') togglePip();
+    else if (act === 'frame-back' || act === 'frame-forward') { if (video.paused) seekBy(act === 'frame-back' ? -1 / 30 : 1 / 30); }
   });
 
   /* ------------------------------------------------------------------ playback reporting */
@@ -561,7 +573,7 @@
   });
   video.addEventListener('playing', () => { if (cur) { cur.started=true; report(); if(!cur.awaitingFrame)cur.buffering = false; cur.mediaError = null; cur.lastProgressAt=Date.now();cur.stallReported=false;logPlaybackState(cur,'playing'); } startReporter(); updateControls(); updateOverlay(); });
   video.addEventListener('pause', () => { stopReporter(); report(); updateControls(); updateOverlay(); });
-  video.addEventListener('ended', () => { if(cur)cur.buffering=false;stopReporter(); report({ ended: true }); updateControls();updateOverlay(); });
+  video.addEventListener('ended', () => { if(cur)cur.buffering=false;stopReporter(); report({ ended: true }); if(cur) advanceQueue(1, true); updateControls();updateOverlay(); });
   video.addEventListener('seeked', () => { maybeResume();report(); settleFrame(cur); updateControls(); updateOverlay(); });
   video.addEventListener('waiting', () => { if (cur && cur.sourceSet) { cur.buffering = true; updateOverlay(); } });
   video.addEventListener('canplay', () => { if (cur) { if(!cur.awaitingFrame)cur.buffering = false; maybeResume(); settleFrame(cur); updateOverlay(); } });
@@ -1141,9 +1153,41 @@
     root.scrollTop = 0;
   }
 
+  async function loadQueue(c) {
+    const tab=M.tabs.list.find(t=>t.id===c.tabId);
+    let p=tab&&tab.playlist;
+    if(!p&&tab?.url){const u=new URL(tab.url);const list=u.searchParams.get('list');if(list)p={list_id:list,index:u.searchParams.has('index')?Number(u.searchParams.get('index')):null};}
+    c.queue=null; c.queueError=null; W.queue.hidden=true;
+    if(!p||!p.list_id)return;
+    try {
+      const qs=new URLSearchParams({list:p.list_id});
+      if(c.videoId)qs.set('video',c.videoId);
+      if(p.index!=null)qs.set('index',String(p.index));
+      const data=await M.api('GET','/api/playlist?'+qs.toString());
+      if(c!==cur)return;
+      c.queue={...data,index:Number.isInteger(data.active_index)?data.active_index:-1};
+      renderQueue(c);
+      // Playlist URLs can open a watch tab before any video has been selected. Resolve
+      // that tab from the playlist response; never start watch/detail calls with an empty ID.
+      if(!c.videoId){
+        const items=Array.isArray(data.items)?data.items:[];
+        const preferred=Number.isInteger(p.index)?p.index-1:-1;
+        const active=Number.isInteger(data.active_index)&&data.active_index>=0?data.active_index:preferred;
+        const selected=(items[active]?.available!==false&&items[active]?.id ? items[active] : null)||items.find(item=>item?.available!==false&&item?.id);
+        if(!selected){c.queueEmpty=true;renderQueue(c);return;}
+        try { await M.invoke('tab_open_video',{id:c.tabId,video_id:selected.id,playlist:{list_id:p.list_id,index:items.indexOf(selected)+1}}); await M.refreshTabs(); }
+        catch(e){if(c===cur){c.queueError=e;renderQueue(c);}}
+      }
+    }
+    catch(e){if(c===cur){c.queueError=e;renderQueue(c);}}
+  }
+  function renderQueue(c){const q=c.queue; W.queue.hidden=!q&&!c.queueError&&!c.queueEmpty; if(W.queue.hidden)return; W.queue.replaceChildren(h('div',{class:'queue-head'},h('strong',{text:q?'Playlist':c.queueEmpty?'No available videos':'Playlist unavailable'}),h('span',{class:'muted',text:q?`${q.index+1} / ${q.items.length}${q.truncated?' · more items not loaded':''}`:c.queueEmpty?'This playlist has no available videos.':('Could not load playlist queue'+(c.queueError?': '+M.errText(c.queueError):''))})));if(q)W.queue.append(...q.items.map((it,i)=>h('button',{type:'button',class:'queue-item'+(i===q.index?' current':''),disabled:it.available===false,text:it.title||it.id,onclick:()=>selectQueue(i)},it.available===false?' · unavailable':'')));if(c.queueError||c.queueEmpty)W.queue.append(h('button',{type:'button',class:'primary',text:'Retry',onclick:()=>loadQueue(c)}));}
+  async function selectQueue(index){const c=cur,q=c&&c.queue,item=q&&q.items[index];if(!c||!item||item.available===false)return;try{await M.invoke('tab_open_video',{id:c.tabId,video_id:item.id,playlist:{list_id:q.list_id,index:index+1}});await M.refreshTabs();}catch(e){notice('Could not open playlist video: '+M.errText(e));}}
+  function advanceQueue(direction, ended){const c=cur,q=c&&c.queue;if(!c||!q)return false;const i=window.MuninnQueue.next(q.items,q.index,direction);if(i==null){notice(ended?'End of available playlist items':'No more available playlist items');return false;}selectQueue(i);return true;}
+
   function begin(tab) {
     const c = {
-      key: tab.id + ':' + tab.video_id, tabId: tab.id, videoId: tab.video_id, gen: ++gen,
+      key: tab.id + ':' + tab.video_id, tabId: tab.id, videoId: tab.video_id || null, playlistOnly: !tab.video_id, gen: ++gen,
       status: null, detail: null, detailAt: 0, detailFailed: false, error: null, mediaError: null,
       sourceSet: false, sourceKey: '', kind: null, hlsOk: true, resumeDone: false, needsClick: false, buffering: false,
       pollTimer: null, pollDelayMs: 700, noneSince: 0, beganAt: Date.now(), retrying: false, cacheBusy: false,
@@ -1154,8 +1198,9 @@
     updateControls();
     clearInterval(uiTimer);
     uiTimer = setInterval(updateControls, 500);
-    fetchDetail(c);
-    startWatch(c);
+    if(c.videoId){fetchDetail(c);startWatch(c);}
+    else {setText(W.title,'Loading playlist…');setText(W.commentsHead,'Playlist');setHidden(W.commentsMore,true);}
+    loadQueue(c);
   }
 
   function leave() {

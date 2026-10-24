@@ -523,6 +523,9 @@ table.rules { min-width: 1220px; }
 .fieldgrid .field { margin: 0 0 4px; }
 .fieldgrid input[type="number"], .fieldgrid select { width: 100%; }
 .settings-form { max-width: 1000px; }
+.update-card { max-width: 1000px; }
+.update-progress { display:block; width: min(100%, 420px); height: 8px; accent-color: var(--accent); margin: 12px 0; }
+.update-card [aria-live] { min-height: 1.4em; }
 .page .card { max-width: 1000px; }
 
 /* Classified Terminal: the movement/site hierarchy, rather than a palette swap. */
@@ -807,3 +810,6 @@ dialog.modal::backdrop { background: rgba(0,0,0,.45); }
   #app[data-sidebar=collapsed] .muninn-brand,
   :root[data-theme^=classified] #app[data-sidebar=collapsed] .muninn-brand { padding:6px 0; margin:0 0 6px; min-height:0; }
 }
+
+/* Playlist queue is intentionally bounded to the API's returned window. */
+.playlist-queue{display:flex;gap:.4rem;align-items:center;overflow:auto;padding:.45rem .6rem;margin:0 0 .5rem;border:1px solid var(--line,#333);border-radius:8px}.queue-head{display:flex;flex-direction:column;flex:0 0 auto;font-size:.8rem}.queue-item{flex:0 0 auto;max-width:15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-item.current{outline:2px solid var(--accent,#58a6ff)}

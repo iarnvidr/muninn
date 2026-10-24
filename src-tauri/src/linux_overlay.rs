@@ -21,7 +21,9 @@ pub fn wrap_chrome(chrome: &Webview) {
             if cell.borrow().is_some() {
                 return;
             }
-            let Some(parent) = widget.parent().and_then(|p| p.downcast::<gtk::Box>().ok()) else { return };
+            let Some(parent) = widget.parent().and_then(|p| p.downcast::<gtk::Box>().ok()) else {
+                return;
+            };
             let overlay = gtk::Overlay::new();
             parent.remove(widget);
             overlay.add(widget);
@@ -39,7 +41,9 @@ pub fn adopt(tab: &Webview) {
         let widget: &gtk::Widget = view.upcast_ref();
         OVERLAY.with(|cell| {
             let overlay = cell.borrow();
-            let Some(overlay) = overlay.as_ref() else { return };
+            let Some(overlay) = overlay.as_ref() else {
+                return;
+            };
             if let Some(parent) = widget.parent().and_then(|p| p.downcast::<gtk::Box>().ok()) {
                 parent.remove(widget);
             }

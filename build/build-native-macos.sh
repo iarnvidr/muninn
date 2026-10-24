@@ -44,4 +44,7 @@ version="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.j
 archive="Muninn_${version}_macos-arm64.zip"
 ditto -c -k --sequesterRsrc --keepParent "$app" "$out/$archive"
 (cd "$out" && shasum -a 256 "$archive" > "$archive.sha256")
+# Keep the exact signed bundle available for the native smoke step as well as in the zip.
+rm -rf "$out/Muninn.app"
+ditto "$app" "$out/Muninn.app"
 echo "$out/$archive"
