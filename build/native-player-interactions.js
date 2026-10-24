@@ -2,7 +2,7 @@
  * Native WKWebView fixture, called through the existing evalsync chrome target:
  *   await window.__muninnNativePlayerInteractions({mediaBase64:'...', ...})
  * Supply a tiny locally generated playable MP4 as base64. No YouTube or
- * network fixture is used. Only M.api's two read endpoints are replaced; the
+ * network fixture is used. Fixture API responses and the media transport are replaced; the
  * production watch mount, keyboard listeners, queue selection and native
  * tab_open_video command remain in control.
  */
@@ -18,6 +18,12 @@
     if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('videoId must be an 11-character video id');
     const mediaBytes = Uint8Array.from(atob(options.mediaBase64), ch => ch.charCodeAt(0));
     const mediaUrl = URL.createObjectURL(new Blob([mediaBytes], {type:'video/mp4'}));
+    const sourceProperty = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+    const fixtureMediaPrefix = M.origin + '/media/native-smoke-';
+    Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+      ...sourceProperty,
+      set(value) { sourceProperty.set.call(this, String(value).startsWith(fixtureMediaPrefix) ? mediaUrl : value); },
+    });
     const originalApi = M.api;
     const calls = [], routing = [];
     const originalInvoke = M.invoke;
@@ -28,7 +34,7 @@
       const activeId = routing.length ? routing[routing.length - 1].video_id : videoId;
       if (path === '/api/watch/' + activeId && (method === 'GET' || method === 'POST')) {
         calls.push({method, path});
-        return {video_id:activeId,playback:{ready:false,state:'resolving',phase:'resolving',duration_seconds:30},meta:{video_id:activeId,title:'Synthetic native player fixture',duration_seconds:30}};
+        return {video_id:activeId,playback:{ready:true,state:'ready',kind:'file',ext:'mp4',url_path:'/media/native-smoke-'+activeId,duration_seconds:30},meta:{video_id:activeId,title:'Synthetic native player fixture',duration_seconds:30}};
       }
       if (path === '/api/video/' + activeId && method === 'GET') {
         calls.push({method,path});
@@ -63,7 +69,6 @@
       assert('synthetic watch API fixture consumed', calls.some(x => x.path === '/api/watch/' + videoId && x.method==='POST') && calls.some(x => x.path === '/api/watch/' + videoId && x.method==='GET'), calls);
       assert('production video element mounted', video instanceof HTMLVideoElement, !!video);
       if (!(video instanceof HTMLVideoElement)) return {passed:false, results, calls, tabId};
-      video.src = mediaUrl; video.load();
       await new Promise((resolve, reject) => {
         if (video.readyState >= 1) return resolve();
         const timer = setTimeout(() => reject(new Error('local fixture metadata timed out')), 8000);
@@ -115,6 +120,10 @@
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[1]&&x.playlist?.index===2);
       assert('previous queue control routes second id and refreshes current tab/player', opens.length>=2 && document.querySelector('video')===activeVideo, {opens,routing});
       return {passed:results.every(x=>x.passed), results, calls, routing, tabId};
-    } finally { M.api = originalApi; M.invoke=originalInvoke; URL.revokeObjectURL(mediaUrl); }
+    } finally {
+      M.api = originalApi; M.invoke=originalInvoke;
+      Object.defineProperty(HTMLMediaElement.prototype, 'src', sourceProperty);
+      URL.revokeObjectURL(mediaUrl);
+    }
   };
 })(window);

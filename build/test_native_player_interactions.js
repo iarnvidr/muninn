@@ -19,7 +19,11 @@ test('native player fixture uses real API schemas, valid ids, blob media, and ob
   assert.match(fixture, /\/api\/watch\//);
   assert.match(fixture, /\/api\/playlist\?/);
   assert.match(fixture, /\/api\/video\/\' \+ activeId/);
-  assert.match(fixture, /playback:\{ready:false,state:'resolving',phase:'resolving'/);
+  assert.match(fixture, /playback:\{ready:true,state:'ready',kind:'file'/);
+  assert.match(fixture, /url_path:'\/media\/native-smoke-'\+activeId/);
+  assert.match(fixture, /sourceProperty\.set\.call\(this,/);
+  assert.match(fixture, /Object\.defineProperty\(HTMLMediaElement\.prototype, 'src', sourceProperty\)/);
+  assert.doesNotMatch(fixture, /video\.src\s*=/, 'production source attachment must initialize player state');
   for (const key of ['J','L','k','T']) assert.ok(fixture.includes("key('"+key+"')"), `missing ${key} event`);
   assert.match(fixture, /activeVideo\.dispatchEvent\(new Event\('ended'\)\)/);
   assert.match(fixture, /currentPlayer = async expectedId/);
