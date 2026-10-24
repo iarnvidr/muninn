@@ -62,17 +62,36 @@ try:
         if not r.get('ok'): raise RuntimeError(r)
         tabs.append(r['id'])
     report['synthetic_tabs']=tabs
-    ev("(()=>{const mains=[...document.querySelectorAll('#tabstrip .tab-main')];if(!mains.length)throw Error('no tabs rendered');mains[0].focus();return true})()")
     def tabstate(): return ev("({active:window.Muninn.tabs.active,count:window.Muninn.tabs.list.length,focused:document.activeElement.closest('.tab')?.dataset.id,buttons:[...document.querySelectorAll('#tabstrip .tab-main')].map(x=>({id:x.parentNode.dataset.id,selected:x.getAttribute('aria-selected')}))})")
     base=tabstate(); check('synthetic tabs setup',base['count']>=2,base)
+    def select_and_sync(tab_id):
+        ev(f"(()=>{{const n=[...document.querySelectorAll('#tabstrip .tab-main')].find(x=>Number(x.parentNode.dataset.id)==={int(tab_id)});if(!n)throw Error('missing tab '+{int(tab_id)});n.click();return true}})()")
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            state=tabstate()
+            if str(state['active'])==str(tab_id) and str(state['focused'])==str(tab_id) and any(str(b['id'])==str(tab_id) and b['selected']=='true' for b in state['buttons']): return state
+            time.sleep(.05)
+        raise TimeoutError(f'tab {tab_id} activation/render/focus did not synchronize: {state!r}')
+    # Probe unmodified keys from a separately selected/focused tab: they must
+    # leave active ID and count alone regardless of the earlier setup focus.
+    base=select_and_sync(tabs[0]); check('tab selection synchronizes active render and focus',True,base)
     for key in ('ArrowLeft','ArrowRight','Home','End','Delete','Backspace'):
-        ev(f"(()=>{{const n=document.querySelector('#tabstrip .tab-main');n.focus();n.dispatchEvent(new KeyboardEvent('keydown',{{key:{json.dumps(key)},bubbles:true,cancelable:true}}));return true}})()")
+        ev(f"(()=>{{const n=document.querySelector('#tabstrip .tab-main[aria-selected=\\\"true\\\"]');n.dispatchEvent(new KeyboardEvent('keydown',{{key:{json.dumps(key)},bubbles:true,cancelable:true}}));return true}})()")
         after=tabstate(); check('plain '+key+' leaves tab state unchanged',after['active']==base['active'] and after['count']==base['count'],after)
     screenshot('key')
-    for key,shift,expected in [('Tab',False,tabs[1]),('Tab',True,tabs[0])]:
-        before=tabstate()
-        ev(f"(()=>{{const n=document.querySelector('#tabstrip .tab-main[aria-selected=\\\"true\\\"]');n.focus();n.dispatchEvent(new KeyboardEvent('keydown',{{key:'Tab',ctrlKey:true,shiftKey:{str(shift).lower()},bubbles:true,cancelable:true}}));return true}})()")
-        after=tabstate(); check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected),{'before':before,'after':after,'expected':expected})
+    for shift in (False,True):
+        before=select_and_sync(tabs[0])
+        visible=[int(b['id']) for b in before['buttons']]
+        index=visible.index(int(before['active']))
+        delta=-1 if shift else 1
+        expected=visible[(index+delta)%len(visible)]
+        ev(f"(()=>{{const n=document.querySelector('#tabstrip .tab-main[aria-selected=\\\"true\\\"]');n.dispatchEvent(new KeyboardEvent('keydown',{{key:'Tab',ctrlKey:true,shiftKey:{str(shift).lower()},bubbles:true,cancelable:true}}));return true}})()")
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            after=tabstate()
+            if str(after['active'])==str(expected) and str(after['focused'])==str(expected): break
+            time.sleep(.05)
+        check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected) and str(after['focused'])==str(expected),{'before':before,'after':after,'expected':expected})
     media=os.environ.get('NATIVE_SMOKE_MEDIA_FILE')
     if not media or not pathlib.Path(media).is_file(): raise RuntimeError('NATIVE_SMOKE_MEDIA_FILE missing; workflow must generate a synthetic playable media file')
     payload=base64.b64encode(pathlib.Path(media).read_bytes()).decode('ascii')
