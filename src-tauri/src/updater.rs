@@ -35,9 +35,8 @@ fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, 
     }
     Ok(builder
         .version_comparator(move |installed, release| {
-            let installed = smoke_current
-                .as_deref()
-                .unwrap_or_else(|| installed.as_str());
+            let installed_version = installed.to_string();
+            let installed = smoke_current.as_deref().unwrap_or(&installed_version);
             compare_versions_policy(installed, &release.version.to_string(), smoke_mode)
                 .is_ok_and(|order| order == std::cmp::Ordering::Greater)
         })
@@ -343,7 +342,6 @@ pub async fn updater_install(
         shell.core.shutdown();
     }
     app.restart();
-    Ok(state.status())
 }
 #[tauri::command]
 pub async fn updater_cancel(
