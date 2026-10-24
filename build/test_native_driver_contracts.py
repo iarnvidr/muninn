@@ -36,8 +36,8 @@ class NativeDriverContracts(unittest.TestCase):
                 self.assertFalse(result.exists())
 
     def test_settings_readiness_waits_for_authenticated_api(self):
-        functions = driver_functions('wait_settings')
-        responses = iter([RuntimeError('No access token'), None, {'theme': 'system'}])
+        functions = driver_functions('valid_settings', 'wait_settings')
+        responses = iter([RuntimeError('No access token'), None, {'error': 'HTTP 401'}, {'theme': 'system'}])
         def api(*args):
             self.assertEqual(args, ('GET', '/api/settings'))
             value = next(responses)
@@ -47,7 +47,7 @@ class NativeDriverContracts(unittest.TestCase):
         functions['api'] = api
         with patch.object(time, 'sleep') as sleep:
             self.assertEqual(functions['wait_settings'](), {'theme': 'system'})
-            self.assertEqual(sleep.call_count, 2)
+            self.assertEqual(sleep.call_count, 3)
 
     def test_native_player_driver_options_pass_real_fixture_id_validation(self):
         tree = ast.parse((ROOT / 'build/native-ui-driver.py').read_text())
