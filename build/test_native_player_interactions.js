@@ -24,8 +24,8 @@ test('native player fixture uses real API schemas, valid ids, blob media, and ob
   assert.match(fixture, /activeVideo\.dispatchEvent\(new Event\('ended'\)\)/);
   assert.match(fixture, /currentPlayer = async expectedId/);
   assert.match(fixture, /tab\?\.video_id===expectedId/);
-  assert.match(fixture, /key\('N',document\.body\)/);
-  assert.match(fixture, /key\('P',document\.body\)/);
+  assert.match(fixture, /key\('N',document\.body,false,\{shiftKey:true\}\)/);
+  assert.match(fixture, /key\('P',document\.body,false,\{shiftKey:true\}\)/);
   assert.match(fixture, /ended on current third mounted player/);
   assert.match(fixture, /previous queue control routes second id/);
   assert.match(fixture, /queueIds\[1\].*playlist\?\.index===2/);

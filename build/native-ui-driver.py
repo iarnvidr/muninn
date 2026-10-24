@@ -114,7 +114,7 @@ try:
     fixture=pathlib.Path(__file__).with_name('native-player-interactions.js').read_text()
     install=ev('(()=>{'+fixture+';return typeof window.__muninnNativePlayerInteractions})()')
     check('async player fixture installed',install=='function',install)
-    js="return await window.__muninnNativePlayerInteractions({videoId:'native-fixture-video',playlistId:'native-fixture-list',mediaBase64:'"+payload+"'})"
+    js="return await window.__muninnNativePlayerInteractions({playlistId:'native-fixture-list',mediaBase64:'"+payload+"'})"
     player=send({'op':'eval','target':'chrome','js':js},timeout=60)
     if isinstance(player,dict) and player.get('error'): raise RuntimeError('async native player fixture failed: '+str(player))
     report['player']=player

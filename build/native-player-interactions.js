@@ -46,8 +46,8 @@
     };
     const results = [];
     const assert = (name, ok, detail) => { results.push({name, passed: !!ok, detail: detail ?? null}); if (!ok) throw new Error(name + ': ' + JSON.stringify(detail)); };
-    const key = (value, target=document.body, composing=false) => {
-      const e = new KeyboardEvent('keydown', {key:value, bubbles:true, cancelable:true});
+    const key = (value, target=document.body, composing=false, modifiers={}) => {
+      const e = new KeyboardEvent('keydown', {key:value, bubbles:true, cancelable:true,...modifiers});
       if (composing) Object.defineProperty(e, 'isComposing', {value:true});
       target.dispatchEvent(e); return e;
     };
@@ -76,7 +76,7 @@
       const beforeL=video.currentTime; key('L'); await settle(); assert('L seeks forward 10 seconds', Math.abs(video.currentTime-Math.min(video.duration,beforeL+10))<1.5, video.currentTime);
       video.pause(); key('k'); await settle(); assert('K toggles playback through production handler', !video.paused, {paused:video.paused});
       video.pause();
-      const theatre=document.querySelector('.watch.theatre');
+      const theatre=document.querySelector('.watch');
       assert('theatre watch root exists', !!theatre, theatre?.className);
       const theaterBefore=theatre.classList.contains('theatre'); key('T'); await settle();
       assert('T toggles theatre mode', theatre.classList.contains('theatre') !== theaterBefore, theatre.className);
@@ -103,14 +103,14 @@
       assert('queue selection routes second valid id with playlist index 2', !!queueButton && opens.length>0, routing);
       let activeVideo=await currentPlayer(queueIds[1]);
       assert('selection remounts current second player and native tab context', document.querySelector('video')===activeVideo, (await M.refreshTabs())?.find?.(t=>t.id===tabId));
-      key('N',document.body); await settle();
+      key('N',document.body,false,{shiftKey:true}); await settle();
       activeVideo=await currentPlayer(queueIds[2]);
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[2]&&x.playlist?.index===3);
       assert('next queue control routes third id and refreshes current tab/player', opens.length>0 && document.querySelector('video')===activeVideo, {opens,routing});
       activeVideo.dispatchEvent(new Event('ended')); await settle();
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[2]&&x.playlist?.index===3);
       assert('ended on current third mounted player does not route stale context', opens.length===1 && (await M.refreshTabs())?.find?.(t=>t.id===tabId)?.video_id===queueIds[2], {opens,routing});
-      key('P',document.body); await settle();
+      key('P',document.body,false,{shiftKey:true}); await settle();
       activeVideo=await currentPlayer(queueIds[1]);
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[1]&&x.playlist?.index===2);
       assert('previous queue control routes second id and refreshes current tab/player', opens.length>=2 && document.querySelector('video')===activeVideo, {opens,routing});

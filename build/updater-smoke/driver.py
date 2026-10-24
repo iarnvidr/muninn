@@ -17,7 +17,11 @@ def bridge(expression):
     result=d/(ident+'.res.json')
     try:
         for _ in range(400):
-            if result.exists(): return json.loads(result.read_text())
+            if result.exists():
+                value=json.loads(result.read_text())
+                if isinstance(value,dict) and value.get('error'):
+                    raise RuntimeError(f'native E2E command failed: {value["error"]}')
+                return value
             time.sleep(.1)
         raise RuntimeError('native E2E bridge timed out')
     finally:
@@ -44,6 +48,15 @@ def api(method,path,body=None):
     args=f'{json.dumps(method)},{json.dumps(path)}'
     if body is not None: args+=','+json.dumps(body)
     return bridge(f'Muninn.api({args})')
+def wait_settings(timeout=90):
+    end=time.monotonic()+timeout; last=None
+    while time.monotonic()<end:
+        try:
+            last=api('GET','/api/settings')
+            if isinstance(last,dict) and 'theme' in last: return last
+        except (RuntimeError,OSError,ValueError) as error: last=str(error)
+        time.sleep(.25)
+    raise RuntimeError(f'application settings API did not become ready: {last}')
 def launch(version):
     env=os.environ.copy(); env['MUNINN_UPDATER_SMOKE_CURRENT_VERSION']=version
     return subprocess.Popen([str(binary),'--native-ui-smoke','--updater-smoke'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -68,14 +81,15 @@ if mode=='healthy':
     binary=executable(app)
 proc=launch(old)
 try:
-    time.sleep(3)
+    wait_settings()
     if mode=='healthy':
         before=native_state()
         before_pid=before.get('process_id'); before_exe=before.get('executable_path')
         if not isinstance(before_pid,int) or before_pid<=0 or not before_exe: raise RuntimeError(f'pre-install identity missing: {before}')
-        api('PUT','/api/settings',{'theme':'classified_light','offline_mode':False,'auto_prefetch':False,'min_free_bytes':0})
+        updated=api('PUT','/api/settings',{'theme':'classified_light','offline_mode':False,'auto_prefetch':False,'min_free_bytes':0})
+        if not isinstance(updated,dict) or updated.get('theme')!='classified_light': raise RuntimeError(f'settings update failed: {updated}')
         settings_before=api('GET','/api/settings')
-        if settings_before.get('theme')!='classified_light': raise RuntimeError('settings fixture failed')
+        if settings_before.get('theme')!='classified_light': raise RuntimeError(f'settings fixture was not persisted: {settings_before}')
         marker='updater-smoke-'+str(time.time_ns()); invoke('tab_new',{'url':'https://www.youtube.com/results?search_query='+marker})
         tabs_before=invoke('tabs_state'); matching=[t for t in (tabs_before.get('tabs') or []) if marker in json.dumps(t)]
         if not matching: raise RuntimeError('unique synthetic tab fixture failed')

@@ -207,6 +207,8 @@
       case 'm': case 'M': return 'mute';
       case 'i': case 'I': return 'pip';
       case 't': case 'T': return 'theatre';
+      case 'N': return e.shiftKey ? 'queue-next' : null;
+      case 'P': return e.shiftKey ? 'queue-previous' : null;
       case ',': return 'frame-back';
       case '.': return 'frame-forward';
       case '<': return { speed: -1 };

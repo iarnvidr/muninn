@@ -520,7 +520,7 @@
     const t = ev.target || {};
     const act = L.playerKeyAction(ev, { tag: t.tagName, type: t.type, editable: !!t.isContentEditable });
     if (!act) return;
-    if(ev.shiftKey&&(ev.key==='N'||ev.key==='P')&&cur.queue){ev.preventDefault();advanceQueue(ev.key==='N'?1:-1,false);return;}
+    if((act==='queue-next'||act==='queue-previous')&&cur.queue){ev.preventDefault();advanceQueue(act==='queue-next'?1:-1,false);return;}
     ev.preventDefault();
     if (act === 'toggle') togglePlay();
     else if (act === 'fullscreen') toggleFullscreen();

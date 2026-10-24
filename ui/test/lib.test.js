@@ -230,6 +230,14 @@ test('YouTube-style player keys and protected editing/native contexts', () => {
   assert.equal(L.playerKeyAction({key:'t'}, {tag:'INPUT',type:'text'}),null);
   assert.equal(L.playerKeyAction({key:'t'}, {tag:'BUTTON'}),null);
   assert.equal(L.playerKeyAction({key:'t'}, {tag:'DIV',editable:true}),null);
+  for (const [key,action] of [['N','queue-next'],['P','queue-previous']]) {
+    assert.equal(L.playerKeyAction({key,shiftKey:true},div),action);
+    assert.equal(L.playerKeyAction({key},div),null);
+    for (const modifiers of [{ctrlKey:true},{metaKey:true},{altKey:true},{isComposing:true}])
+      assert.equal(L.playerKeyAction({key,shiftKey:true,...modifiers},div),null);
+    for (const target of [{tag:'INPUT',type:'text'},{tag:'BUTTON'},{tag:'DIV',editable:true}])
+      assert.equal(L.playerKeyAction({key,shiftKey:true},target),null);
+  }
   assert.equal(L.playerKeyAction({ key: 'k', isComposing: true }, div), null);
   assert.equal(L.playerKeyAction({ key: 'j', ctrlKey: true }, div), null);
   assert.equal(L.playerKeyAction({ key: 'j' }, { tag: 'BUTTON' }), null);
