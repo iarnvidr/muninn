@@ -32,7 +32,8 @@ export MUNINN_NATIVE_UI_SMOKE=1
 # AVFoundation generates the synthetic fixture: bundled FFmpeg builds may omit
 # lavfi/testsrc/sine. Keep the pinned bundled FFmpeg solely for decode validation.
 export NATIVE_SMOKE_MEDIA_FILE="$scratch/native-smoke-30s.mp4"
-xcrun swift build/generate-native-fixture.swift "$NATIVE_SMOKE_MEDIA_FILE" | tee "$evidence/reports/media-fixture.txt"
+xcrun swiftc -parse-as-library build/generate-native-fixture.swift -o "$scratch/fixture-generator"
+"$scratch/fixture-generator" "$NATIVE_SMOKE_MEDIA_FILE" | tee "$evidence/reports/media-fixture.txt"
 [[ -s "$NATIVE_SMOKE_MEDIA_FILE" ]] || { echo 'AVFoundation did not produce native smoke media' >&2; exit 2; }
 ffmpeg="$app/Contents/Resources/bin/ffmpeg"
 [[ -f "$ffmpeg" && ! -L "$ffmpeg" && -x "$ffmpeg" ]] || { echo "bundled ffmpeg missing/not executable: $ffmpeg" >&2; exit 2; }
