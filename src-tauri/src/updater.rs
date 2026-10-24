@@ -52,6 +52,20 @@ fn debug_smoke_mode() -> bool {
 fn debug_smoke_mode() -> bool {
     false
 }
+fn error_cause_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    // Keep diagnostics useful but bounded; updater endpoints are the pinned public
+    // feed or the isolated loopback smoke feed, never user-provided URLs in release.
+    for _ in 0..7 {
+        let Some(cause) = source else { break };
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}
+
 fn signature_error_reason(error: &tauri_plugin_updater::Error) -> Option<&'static str> {
     use tauri_plugin_updater::Error;
     match error {
@@ -211,7 +225,7 @@ pub async fn updater_check(
             let update = configured_updater(&app)?
                 .check()
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("updater check failed: {}", error_cause_chain(&e)))?
                 .ok_or("no valid signed release available (or no newer version)")?;
             match compare_versions(&current_version(), &update.version)? {
                 std::cmp::Ordering::Greater => Ok(UpdateStatus::Available {
@@ -347,7 +361,14 @@ pub async fn updater_install(
         return Err("download expired".into());
     }
     let (_, update, bytes) = pending;
-    if compare_versions(&current_version(), &update.version)? != std::cmp::Ordering::Greater {
+    let comparison = match compare_versions(&current_version(), &update.version) {
+        Ok(order) => order,
+        Err(error) => {
+            state.finish();
+            return Err(error);
+        }
+    };
+    if comparison != std::cmp::Ordering::Greater {
         state.finish();
         return Err("release is not newer than this version".into());
     }

@@ -63,6 +63,9 @@
       const tabId = await M.newTab('https://www.youtube.com/watch?v='+videoId+'&list='+encodeURIComponent(options.playlistId));
       if (!tabId) throw new Error('could not create fixture player tab');
       await M.invoke('tab_open_video',{id:tabId,video_id:videoId,playlist:{list_id:options.playlistId,index:1}});
+      // tab_open_video updates native context but does not guarantee this new tab is
+      // active; the watch keyboard listener intentionally ignores sleeping tabs.
+      await M.activateTab(tabId);
       await M.refreshTabs?.();
       await settle();
       const video = document.querySelector('video');
@@ -81,8 +84,8 @@
       const beforeL=video.currentTime; key('L'); await settle(); assert('L seeks forward 10 seconds', Math.abs(video.currentTime-Math.min(video.duration,beforeL+10))<1.5, video.currentTime);
       video.pause(); key('k'); await settle(); assert('K toggles playback through production handler', !video.paused, {paused:video.paused});
       video.pause();
-      const theatre=document.querySelector('.watch');
-      assert('theatre watch root exists', !!theatre, theatre?.className);
+      const theatre=document.querySelector('#view-watch');
+      assert('theatre selector matches the production watch view root', !!theatre && theatre.id==='view-watch', theatre?.outerHTML?.slice(0,200));
       const theaterBefore=theatre.classList.contains('theatre'); key('T'); await settle();
       assert('T toggles theatre mode', theatre.classList.contains('theatre') !== theaterBefore, theatre.className);
       const guardedAt=video.currentTime, input=document.createElement('input'); document.body.append(input); input.focus();

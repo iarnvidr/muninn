@@ -5,6 +5,15 @@ BASE_H={'signature_accepted':True,'replacement_installed':True,'restart_requeste
 BASE_T={'tamper_rejected':True,'tamper_status':{'state':'failed','status':{'reason':'signature_verification_failed'}},'old_version_retained':True,'app_usable':True}
 def run(root): return subprocess.run([sys.executable,str(HERE/'verify_evidence.py'),str(root)],capture_output=True)
 class EvidenceProtocol(unittest.TestCase):
+ def test_settings_response_requires_valid_object_and_theme(self):
+  tree=ast.parse((HERE/'driver.py').read_text())
+  fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='valid_settings')
+  helper=ast.Module(body=[fn],type_ignores=[])
+  namespace={}; exec(compile(helper,'driver.py','exec'),namespace)
+  valid=namespace['valid_settings']
+  self.assertTrue(valid({'theme':'classified_light'}))
+  for malformed in (None,{},[],{'theme':None},{'theme':3},{'error':'unavailable'}):
+   self.assertFalse(valid(malformed))
  def test_driver_state_identity_keys_match_native_schema(self):
   driver=(HERE/'driver.py').read_text()
   schema=(HERE.parent.parent/'src-tauri/src/e2e.rs').read_text()

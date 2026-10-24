@@ -48,12 +48,14 @@ def api(method,path,body=None):
     args=f'{json.dumps(method)},{json.dumps(path)}'
     if body is not None: args+=','+json.dumps(body)
     return bridge(f'Muninn.api({args})')
+def valid_settings(value):
+    return isinstance(value,dict) and isinstance(value.get('theme'),str) and bool(value['theme'])
 def wait_settings(timeout=90):
     end=time.monotonic()+timeout; last=None
     while time.monotonic()<end:
         try:
             last=api('GET','/api/settings')
-            if isinstance(last,dict) and 'theme' in last: return last
+            if valid_settings(last): return last
         except (RuntimeError,OSError,ValueError) as error: last=str(error)
         time.sleep(.25)
     raise RuntimeError(f'application settings API did not become ready: {last}')
@@ -124,7 +126,12 @@ try:
         invoke('updater_download'); state=wait_state(proc,{'failed','ready_to_install'})
         reason=state.get('status',{}).get('reason') if isinstance(state.get('status'),dict) else state.get('reason')
         rejected=state.get('state')=='failed' and reason=='signature_verification_failed'
-        usable=api('GET','/api/settings') is not None and proc.poll() is None
+        try:
+            settings=api('GET','/api/settings')
+            usable=valid_settings(settings) and settings.get('theme')=='classified_light' and proc.poll() is None
+        except (RuntimeError,OSError,ValueError):
+            settings=None
+            usable=False
         evidence={'native_app':proc.poll() is None,'tamper_rejected':rejected,'tamper_status':state,'old_version_retained':plistlib.loads((app/'Contents/Info.plist').read_bytes()).get('CFBundleShortVersionString')==old,'app_usable':usable}
         (root/'tampered-result.json').write_text(json.dumps(evidence,sort_keys=True)+'\n')
         if not all((evidence['native_app'],rejected,evidence['old_version_retained'],usable)): raise RuntimeError('tamper rejection assertions failed')

@@ -75,7 +75,27 @@ python3 "$ROOT/build/updater-smoke/verify_artifacts.py" "$TMP"
 # loopback-only server, shared by actual plugin fetches
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$TMP/feed" >"$TMP/http.log" 2>&1 & SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null || true; cleanup' EXIT
-sleep 1
+# Wait for the actual feed endpoint, not an assumed startup delay. Keep the server
+# alive throughout polling and fail with a bounded, credential-free diagnostic.
+ready=0
+for attempt in {1..50}; do
+  if ! kill -0 "$SERVER" 2>/dev/null; then
+    echo 'FAIL: updater feed server exited before readiness' >&2
+    tail -n 20 "$TMP/http.log" >&2 || true
+    exit 2
+  fi
+  if curl --silent --show-error --fail --max-time 1 \
+      "http://127.0.0.1:$PORT/latest.json" -o /dev/null 2>/dev/null; then
+    ready=1
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$ready" != 1 ]]; then
+  echo 'FAIL: updater feed did not become ready at loopback endpoint' >&2
+  tail -n 20 "$TMP/http.log" >&2 || true
+  exit 2
+fi
 # Run actual installed bundle; launcher itself accesses bridge via E2E command files.
 python3 "$ROOT/build/updater-smoke/driver.py" healthy "$TMP" "$TMP/healthy/Muninn.app"
 # Tamper distinct copy, keep healthy candidate/evidence untouched, and retain genuine NEW signature/version.

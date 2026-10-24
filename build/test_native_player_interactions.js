@@ -15,6 +15,10 @@ test('native player fixture uses real API schemas, valid ids, blob media, and ob
   assert.match(fixture, /Uint8Array\.from\(atob/);
   assert.match(fixture, /new Blob\(\[mediaBytes\], \{type:'video\/mp4'\}\)/);
   assert.match(fixture, /M\.invoke\('tab_open_video',\{id:tabId,video_id:videoId,playlist:/);
+  assert.match(fixture, /await M\.activateTab\(tabId\)/, 'activate the production watch tab before keyboard interactions');
+  assert.match(fixture, /document\.querySelector\('#view-watch'\)/, 'theatre regression must target the production #view-watch root');
+  assert.match(fixture, /theatre\.classList\.contains\('theatre'\) !== theaterBefore/, 'theatre regression must preserve the toggle assertion');
+  assert.doesNotMatch(fixture, /document\.querySelector\('\.watch'\)/, 'do not select the tab chrome .watch button as the theatre root');
   assert.match(fixture, /M\.api = async function fixtureApi/);
   assert.match(fixture, /\/api\/watch\//);
   assert.match(fixture, /\/api\/playlist\?/);
