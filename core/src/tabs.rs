@@ -592,6 +592,44 @@ mod tests {
     const B: &str = "https://www.youtube.com/feed/subscriptions";
 
     #[test]
+    fn native_search_urls_are_distinct_destinations_and_reuse_tabs() {
+        let first = "https://www.youtube.com/?native_smoke=native-smoke-123-456-1";
+        let second = "https://www.youtube.com/?native_smoke=native-smoke-123-456-2";
+        let first_input = classify_input(first);
+        let second_input = classify_input(second);
+        assert_eq!(first_input, Input::Yt(first.into()));
+        assert_eq!(second_input, Input::Yt(second.into()));
+        let to_loc = |input| match input { Input::Yt(url) => Loc::Yt(url), other => panic!("expected native YouTube input, got {other:?}") };
+        let first_loc = to_loc(first_input);
+        let second_loc = to_loc(second_input);
+        assert_ne!(loc_key(&first_loc), loc_key(&second_loc));
+
+        let mut tabs = vec![yt(1, A, 0)];
+        let mut next_id = 2;
+        let created = find_or_open(&mut tabs, &mut next_id, first_loc.clone(), 1);
+        assert_eq!(created, Opened::Created(2));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, first_loc, 2), Opened::Existing(2));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, second_loc.clone(), 3), Opened::Created(3));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, second_loc, 4), Opened::Existing(3));
+        assert_eq!(tabs.iter().map(|tab| tab.id).collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn updater_results_search_is_classified_and_reused_as_native_youtube_tab() {
+        let url = "https://www.youtube.com/results?search_query=updater-smoke-marker";
+        let input = classify_input(url);
+        assert_eq!(input, Input::Yt(url.into()));
+        let loc = match input { Input::Yt(url) => Loc::Yt(url), other => panic!("expected native YouTube input, got {other:?}") };
+        assert_eq!(loc_key(&loc), url_key(url));
+        let mut tabs = Vec::new();
+        let mut next_id = 1;
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, loc.clone(), 0), Opened::Created(1));
+        assert_eq!(find_or_open(&mut tabs, &mut next_id, loc, 1), Opened::Existing(1));
+        assert_eq!(tabs[0].yt_url, url, "the search marker survives classification and opening");
+        assert_eq!(classify_input("about:blank"), Input::Search("about:blank".into()), "record actual legacy input classification");
+    }
+
+    #[test]
     fn address_bar_classification() {
         assert_eq!(classify_input("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5"), Input::Video("dQw4w9WgXcQ".into()));
         assert_eq!(classify_input("youtu.be/dQw4w9WgXcQ"), Input::Video("dQw4w9WgXcQ".into()));

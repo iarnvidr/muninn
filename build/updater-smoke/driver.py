@@ -76,7 +76,7 @@ try:
         api('PUT','/api/settings',{'theme':'classified_light','offline_mode':False,'auto_prefetch':False,'min_free_bytes':0})
         settings_before=api('GET','/api/settings')
         if settings_before.get('theme')!='classified_light': raise RuntimeError('settings fixture failed')
-        marker='updater-smoke-'+str(time.time_ns()); invoke('tab_new',{'url':'https://example.com/'+marker})
+        marker='updater-smoke-'+str(time.time_ns()); invoke('tab_new',{'url':'https://www.youtube.com/results?search_query='+marker})
         tabs_before=invoke('tabs_state'); matching=[t for t in (tabs_before.get('tabs') or []) if marker in json.dumps(t)]
         if not matching: raise RuntimeError('unique synthetic tab fixture failed')
         invoke('updater_check'); state=wait_state(proc,{'available','unavailable','failed'})
@@ -91,6 +91,8 @@ try:
         after=wait_bridge(); after_state=native_state()
         after_pid=after_state.get('process_id'); after_exe=after_state.get('executable_path')
         expected_executable=str(executable(app))
+        if not isinstance(after_pid,int) or after_pid<=0 or after_pid==before_pid: raise RuntimeError(f'post-install process is not a fresh PID: {after_state}')
+        if not after_exe or str(pathlib.Path(after_exe).resolve())!=expected_executable: raise RuntimeError(f'post-install executable does not match installed bundle: {after_state}')
         if not isinstance(after_pid,int) or after_pid<=0 or not after_exe: raise RuntimeError(f'post-install identity missing: {after_state}')
         post_settings=api('GET','/api/settings'); post_tabs=invoke('tabs_state')
         post_matching=[t for t in (post_tabs.get('tabs') or []) if marker in json.dumps(t)]

@@ -25,6 +25,15 @@ class EvidenceProtocol(unittest.TestCase):
   self.assertIn('proc.wait(timeout=120)',driver)
   self.assertNotIn("root/'healthy'/'Muninn.app'",driver)
   self.assertNotIn('has_process_id',driver)
+ def test_marker_uses_persistable_youtube_search_and_restart_checked_before_reads(self):
+  tree=ast.parse((HERE/'driver.py').read_text())
+  source=(HERE/'driver.py').read_text()
+  self.assertIn("https://www.youtube.com/results?search_query=",source)
+  healthy=source.index("after_pid=after_state.get('process_id')")
+  guarded=source.index("after_pid==before_pid",healthy)
+  settings=source.index("post_settings=api('GET','/api/settings')",healthy)
+  self.assertLess(guarded,settings)
+  self.assertLess(source.index("if not after_exe",healthy),settings)
  def test_install_schedule_is_valid_javascript_expression(self):
   if not shutil.which('node'): self.skipTest('node is unavailable')
   tree=ast.parse((HERE/'driver.py').read_text())

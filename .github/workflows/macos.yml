@@ -39,10 +39,31 @@ jobs:
         run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"
       - name: Build debug binary for native UI interactions
         run: cargo build --locked -p muninn --target aarch64-apple-darwin
+      - id: prepare-debug-smoke
+        name: Prepare isolated debug bundle for native smokes
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/muninn-debug-smoke/Muninn.app"
+          mkdir -p "$(dirname "$app")"
+          ditto "$RUNNER_TEMP/muninn/Muninn.app" "$app"
+          exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          debug_binary="${CARGO_TARGET_DIR:-target}/aarch64-apple-darwin/debug/muninn"
+          test -x "$debug_binary"
+          cp "$debug_binary" "$app/Contents/MacOS/$exe"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
+      - id: updater-smoke
+        if: ${{ !cancelled() && steps['prepare-debug-smoke'].outcome == 'success' }}
+        name: Native signed updater integration smoke (debug bundle)
+        env:
+          MUNINN_UPDATER_SMOKE_APP: ${{ runner.temp }}/muninn-debug-smoke/Muninn.app
+          MUNINN_UPDATER_SMOKE_EVIDENCE_DIR: ${{ runner.temp }}/muninn-updater-evidence
+        run: bash build/updater-smoke/run-macos.sh
       - name: Native UI interaction smoke (debug bundle only)
+        if: ${{ !cancelled() && steps['prepare-debug-smoke'].outcome == 'success' }}
         env:
           NATIVE_UI_EVIDENCE_DIR: ${{ runner.temp }}/muninn-debug-ui-evidence
-        run: bash build/native-ui-smoke.sh "$RUNNER_TEMP/muninn/Muninn.app" "$RUNNER_TEMP/muninn-debug-ui-evidence"
+        run: bash build/native-ui-smoke.sh "$RUNNER_TEMP/muninn-debug-smoke/Muninn.app" "$RUNNER_TEMP/muninn-debug-ui-evidence"
       - id: upload
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -54,6 +75,7 @@ jobs:
             ${{ runner.temp }}/muninn/verify-macos.txt
             ${{ runner.temp }}/muninn-release-evidence/**
             ${{ runner.temp }}/muninn-debug-ui-evidence/**
+            ${{ runner.temp }}/muninn-updater-evidence/**
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
       - name: Show where to download this build

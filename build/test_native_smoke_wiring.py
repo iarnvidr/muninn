@@ -2,6 +2,12 @@
 from pathlib import Path
 import re
 import unittest
+import ast
+import json
+import os
+import subprocess
+import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -66,9 +72,68 @@ class NativeSmokeWiringTests(unittest.TestCase):
         self.assertIn("str(after['focusedTab'])==str(expected)", driver)
         self.assertIn("n.focus();n.click()", driver)
         self.assertIn("len(set(map(str,tabs)))==2", driver)
+        self.assertIn("run_marker=f'native-smoke-{os.getpid()}-{time.time_ns()}'", driver)
+        self.assertIn('native_smoke={run_marker}-1', driver)
+        self.assertIn('native_smoke={run_marker}-2', driver)
+        self.assertIn("'url':fixture_url", driver)
+        self.assertIn('return await window.__muninnNativePlayerInteractions', driver)
         self.assertIn("return await window.__muninnNativePlayerInteractions", driver)
         self.assertIn("mediaBase64:'\"+payload+\"'", driver)
         self.assertNotIn("str(after['focused'])", driver)
+
+    def test_fixture_destinations_exercise_dedup_and_protocol_preserves_returned_ids(self):
+        # Replay the driver's actual Python tab-creation statements against a
+        # stateful fake core using destination canonicalization and dedup.
+        # The fake classifies about:blank as Home and strips tracking params,
+        # while retaining meaningful native_smoke query strings as distinct.
+        driver = (ROOT / "build/native-ui-driver.py").read_text()
+        tree = ast.parse(driver)
+        loop = next(n for n in ast.walk(tree) if isinstance(n, ast.For) and isinstance(n.iter, ast.Name) and n.iter.id == "fixture_urls")
+        assignment = next(n for n in ast.walk(loop) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "r" for t in n.targets))
+        expression = ast.Expression(assignment.value)
+        code = compile(expression, "native-ui-driver.py", "eval")
+        seen = {}
+        next_id = 40
+        responses = {}
+        def send(command):
+            nonlocal next_id
+            command = dict(command)
+            command["id"] = f'native{len(responses) + 1:04d}'
+            url = command["args"]["url"]
+            # Model the destination identity rules relevant to the protocol:
+            # blank resolves to Home; tracking is stripped; native_smoke is not.
+            from urllib.parse import urlsplit, parse_qsl, urlencode
+            if url == "about:blank":
+                key = "home"
+            else:
+                parts = urlsplit(url)
+                query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() not in {"utm_source", "utm_medium", "utm_campaign"}]
+                key = (parts.scheme.lower(), parts.netloc.lower().removeprefix("www."), parts.path or "/", urlencode(query))
+            if key not in seen:
+                seen[key] = next_id
+                next_id += 1
+            response = {"ok": True, "id": seen[key]}
+            responses[command["id"]] = response
+            return response
+        seq = 0
+        tabs = []
+        env = {"fixture_urls": ["https://www.youtube.com/?native_smoke=run-1", "https://www.youtube.com/?native_smoke=run-2"],
+               "send": send, "seq": seq}
+        for fixture_url in env["fixture_urls"]:
+            seq += 1
+            env.update(seq=seq, fixture_url=fixture_url)
+            command = eval(code, env)
+            tabs.append(responses[f'native{seq:04d}']["id"])
+        self.assertEqual(tabs, [40, 41])
+        self.assertEqual(len(set(tabs)), 2)
+        duplicate = {"id": "native0003", "op": "call", "name": "tab_new", "args": {"url": env["fixture_urls"][0]}}
+        self.assertEqual(send(duplicate)["id"], tabs[0], "same destination remains deduplicated")
+
+        # Negative control: the former repeated about:blank fixture collides
+        # because both URLs canonicalize to Home; verify IDs actually collapse.
+        blank_ids = [send({"op": "call", "name": "tab_new", "args": {"url": "about:blank"}})["id"] for _ in range(2)]
+        self.assertEqual(blank_ids, [42, 42])
+        self.assertFalse(len(set(blank_ids)) == 2, "old repeated-blank fixture must fail distinct-ID assertion")
 
     def test_no_focus_snapshot_is_json_safe_and_has_explicit_null_contract(self):
         # Mirror JSON.stringify's omission of undefined object fields: optional

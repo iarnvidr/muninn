@@ -57,8 +57,15 @@ try:
         state=ev(f"(()=>{{window.Muninn.settings.theme={json.dumps(theme)};window.Muninn.applyAppearance();return {{theme:document.documentElement.dataset.theme,computed:getComputedStyle(document.documentElement).colorScheme}}}})()")
         check('appearance '+theme,state['theme']==theme,state)
     tabs=[]
-    for _ in range(2):
-        r=send({'op':'call','name':'tab_new','args':{'url':'about:blank'}})
+    # Distinct canonical destinations exercise production find-or-open
+    # deduplication: each query is meaningful (not stripped tracking), and the
+    # run marker prevents an existing/restored tab from absorbing either one.
+    # so an existing/restored tab cannot absorb either synthetic tab.
+    run_marker=f'native-smoke-{os.getpid()}-{time.time_ns()}'
+    fixture_urls=[f'https://www.youtube.com/?native_smoke={run_marker}-1',
+                  f'https://www.youtube.com/?native_smoke={run_marker}-2']
+    for fixture_url in fixture_urls:
+        r=send({'op':'call','name':'tab_new','args':{'url':fixture_url}})
         if not r.get('ok'): raise RuntimeError(r)
         tabs.append(r['id'])
         # Wait for each native tab to appear before creating the next; tab_new's
