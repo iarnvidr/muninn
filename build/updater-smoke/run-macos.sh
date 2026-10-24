@@ -10,27 +10,33 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/muninn-updater-smoke.XXXXXX")"; chmod 700 "$TM
 EVIDENCE_DIR="${MUNINN_UPDATER_SMOKE_EVIDENCE_DIR:-}"
 cleanup() {
   local rc=$?
-  if [[ -n "$EVIDENCE_DIR" && -s "$TMP/evidence.json" ]]; then
+  if [[ -n "$EVIDENCE_DIR" ]]; then
     mkdir -p "$EVIDENCE_DIR"; chmod 700 "$EVIDENCE_DIR"
-    install -m 600 "$TMP/evidence.json" "$EVIDENCE_DIR/evidence.json"
+    # Results contain assertion/status evidence only; never copy logs, keys, or runtime state.
+    for name in healthy-result tampered-result evidence; do
+      if [[ -s "$TMP/$name.json" ]]; then install -m 600 "$TMP/$name.json" "$EVIDENCE_DIR/$name.json"; fi
+    done
   fi
   [[ "${MUNINN_UPDATER_SMOKE_KEEP:-0}" == 1 ]] || rm -rf "$TMP"
   return "$rc"
 }
 trap cleanup EXIT
-mkdir -p "$TMP/data" "$TMP/feed" "$TMP/e2e" "$TMP/home"
-# Keep the original debug app untouched; healthy install targets its own copy.
-ditto "$MUNINN_UPDATER_SMOKE_APP" "$TMP/healthy-app"
-ditto "$MUNINN_UPDATER_SMOKE_APP" "$TMP/tampered-app"
+mkdir -p "$TMP/data" "$TMP/feed" "$TMP/e2e" "$TMP/home" "$TMP/healthy" "$TMP/tampered"
+# Preserve real bundle roots and isolate the source app from installer mutation.
+ditto "$MUNINN_UPDATER_SMOKE_APP" "$TMP/healthy/Muninn.app"
+ditto "$MUNINN_UPDATER_SMOKE_APP" "$TMP/tampered/Muninn.app"
 export HOME="$TMP/home" MUNINN_DATA_DIR="$TMP/data" MUNINN_E2E_DIR="$TMP/e2e"
 export MUNINN_NATIVE_UI_SMOKE=1
 PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
 export MUNINN_UPDATER_SMOKE_ENDPOINT="http://127.0.0.1:$PORT/latest.json"
 APP="$(cd "$(dirname "$MUNINN_UPDATER_SMOKE_APP")" && pwd)/$(basename "$MUNINN_UPDATER_SMOKE_APP")"
-PLIST="$APP/Contents/Info.plist"
 # Use isolated copies, never mutate or launch the caller's source bundle.
 OLD="0.2.14-smoke.1"
 NEW="0.2.14-smoke.2"
+for bundle in "$TMP/healthy/Muninn.app" "$TMP/tampered/Muninn.app"; do
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $OLD" "$bundle/Contents/Info.plist"
+  codesign --force --deep --sign - "$bundle"
+done
 
 # Isolated ephemeral minisign key; no key material is printed.
 npx --yes @tauri-apps/cli@2.10.1 signer generate --ci --write-keys "$TMP/test.key" >"$TMP/keygen.log" 2>&1
@@ -71,15 +77,15 @@ python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$TMP/feed" >"$TMP/h
 trap 'kill "$SERVER" 2>/dev/null || true; cleanup' EXIT
 sleep 1
 # Run actual installed bundle; launcher itself accesses bridge via E2E command files.
-python3 "$ROOT/build/updater-smoke/driver.py" healthy "$TMP" "$TMP/healthy-app"
+python3 "$ROOT/build/updater-smoke/driver.py" healthy "$TMP" "$TMP/healthy/Muninn.app"
 # Tamper distinct copy, keep healthy candidate/evidence untouched, and retain genuine NEW signature/version.
 python3 - "$TMP" "$NEW" <<'PY'
 import json,pathlib,sys
 p=pathlib.Path(sys.argv[1]); version=sys.argv[2]
-archive=p/'tampered-feed/Muninn.app.tar.gz'; archive.parent.mkdir(parents=True,exist_ok=True)
+archive=p/'feed/Muninn.app.tar.gz'
 source=p/'new/Muninn.app.tar.gz'; b=bytearray(source.read_bytes()); b[len(b)//2]^=1; archive.write_bytes(b)
-feed=json.loads((p/'feed/latest.json').read_text()); feed['version']=version; feed['platforms']['darwin-aarch64']['url']=feed['platforms']['darwin-aarch64']['url'].replace('/Muninn.app.tar.gz','/../tampered-feed/Muninn.app.tar.gz'); (p/'feed/latest.json').write_text(json.dumps(feed))
+# Keep the original signed metadata and same in-feed URL: only payload bytes are tampered.
 PY
-python3 "$ROOT/build/updater-smoke/driver.py" tampered "$TMP" "$TMP/tampered-app"
+python3 "$ROOT/build/updater-smoke/driver.py" tampered "$TMP" "$TMP/tampered/Muninn.app"
 python3 "$ROOT/build/updater-smoke/verify_evidence.py" "$TMP"
 echo 'PASS: native updater smoke; boolean-only evidence generated'

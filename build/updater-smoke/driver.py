@@ -10,7 +10,10 @@ binary=executable(app)
 
 def bridge(expression):
     ident='updater-'+str(time.time_ns()); d=pathlib.Path(os.environ['MUNINN_E2E_DIR'])
-    (d/(ident+'.cmd.json')).write_text(json.dumps({'id':ident,'op':'eval','target':'chrome','js':f'return await ({expression});'}))
+    command=d/(ident+'.cmd.json')
+    tmp=command.with_suffix('.tmp')
+    tmp.write_text(json.dumps({'id':ident,'op':'eval','target':'chrome','js':f'return await ({expression});'}))
+    os.replace(tmp,command)
     result=d/(ident+'.res.json')
     try:
         for _ in range(400):
@@ -20,6 +23,23 @@ def bridge(expression):
     finally:
         (d/(ident+'.cmd.json')).unlink(missing_ok=True); result.unlink(missing_ok=True)
 def invoke(name,args=None): return bridge(f'Muninn.invoke({json.dumps(name)},{json.dumps(args or {})})')
+def native_state():
+    ident='updater-state-'+str(time.time_ns()); d=pathlib.Path(os.environ['MUNINN_E2E_DIR'])
+    command=d/(ident+'.cmd.json'); result=d/(ident+'.res.json')
+    tmp=command.with_suffix('.tmp')
+    tmp.write_text(json.dumps({'id':ident,'op':'state','target':'chrome','args':{}}))
+    os.replace(tmp,command)
+    try:
+        end=time.monotonic()+40
+        while time.monotonic()<end:
+            if result.exists(): return json.loads(result.read_text())
+            time.sleep(.1)
+        raise RuntimeError('native state bridge timed out')
+    finally:
+        command.unlink(missing_ok=True); result.unlink(missing_ok=True)
+def schedule_install():
+    # Return from eval immediately; updater restart may destroy the bridge/webview.
+    return bridge('(() => { setTimeout(() => { Muninn.invoke("updater_install").catch(error => { window.__updaterSmokeInstallError = String(error); }); }, 150); return {scheduled:true}; })()')
 def api(method,path,body=None):
     args=f'{json.dumps(method)},{json.dumps(path)}'
     if body is not None: args+=','+json.dumps(body)
@@ -44,12 +64,13 @@ def wait_bridge(timeout=180):
 old=json.loads((root/'old.json').read_text())['version']; new=json.loads((root/'new.json').read_text())['version']
 if mode=='healthy':
     # Isolated, pristine starting app. Installation replaces only this copy.
-    app=root/'healthy-app'; binary=executable(app)
+    # app_arg is the explicitly provisioned isolated pristine bundle.
+    binary=executable(app)
 proc=launch(old)
 try:
     time.sleep(3)
     if mode=='healthy':
-        before=invoke('state',{})
+        before=native_state()
         before_pid=before.get('process_id'); before_exe=before.get('executable_path')
         if not isinstance(before_pid,int) or before_pid<=0 or not before_exe: raise RuntimeError(f'pre-install identity missing: {before}')
         api('PUT','/api/settings',{'theme':'classified_light','offline_mode':False,'auto_prefetch':False,'min_free_bytes':0})
@@ -62,9 +83,12 @@ try:
         if state.get('state')!='available': raise RuntimeError(f'signed update unavailable: {state}')
         invoke('updater_download'); state=wait_state(proc,{'ready_to_install','failed'})
         if state.get('state')!='ready_to_install': raise RuntimeError(f'signed archive download failed: {state}')
-        invoke('updater_install'); proc.wait(timeout=120)
+        accepted=schedule_install()
+        if not isinstance(accepted,dict) or not accepted.get('scheduled'): raise RuntimeError(f'updater install was not scheduled: {accepted}')
+        try: proc.wait(timeout=120)
+        except subprocess.TimeoutExpired: raise RuntimeError('updater install did not restart/exit within 120 seconds')
         # Only the updater may relaunch. Require a fresh native state response and identity.
-        after=wait_bridge(); after_state=invoke('state',{})
+        after=wait_bridge(); after_state=native_state()
         after_pid=after_state.get('process_id'); after_exe=after_state.get('executable_path')
         expected_executable=str(executable(app))
         if not isinstance(after_pid,int) or after_pid<=0 or not after_exe: raise RuntimeError(f'post-install identity missing: {after_state}')
@@ -90,6 +114,19 @@ try:
         if not all((evidence['native_app'],rejected,evidence['old_version_retained'],usable)): raise RuntimeError('tamper rejection assertions failed')
     else: raise RuntimeError('mode must be healthy or tampered')
 finally:
+    # Relaunch is owned only after native state attests its executable identity.
+    # Never signal an unverified PID (or a PID reused by an unrelated process).
+    owned_pid=locals().get('after_pid')
+    owned_exe=locals().get('after_exe')
+    if isinstance(owned_pid,int) and owned_pid>0 and owned_exe:
+        try:
+            observed=subprocess.run(['ps','-p',str(owned_pid),'-o','comm='],capture_output=True,text=True,check=True).stdout.strip()
+            expected=executable(app)
+            if pathlib.Path(observed).resolve()==expected.resolve():
+                os.kill(owned_pid,15)
+                end=time.monotonic()+10
+                while time.monotonic()<end and subprocess.run(['kill','-0',str(owned_pid)],capture_output=True).returncode==0: time.sleep(.1)
+        except (OSError,ValueError): pass
     if proc.poll() is None: proc.terminate()
     try: proc.wait(timeout=10)
     except subprocess.TimeoutExpired: proc.kill()
