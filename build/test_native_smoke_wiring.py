@@ -59,11 +59,24 @@ class NativeSmokeWiringTests(unittest.TestCase):
         # focus is reported as focusedTab and remains asserted during sync/cycling.
         snapshot = re.search(r"def tabstate\(\): return ev\(\"(.*?)\"\)", driver)
         self.assertIsNotNone(snapshot)
-        self.assertIn("focusedTab:document.activeElement.closest('.tab')?.dataset.id", snapshot.group(1))
+        self.assertIn("focusedTab:document.activeElement?.closest('.tab')?.dataset.id ?? null", snapshot.group(1))
         self.assertNotIn("focused:", snapshot.group(1))
         self.assertGreaterEqual(driver.count("['focusedTab']"), 2)
         self.assertIn("str(state['focusedTab'])==str(tab_id)", driver)
         self.assertIn("str(after['focusedTab'])==str(expected)", driver)
+        self.assertIn("n.focus();n.click()", driver)
+        self.assertIn("len(set(map(str,tabs)))==2", driver)
+        self.assertIn("return await window.__muninnNativePlayerInteractions", driver)
+        self.assertIn("mediaBase64:'\"+payload+\"'", driver)
+        self.assertNotIn("str(after['focused'])", driver)
+
+    def test_no_focus_snapshot_is_json_safe_and_has_explicit_null_contract(self):
+        # Mirror JSON.stringify's omission of undefined object fields: optional
+        # chaining without ?? null silently removes focusedTab from snapshots.
+        snapshot = {"active": 4, "focusedTab": None}
+        decoded = __import__('json').loads(__import__('json').dumps(snapshot))
+        self.assertIn("focusedTab", decoded)
+        self.assertIsNone(decoded["focusedTab"])
 
     def test_preview_version_agrees_across_metadata_and_lockfile(self):
         import json

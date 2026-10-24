@@ -61,11 +61,20 @@ try:
         r=send({'op':'call','name':'tab_new','args':{'url':'about:blank'}})
         if not r.get('ok'): raise RuntimeError(r)
         tabs.append(r['id'])
+        # Wait for each native tab to appear before creating the next; tab_new's
+        # returned ID is the authoritative identity, not a synthetic assumption.
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            state=ev("({ids:window.Muninn.tabs.list.map(t=>t.id)})")
+            if str(r['id']) in [str(i) for i in state['ids']]: break
+            time.sleep(.05)
+        else: raise TimeoutError(f"new tab {r['id']} did not reach UI state: {state!r}")
+    check('synthetic tabs have distinct native IDs',len(set(map(str,tabs)))==2,tabs)
     report['synthetic_tabs']=tabs
-    def tabstate(): return ev("({active:window.Muninn.tabs.active,count:window.Muninn.tabs.list.length,focusedTab:document.activeElement.closest('.tab')?.dataset.id,buttons:[...document.querySelectorAll('#tabstrip .tab-main')].map(x=>({id:x.parentNode.dataset.id,selected:x.getAttribute('aria-selected')}))})")
-    base=tabstate(); check('synthetic tabs setup',base['count']>=2,base)
+    def tabstate(): return ev("({active:window.Muninn.tabs.active,count:window.Muninn.tabs.list.length,focusedTab:document.activeElement?.closest('.tab')?.dataset.id ?? null,buttons:[...document.querySelectorAll('#tabstrip .tab-main')].map(x=>({id:x.parentNode.dataset.id,selected:x.getAttribute('aria-selected')}))})")
+    base=tabstate(); check('synthetic tabs setup',base['count']>=2 and all(str(i) in [str(b['id']) for b in base['buttons']] for i in tabs),base)
     def select_and_sync(tab_id):
-        ev(f"(()=>{{const n=[...document.querySelectorAll('#tabstrip .tab-main')].find(x=>Number(x.parentNode.dataset.id)==={int(tab_id)});if(!n)throw Error('missing tab '+{int(tab_id)});n.click();return true}})()")
+        ev(f"(()=>{{const n=[...document.querySelectorAll('#tabstrip .tab-main')].find(x=>Number(x.parentNode.dataset.id)==={int(tab_id)});if(!n)throw Error('missing tab '+{int(tab_id)});n.focus();n.click();return true}})()")
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             state=tabstate()
@@ -91,14 +100,14 @@ try:
             after=tabstate()
             if str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected): break
             time.sleep(.05)
-        check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected) and str(after['focused'])==str(expected),{'before':before,'after':after,'expected':expected})
+        check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected),{'before':before,'after':after,'expected':expected})
     media=os.environ.get('NATIVE_SMOKE_MEDIA_FILE')
     if not media or not pathlib.Path(media).is_file(): raise RuntimeError('NATIVE_SMOKE_MEDIA_FILE missing; workflow must generate a synthetic playable media file')
     payload=base64.b64encode(pathlib.Path(media).read_bytes()).decode('ascii')
     fixture=pathlib.Path(__file__).with_name('native-player-interactions.js').read_text()
     install=ev('(()=>{'+fixture+';return typeof window.__muninnNativePlayerInteractions})()')
     check('async player fixture installed',install=='function',install)
-    js="await window.__muninnNativePlayerInteractions({videoId:'native-fixture-video',playlistId:'native-fixture-list',mediaUrl:'data:video/mp4;base64,"+payload+"'})"
+    js="return await window.__muninnNativePlayerInteractions({videoId:'native-fixture-video',playlistId:'native-fixture-list',mediaBase64:'"+payload+"'})"
     player=send({'op':'eval','target':'chrome','js':js},timeout=60)
     if isinstance(player,dict) and player.get('error'): raise RuntimeError('async native player fixture failed: '+str(player))
     report['player']=player
