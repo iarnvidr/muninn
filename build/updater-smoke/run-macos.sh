@@ -19,6 +19,9 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$TMP/data" "$TMP/feed" "$TMP/e2e" "$TMP/home"
+# Keep the original debug app untouched; healthy install targets its own copy.
+ditto "$MUNINN_UPDATER_SMOKE_APP" "$TMP/healthy-app"
+ditto "$MUNINN_UPDATER_SMOKE_APP" "$TMP/tampered-app"
 export HOME="$TMP/home" MUNINN_DATA_DIR="$TMP/data" MUNINN_E2E_DIR="$TMP/e2e"
 export MUNINN_NATIVE_UI_SMOKE=1
 PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
@@ -68,14 +71,15 @@ python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$TMP/feed" >"$TMP/h
 trap 'kill "$SERVER" 2>/dev/null || true; cleanup' EXIT
 sleep 1
 # Run actual installed bundle; launcher itself accesses bridge via E2E command files.
-python3 "$ROOT/build/updater-smoke/driver.py" healthy "$TMP" "$APP"
+python3 "$ROOT/build/updater-smoke/driver.py" healthy "$TMP" "$TMP/healthy-app"
 # Tamper distinct copy, keep healthy candidate/evidence untouched, and retain genuine NEW signature/version.
 python3 - "$TMP" "$NEW" <<'PY'
 import json,pathlib,sys
 p=pathlib.Path(sys.argv[1]); version=sys.argv[2]
-archive=p/'feed/Muninn.app.tar.gz'; b=bytearray(archive.read_bytes()); b[len(b)//2]^=1; archive.write_bytes(b)
-feed=json.loads((p/'feed/latest.json').read_text()); feed['version']=version; (p/'feed/latest.json').write_text(json.dumps(feed))
+archive=p/'tampered-feed/Muninn.app.tar.gz'; archive.parent.mkdir(parents=True,exist_ok=True)
+source=p/'new/Muninn.app.tar.gz'; b=bytearray(source.read_bytes()); b[len(b)//2]^=1; archive.write_bytes(b)
+feed=json.loads((p/'feed/latest.json').read_text()); feed['version']=version; feed['platforms']['darwin-aarch64']['url']=feed['platforms']['darwin-aarch64']['url'].replace('/Muninn.app.tar.gz','/../tampered-feed/Muninn.app.tar.gz'); (p/'feed/latest.json').write_text(json.dumps(feed))
 PY
-python3 "$ROOT/build/updater-smoke/driver.py" tampered "$TMP" "$APP"
+python3 "$ROOT/build/updater-smoke/driver.py" tampered "$TMP" "$TMP/tampered-app"
 python3 "$ROOT/build/updater-smoke/verify_evidence.py" "$TMP"
 echo 'PASS: native updater smoke; boolean-only evidence generated'

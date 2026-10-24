@@ -52,6 +52,18 @@ fn debug_smoke_mode() -> bool {
 fn debug_smoke_mode() -> bool {
     false
 }
+fn signature_error_reason(error: &tauri_plugin_updater::Error) -> Option<&'static str> {
+    use tauri_plugin_updater::Error;
+    match error {
+        Error::Minisign(_)
+        | Error::Base64(_)
+        | Error::SignatureUtf8(_)
+        | Error::SignedVersionMismatch { .. }
+        | Error::MissingSignedVersion => Some("signature_verification_failed"),
+        _ => None,
+    }
+}
+
 fn current_version() -> String {
     if debug_smoke_mode() {
         if let Ok(version) = std::env::var("MUNINN_UPDATER_SMOKE_CURRENT_VERSION") {
@@ -89,6 +101,8 @@ pub enum UpdateStatus {
     },
     Failed {
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
 }
 impl Default for UpdateStatus {
@@ -246,14 +260,19 @@ pub async fn updater_download(
     state.set(UpdateStatus::Checking);
     tauri::async_runtime::spawn(async move {
         let result = async {
-            let update = configured_updater(&app)?
+            let update = configured_updater(&app)
+                .map_err(|e| (e, None))?
                 .check()
                 .await
-                .map_err(|e| e.to_string())?
-                .ok_or("no valid signed update available")?;
-            if compare_versions(&current_version(), &update.version)? != std::cmp::Ordering::Greater
+                .map_err(|e| {
+                    let reason = signature_error_reason(&e).map(str::to_string);
+                    (e.to_string(), reason)
+                })?
+                .ok_or(("no valid signed update available".to_string(), None))?;
+            if compare_versions(&current_version(), &update.version).map_err(|e| (e, None))?
+                != std::cmp::Ordering::Greater
             {
-                return Err("release is not newer than this version".into());
+                return Err(("release is not newer than this version".into(), None));
             }
             let version = update.version.clone();
             let total = Arc::new(AtomicU64::new(0));
@@ -278,8 +297,8 @@ pub async fn updater_download(
                     || {},
                 )
                 .await
-                .map_err(|e| e.to_string())?;
-            Ok::<_, String>((update, bytes, version))
+                .map_err(|e| (e.to_string(), None))?;
+            Ok::<_, (String, Option<String>)>((update, bytes, version))
         };
         let result =
             tokio::select! { r=result => Some(r), _=wait_cancelled(state.clone(),g) => None };
@@ -291,7 +310,7 @@ pub async fn updater_download(
                 *state.pending.lock().unwrap_or_else(|e| e.into_inner()) = Some((g, update, bytes));
                 state.set(UpdateStatus::ReadyToInstall { version })
             }
-            Some(Err(e)) => state.set(UpdateStatus::Failed { message: e }),
+            Some(Err((message, reason))) => state.set(UpdateStatus::Failed { message, reason }),
             None => return,
         }
         state.finish();

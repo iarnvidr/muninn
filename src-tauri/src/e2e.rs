@@ -79,6 +79,11 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
     match cmd["op"].as_str().unwrap_or("") {
         "state" => {
             let mut state = shell.tabs_state();
+            state["process_id"] = json!(std::process::id());
+            state["executable_path"] = std::env::current_exe()
+                .ok()
+                .map(|path| json!(path.to_string_lossy().into_owned()))
+                .unwrap_or(Value::Null);
             state["window_visible"] = json!(shell
                 .app
                 .get_window(crate::shell::MAIN)

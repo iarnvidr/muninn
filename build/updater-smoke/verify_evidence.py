@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Require native driver assertions; output only booleans, no private details."""
+"""Independently validate native updater evidence, including structured identity/reason."""
 import json, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-required = ('healthy-result.json', 'tampered-result.json')
-try:
-    results = [json.loads((root / f).read_text()) for f in required]
-except (OSError, json.JSONDecodeError) as error:
-    raise SystemExit(f'FAIL: missing or invalid native evidence: {error}')
-checks = (
-    results[0].get('signature_accepted') is True,
-    results[0].get('replacement_installed') is True,
-    results[0].get('restart_requested') is True,
-    results[0].get('restart_process_exited') is True,
-    results[1].get('tamper_rejected') is True,
-)
-if not all(checks):
-    raise SystemExit('FAIL: required signature/install/restart/tamper assertions absent')
-(root/'evidence.json').write_text(json.dumps({key: value for result in results for key, value in result.items()}, sort_keys=True) + '\n')
+root=pathlib.Path(sys.argv[1])
+try: healthy=json.loads((root/'healthy-result.json').read_text()); tampered=json.loads((root/'tampered-result.json').read_text())
+except (OSError,json.JSONDecodeError) as error: raise SystemExit(f'FAIL: missing or invalid native evidence: {error}')
+identity=healthy.get('restart_identity')
+tstatus=tampered.get('tamper_status')
+checks=(healthy.get('signature_accepted') is True,healthy.get('replacement_installed') is True,
+ healthy.get('restart_requested') is True,healthy.get('restart_observed') is True,
+ healthy.get('restart_process_exited') is True,healthy.get('settings_persisted') is True,
+ healthy.get('tabs_persisted') is True,isinstance(identity,dict),
+ isinstance(identity.get('before_pid') if isinstance(identity,dict) else None,int),
+ isinstance(identity.get('after_pid') if isinstance(identity,dict) else None,int),
+ identity.get('before_pid',0)>0 if isinstance(identity,dict) else False,
+ identity.get('after_pid',0)>0 if isinstance(identity,dict) else False,
+ identity.get('before_pid')!=identity.get('after_pid') if isinstance(identity,dict) else False,
+ bool(identity.get('expected_executable')) if isinstance(identity,dict) else False,
+ identity.get('actual_executable')==identity.get('expected_executable') if isinstance(identity,dict) else False,
+ tampered.get('tamper_rejected') is True,isinstance(tstatus,dict),
+ tstatus.get('status',{}).get('reason')=='signature_verification_failed' if isinstance(tstatus,dict) and isinstance(tstatus.get('status'),dict) else False,
+ tampered.get('old_version_retained') is True,tampered.get('app_usable') is True)
+if not all(checks): raise SystemExit('FAIL: required restart identity/persistence/structured tamper assertions absent')
+(root/'evidence.json').write_text(json.dumps({'healthy':healthy,'tampered':tampered},sort_keys=True)+'\n')
