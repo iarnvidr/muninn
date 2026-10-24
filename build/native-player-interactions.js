@@ -41,8 +41,12 @@
         return {meta:{video_id:activeId,title:'Synthetic native player fixture',duration_seconds:30},entries:[],comments:[],related:[]};
       }
       if (path.startsWith('/api/playlist?') && method === 'GET') {
-        calls.push({method, path});
-        return { list_id: options.playlistId, items, active_index: 0, truncated: false };
+        const requestUrl = new URL(path, M.origin);
+        const requestedVideo = requestUrl.searchParams.get('video');
+        const matchedIndex = queueIds.indexOf(requestedVideo);
+        const activeIndex = matchedIndex >= 0 ? matchedIndex : queueIds.indexOf(activeId);
+        calls.push({method, path, requestedVideo, activeIndex});
+        return { list_id: options.playlistId, items, active_index: activeIndex, truncated: false };
       }
       return originalApi(method, path, body, extra);
     };
@@ -93,7 +97,9 @@
       assert('focused editable and IME key events do not seek', Math.abs(video.currentTime-guardedAt)<0.2, video.currentTime);
       input.remove();
       const queueCallsBefore=calls.filter(x=>x.path.startsWith('/api/playlist?')).length;
+      const initialQueueRequest=calls.find(x=>x.path.startsWith('/api/playlist?'));
       assert('production playlist read fixture served', queueCallsBefore>0, calls);
+      assert('playlist fixture honors requested video and zero-based active index', initialQueueRequest?.requestedVideo===videoId && initialQueueRequest.activeIndex===queueIds.indexOf(videoId), initialQueueRequest);
       const queue=document.querySelector('.playlist-queue');
       assert('production queue rendered', !!queue && !queue.hidden, queue?.outerHTML);
       const currentPlayer = async expectedId => {
@@ -104,18 +110,24 @@
           const tab=M.tabs.list.find(t=>t.id===tabId);
           if(current instanceof HTMLVideoElement && tab?.video_id===expectedId) return current;
         }
-        throw new Error('current player/tab did not remount for '+expectedId);
+        const tab=M.tabs.list.find(t=>t.id===tabId);
+        const videos=[...document.querySelectorAll('video')].map(v=>({currentSrc:v.currentSrc,src:v.src,readyState:v.readyState,paused:v.paused,connected:v.isConnected}));
+        throw new Error('current player/tab did not remount for '+expectedId+'; snapshot='+JSON.stringify({expectedId,tabId,activeTabId:M.tabs.active?.id??M.tabs.active,tab:tab&&{id:tab.id,video_id:tab.video_id,playlist:tab.playlist,url:tab.url},queue:{index:document.querySelectorAll('.queue-item.current').length?[...document.querySelectorAll('.queue-item')].findIndex(b=>b.classList.contains('current')):null,items:[...document.querySelectorAll('.queue-item')].map(b=>b.textContent)},routing:routing.slice(-8),apiCalls:calls.slice(-12),videos}));
       };
       const queueButton=queue?.querySelectorAll('button.queue-item')[1];
       if (queueButton) { queueButton.click(); await settle(); }
       let opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[1]&&x.playlist?.index===2);
+      const secondQueueRequest=calls.filter(x=>x.path.startsWith('/api/playlist?')).find(x=>x.requestedVideo===queueIds[1]);
       assert('queue selection routes second valid id with playlist index 2', !!queueButton && opens.length>0, routing);
+      assert('second-video queue request returns zero-based index 1', !!secondQueueRequest && secondQueueRequest.activeIndex===1, secondQueueRequest);
       let activeVideo=await currentPlayer(queueIds[1]);
       assert('selection remounts current second player and native tab context', document.querySelector('video')===activeVideo, M.tabs.list.find(t=>t.id===tabId));
       key('N',document.body,false,{shiftKey:true}); await settle();
       activeVideo=await currentPlayer(queueIds[2]);
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[2]&&x.playlist?.index===3);
+      const thirdQueueRequest=calls.filter(x=>x.path.startsWith('/api/playlist?')).find(x=>x.requestedVideo===queueIds[2]);
       assert('next queue control routes third id and refreshes current tab/player', opens.length>0 && document.querySelector('video')===activeVideo, {opens,routing});
+      assert('third-video queue request returns zero-based index 2', !!thirdQueueRequest && thirdQueueRequest.activeIndex===2, thirdQueueRequest);
       activeVideo.dispatchEvent(new Event('ended')); await settle();
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[2]&&x.playlist?.index===3);
       await M.refreshTabs();

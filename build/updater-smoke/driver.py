@@ -128,13 +128,17 @@ try:
         rejected=state.get('state')=='failed' and reason=='signature_verification_failed'
         try:
             settings=api('GET','/api/settings')
-            usable=valid_settings(settings) and settings.get('theme')=='classified_light' and proc.poll() is None
+            # Tamper mode starts with the app's existing settings; unlike the
+            # healthy fixture, it never sets a particular theme.  Usability is
+            # a valid live settings response, not equality to that fixture.
+            usable=valid_settings(settings) and proc.poll() is None
         except (RuntimeError,OSError,ValueError):
             settings=None
             usable=False
         evidence={'native_app':proc.poll() is None,'tamper_rejected':rejected,'tamper_status':state,'old_version_retained':plistlib.loads((app/'Contents/Info.plist').read_bytes()).get('CFBundleShortVersionString')==old,'app_usable':usable}
         (root/'tampered-result.json').write_text(json.dumps(evidence,sort_keys=True)+'\n')
-        if not all((evidence['native_app'],rejected,evidence['old_version_retained'],usable)): raise RuntimeError('tamper rejection assertions failed')
+        failed=[name for name,passed in (('native_app',evidence['native_app']),('signature_rejected',rejected),('old_version_retained',evidence['old_version_retained']),('app_usable',usable)) if not passed]
+        if failed: raise RuntimeError('tamper rejection assertions failed: '+', '.join(failed))
     else: raise RuntimeError('mode must be healthy or tampered')
 finally:
     # Relaunch is owned only after native state attests its executable identity.

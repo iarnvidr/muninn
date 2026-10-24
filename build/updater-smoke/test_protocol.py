@@ -5,6 +5,13 @@ BASE_H={'signature_accepted':True,'replacement_installed':True,'restart_requeste
 BASE_T={'tamper_rejected':True,'tamper_status':{'state':'failed','status':{'reason':'signature_verification_failed'}},'old_version_retained':True,'app_usable':True}
 def run(root): return subprocess.run([sys.executable,str(HERE/'verify_evidence.py'),str(root)],capture_output=True)
 class EvidenceProtocol(unittest.TestCase):
+ def test_tampered_mode_usable_marker_does_not_require_healthy_fixture_theme(self):
+  driver=(HERE/'driver.py').read_text()
+  self.assertIn("usable=valid_settings(settings) and proc.poll() is None",driver)
+  self.assertNotIn("usable=valid_settings(settings) and settings.get('theme')=='classified_light'",driver)
+  self.assertIn("failed=[name for name,passed in",driver)
+  self.assertIn("if failed: raise RuntimeError('tamper rejection assertions failed: '+', '.join(failed))",driver)
+  self.assertLess(driver.index("(root/'tampered-result.json').write_text"),driver.index("if failed: raise RuntimeError"))
  def test_settings_response_requires_valid_object_and_theme(self):
   tree=ast.parse((HERE/'driver.py').read_text())
   fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='valid_settings')
