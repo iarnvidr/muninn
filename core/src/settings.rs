@@ -51,6 +51,9 @@ pub struct Settings {
     pub warm_tabs: u32,
     /// Seconds a tab must stay in the background before it may hibernate.
     pub hibernate_after_secs: u32,
+    /// Shows technical panels (Diagnostics, raw status, logs) and the manual
+    /// diagnostics export. Presentation only: breadcrumbs are recorded either way.
+    pub developer_mode: bool,
 }
 
 impl Default for Settings {
@@ -80,6 +83,7 @@ impl Default for Settings {
             watch_height: 720,
             warm_tabs: 3,
             hibernate_after_secs: 120,
+            developer_mode: false,
         }
     }
 }
@@ -117,6 +121,23 @@ mod tests {
         assert_eq!(s.pip_mode,PipMode::Manual);
         assert!(!s.background_playback);
         assert!(s.pip_return_to_inline && s.pause_when_pip_closes);
+        assert!(!s.developer_mode);
+    }
+
+    #[test]
+    fn developer_mode_defaults_off_for_older_settings_and_round_trips() {
+        // Settings persisted before the field existed (no developer_mode key).
+        let old = r#"{"offline_mode":true,"watch_height":1080,"warm_tabs":5}"#;
+        let loaded: Settings = serde_json::from_str(old).unwrap();
+        assert!(!loaded.developer_mode);
+        assert!(loaded.offline_mode);
+        assert_eq!(loaded.watch_height, 1080);
+        let on: Settings = serde_json::from_str(r#"{"developer_mode":true}"#).unwrap();
+        assert!(on.developer_mode);
+        let text = serde_json::to_string(&on.clone().sanitized()).unwrap();
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, on);
+        assert_eq!(serde_json::to_value(Settings::default()).unwrap()["developer_mode"], false);
     }
 
     #[test]

@@ -36,6 +36,7 @@ pub mod rules;
 pub mod server;
 pub mod settings;
 pub mod stream;
+pub mod stream_diag;
 pub mod tabs;
 pub mod tools_setup;
 pub mod ui_assets;

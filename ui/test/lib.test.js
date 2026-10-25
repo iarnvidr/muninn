@@ -408,3 +408,210 @@ test('library helpers: filter, counts and disk meters', () => {
   assert.equal(m[2].warn, true, 'free space below the minimum is flagged');
   assert.equal(L.diskMeters({ cache_bytes: 0, library_bytes: 0, max_disk_bytes: 0, free_bytes: null })[2].text, '-');
 });
+
+/* ---- local playback window: original time = offset + window time ---- */
+
+const win = (extra) => Object.assign({ offset: 348, until: 360, complete: false }, extra);
+
+test('window time maps to the original timeline and back', () => {
+  assert.equal(L.toOriginal(win(), 5), 353);
+  assert.equal(L.toWindow(win(), 353), 5);
+  assert.equal(L.toWindow(win(), 340), 0, 'never negative');
+  assert.equal(L.toOriginal(null, 12), 12, 'ordinary sources are not offset');
+  assert.equal(L.toOriginal(win(), NaN), 348);
+  assert.equal(L.windowOffset({ offset: -3 }), 0);
+  for (const t of [348, 350.5, 400, 7200]) assert.equal(L.toOriginal(win(), L.toWindow(win(), t)), t);
+});
+
+test('the playable limit of a window is original time, the full duration once complete', () => {
+  assert.equal(L.windowLimit(win(), 900), 360);
+  assert.equal(L.windowLimit(win({ complete: true }), 900), 900);
+  assert.equal(L.windowLimit(win({ until: undefined }), 900), 348);
+  assert.equal(L.windowLimit(null, 900), 0);
+});
+
+test('a seek inside the prepared window is a window-time seek, anything else prepares near the target', () => {
+  assert.deepEqual(L.seekPlan(win(), 353, 900), { kind: 'window', original: 353, time: 5 });
+  assert.equal(L.seekPlan(win(), 359.5, 900).kind, 'prepare', 'too close to the prepared end');
+  assert.equal(L.seekPlan(win(), 359, 900).kind, 'window');
+  assert.deepEqual(L.seekPlan(win(), 100, 900), { kind: 'prepare', original: 100, target: 100 }, 'before the window start');
+  assert.deepEqual(L.seekPlan(win(), 600, 900), { kind: 'prepare', original: 600, target: 600 }, 'beyond the prepared end');
+  // A complete window reaches the end of the video, so every later position is inside it.
+  assert.deepEqual(L.seekPlan(win({ complete: true }), 880, 900), { kind: 'window', original: 880, time: 532 });
+  assert.equal(L.seekPlan(win({ complete: true }), 340, 900).kind, 'prepare');
+  assert.equal(L.seekPlan(win({ complete: true }), 5000, 900).original, 900, 'clamped to the duration');
+  assert.equal(L.seekPlan(win({ offset: 0, complete: true }), -4, 900).original, 0);
+  assert.deepEqual(L.seekPlan(null, 77, 900), { kind: 'window', original: 77, time: 77 });
+});
+
+test('a local status is attached only when its window covers the resume target', () => {
+  const status = (extra) => Object.assign({ local: true, ready: true, progress: 0, offset_seconds: 348, prepared_until: 356, prepared_seconds: 8, mode: 'encode' }, extra);
+  assert.equal(L.localReady(status(), 353), true, 'ready as soon as the window covers the target, not after a prefix from 0');
+  assert.equal(L.localReady(status({ prepared_until: 352 }), 353), false);
+  assert.equal(L.localReady(status({ ready: false }), 353), false);
+  assert.equal(L.localReady(status(), 100), false, 'the window starts after the target');
+  assert.equal(L.localReady(status({ window_complete: true, progress: 1 }), 900), true);
+  // A backend that predates windows prepares from zero: wait for the prefix as before.
+  const legacy = { local: true, ready: true, progress: 0, prepared_seconds: 100 };
+  assert.equal(L.localReady(legacy, 353), false);
+  assert.equal(L.localReady(Object.assign({}, legacy, { prepared_seconds: 355 }), 353), true);
+  assert.equal(L.localReady(legacy, 0), true);
+});
+
+test('a status whose window cannot serve the resume target needs another prepare', () => {
+  const status = (extra) => Object.assign({ local: true, ready: true, offset_seconds: 348, prepared_until: 356, mode: 'encode' }, extra);
+  assert.equal(L.localFits(status(), 353), true);
+  assert.equal(L.localFits(status(), 360), true, 'a running encode will reach it');
+  assert.equal(L.localFits(status(), 400), false);
+  assert.equal(L.localFits(status(), 100), false);
+  assert.equal(L.localFits(status({ mode: 'remux', offset_seconds: 0, prepared_until: 5 }), 400), true, 'stream copy reaches any position quickly');
+  assert.equal(L.localFits(status({ window_complete: true }), 800), true);
+  assert.equal(L.localFits({ local: true, ready: true }, 800), true, 'older backend');
+  assert.equal(L.localFits({ kind: 'file' }, 800), true);
+});
+
+test('a stop carries its session generation, also when it is retried', async () => {
+  const calls = [];
+  let fail = true;
+  const stops = L.stopBarrier((id, generation) => { calls.push([id, generation]); if (fail) { fail = false; return Promise.reject(new Error('busy')); } return Promise.resolve(); });
+  stops.queue('video.720', 7).catch(() => {});
+  await stops.wait('video.720');
+  assert.deepEqual(calls, [['video.720', 7], ['video.720', 7]], 'the retry keeps the generation of the session it stops');
+  await stops.queue('video.720', 9);
+  assert.deepEqual(calls[2], ['video.720', 9]);
+});
+
+test('a queued stop keeps the generation it was queued with, not a later stop\'s', async () => {
+  const calls = [];
+  const gates = [];
+  const stops = L.stopBarrier((id, generation) => { calls.push([id, generation]); return new Promise(resolve => gates.push(resolve)); });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const first = stops.queue('v.720', 4);
+  const second = stops.queue('v.720', 8);   // queued while the first is still in flight
+  await tick();
+  gates[0]();
+  await first;
+  await tick();
+  gates[1]();
+  await second;
+  assert.deepEqual(calls, [['v.720', 4], ['v.720', 8]]);
+  // A stop queued behind slower ones must still use its own value when it finally runs.
+  const slow = [];
+  const lazy = L.stopBarrier((id, generation) => { calls.push(['lazy', generation]); return new Promise(resolve => slow.push(resolve)); });
+  const a = lazy.queue('w', 1);
+  const b = lazy.queue('w', 2);
+  const c = lazy.queue('w', 3);
+  await tick(); slow[0](); await a; await tick(); slow[1](); await b; await tick(); slow[2](); await c;
+  assert.deepEqual(calls.slice(2), [['lazy', 1], ['lazy', 2], ['lazy', 3]]);
+});
+
+test('the seek debounce is 250 ms and a superseded or abandoned seek never fires', () => {
+  assert.equal(L.SEEK_DEBOUNCE_MS, 250);
+  const c = { seekTarget: 500 };
+  assert.equal(L.seekDue(c, c, 500), true);
+  assert.equal(L.seekDue(c, c, 400), false, 'a newer seek changed the target');
+  c.seekTarget = null;
+  assert.equal(L.seekDue(c, c, 500), false, 'cleared by commitSeek / prepareLocalPlayback');
+  assert.equal(L.seekDue({ seekTarget: 500 }, {}, 500), false, 'another video is on screen');
+  assert.equal(L.seekDue(null, null, 500), false);
+});
+
+test('window restarts are capped at three per session and never overlap', () => {
+  const c = {};
+  assert.equal(L.MAX_LOCAL_RESTARTS, 3);
+  for (let i = 0; i < 3; i++) { assert.equal(L.mayRestartLocal(c), true); c.localRestarts = (c.localRestarts || 0) + 1; }
+  assert.equal(L.mayRestartLocal(c), false, 'cap reached');
+  assert.equal(L.mayRestartLocal({ localRestarts: 1, localRestarting: true }), false, 'one restart at a time');
+  assert.equal(L.mayRestartLocal({ localRestarts: 2 }), true);
+});
+
+test('awaitingFrame holds the spinner until a frame is shown after the resume seek', () => {
+  const ready = { readyState: 4, seeking: false, videoWidth: 640 };
+  const base = { awaitingFrame: true, sourceSet: true, resumeDone: true };
+  assert.equal(L.frameSettled(base, ready), true);
+  assert.equal(L.frameSettled({ ...base, awaitingFrame: false }, ready), false, 'nothing to settle');
+  assert.equal(L.frameSettled({ ...base, sourceSet: false }, ready), false);
+  assert.equal(L.frameSettled({ ...base, resumeDone: false }, ready), false, 'resume seek pending');
+  assert.equal(L.frameSettled(base, { ...ready, seeking: true }), false);
+  assert.equal(L.frameSettled(base, { ...ready, readyState: 1 }), false, 'metadata only');
+  assert.equal(L.frameSettled(base, { readyState: 2, seeking: false, videoWidth: 0 }), false, 'no frame size yet');
+  assert.equal(L.frameSettled(base, { readyState: 3, seeking: false, videoWidth: 0 }), true, 'audio-only is playable');
+  // Spinner: buffering shows it while playing; a paused player still spins until the first frame.
+  assert.equal(L.showSpinner({ buffering: true }, false), true);
+  assert.equal(L.showSpinner({ buffering: true }, true), false);
+  assert.equal(L.showSpinner({ buffering: true, awaitingFrame: true }, true), true);
+  assert.equal(L.showSpinner({ buffering: false, awaitingFrame: true }, true), false);
+});
+
+test('failure view: one title, a reason sentence, and retry only where it can help', () => {
+  const dead = ['unavailable', 'auth_restricted', 'geo_age', 'live_stream', 'format_unavailable', 'tools_missing', 'offline'];
+  for (const reason of dead) {
+    const v = L.failureView(reason);
+    assert.equal(v.title, "Couldn't start this video");
+    assert.equal(v.retryable, false, reason);
+    assert.ok(v.detail.length > 10);
+  }
+  for (const reason of ['transport_retryable', 'length_probe_failed', 'no_first_bytes_timeout', 'helper_exit', 'disk_space', 'busy', 'cancelled', 'start_stalled', 'unknown']) {
+    assert.equal(L.failureView(reason).retryable, true, reason);
+  }
+  assert.notEqual(L.failureView('unavailable').detail, L.failureView('auth_restricted').detail);
+  // Unknown categories degrade to the generic retryable message; the service flag wins over the table.
+  assert.equal(L.failureView('from-the-future').reason, 'unknown');
+  assert.equal(L.failureView('transport_retryable', false).retryable, false);
+});
+
+test('playbackFailure maps an error status and never shows technical advice or raw helper text', () => {
+  const status = { playback: { state: 'error', reason: 'unavailable', retryable: false, error: 'ERROR: x https://rr1.example.com/videoplayback' } };
+  const f = L.playbackFailure(status);
+  assert.deepEqual([f.reason, f.retryable], ['unavailable', false]);
+  const all = ['unavailable', 'auth_restricted', 'geo_age', 'live_stream', 'format_unavailable', 'transport_retryable', 'length_probe_failed', 'no_first_bytes_timeout',
+      'resolve_timeout', 'helper_exit', 'disk_space', 'busy', 'tools_pending', 'tools_missing', 'offline', 'cancelled', 'start_stalled', 'media_error', 'engine_unsupported', 'unknown'];
+  for (const reason of all) {
+    const text = JSON.stringify(L.failureView(reason));
+    assert.ok(!/diagnostic|yt-dlp|ffmpeg|https?:/i.test(text), `${reason}: ${text}`);
+  }
+  assert.equal(L.playbackFailure({ playback: { state: 'streaming' } }), null);
+  assert.equal(L.playbackFailure(null), null);
+  // A failure without a reason from an older service still yields a retryable generic message.
+  assert.deepEqual([L.playbackFailure({ playback: { state: 'error' } }).reason, L.playbackFailure({ playback: { state: 'error' } }).retryable], ['unknown', true]);
+});
+
+test('the start watchdog ends an endless spinner but leaves cached, errored and local playback alone', () => {
+  const now = 1_000_000;
+  const waiting = { playback: { state: 'resolving', ready: false } };
+  assert.equal(L.startStalled(now - 1000, now, waiting), false);
+  assert.equal(L.startStalled(now - L.START_WATCHDOG_MS - 1, now, waiting), true);
+  assert.equal(L.startStalled(now - 5000, now, waiting, 4000), true);
+  for (const playback of [{ state: 'cached' }, { state: 'error' }, { state: 'streaming', ready: true }, { local: true, state: 'resolving' }]) {
+    assert.equal(L.startStalled(now - L.START_WATCHDOG_MS - 1, now, { playback }), false, JSON.stringify(playback));
+  }
+  assert.equal(L.startStalled(0, now, waiting), false);
+});
+
+test('local playback failures are classified from the status text, not left as unknown', () => {
+  const view = (playback) => L.playbackFailure({ playback: Object.assign({ state: 'error' }, playback) });
+  assert.equal(view({ local: true, error: 'ffmpeg exited with status 1' }).reason, 'helper_exit');
+  assert.equal(view({ local: true, error: 'No space left on device' }).reason, 'disk_space');
+  assert.equal(view({ local: true, error: 'Invalid data found when processing input' }).reason, 'media_error');
+  assert.equal(view({ error: 'something odd' }).reason, 'unknown');
+  assert.equal(view({ reason: 'geo_age', local: true, error: 'x' }).reason, 'geo_age', 'a service category wins');
+});
+
+test('redactDetail strips urls, emails, paths with spaces and tokens and bounds the length', () => {
+  const out = L.redactDetail('fetch https://h.example.com/a?sig=1 for bob@example.com at /srv/someone/My Movie/x.mp4 key=abc ' + 'z'.repeat(40) + ' tail');
+  for (const leaked of ['example', 'bob', 'someone', 'Movie', 'abc', 'zzzz']) assert.ok(!out.includes(leaked), leaked + ' leaked: ' + out);
+  assert.ok(out.includes('fetch') && out.includes('tail'), out);
+  assert.equal(L.redactDetail('x'.repeat(1000)).length <= 300, true);
+  assert.equal(L.redactDetail(null), '');
+});
+
+test('the start watchdog outlasts the service worst case and follows the reported budget', () => {
+  const now = 10_000_000;
+  // Rust StreamTuning::worst_case_start() with defaults is ~1118 s.
+  assert.ok(L.START_WATCHDOG_MS > 1_118_000);
+  const waiting = { playback: { state: 'resolving', ready: false } };
+  assert.equal(L.startStalled(now - 1_118_000, now, waiting), false);
+  const budgeted = { playback: { state: 'resolving', ready: false, start_budget_ms: 60_000 } };
+  assert.equal(L.startStalled(now - 70_000, now, budgeted), false);
+  assert.equal(L.startStalled(now - 95_000, now, budgeted), true);
+});

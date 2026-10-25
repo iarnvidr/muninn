@@ -209,27 +209,28 @@ impl Shell {
         });
     }
 
-    /// Restores the tab list from the browsing DB (all tabs start asleep).
+    /// Restores the tab list from the browsing DB (all tabs start asleep). Tabs that show
+    /// the same destination are collapsed to one and the duplicates leave the DB.
     pub fn restore_tabs(self: &Arc<Self>) {
         let rows = self.core.browsing.tabs().unwrap_or_default();
-        let mut rows: Vec<_> = rows.into_iter().filter(|r| r.state != "closed").collect();
-        rows.sort_by_key(|r| r.tab_id.parse::<u64>().unwrap_or(0));
         let active_id = self.core.video.kv_get("active_tab").ok().flatten().and_then(|v| v.parse::<u64>().ok());
-        {
+        let (restored, next_id) = tabs::restore_from_rows(&rows, active_id);
+        let active_id = restored.active;
+        let kept: Vec<Tab> = {
             let mut inner = self.lock();
-            for r in &rows {
-                let Ok(id) = r.tab_id.parse::<u64>() else { continue };
-                let loc = match tabs::video_id_of_url(&r.url) {
-                    Some(v) => Loc::Watch(v),
-                    None => Loc::Yt(if r.url.is_empty() { HOME_URL.into() } else { r.url.clone() }),
-                };
-                let mut tab = Tab::new(id, loc, r.updated_at);
-                tab.title = r.title.clone().unwrap_or_default();
-                tab.scroll_y = r.scroll_y.unwrap_or(0.0);
-                inner.next_id = inner.next_id.max(id + 1);
-                inner.tabs.push(tab);
-            }
+            inner.next_id = inner.next_id.max(next_id);
+            inner.tabs = restored.tabs;
             Self::bump(&mut inner);
+            inner.tabs.clone()
+        };
+        for id in &restored.removed {
+            let _ = self.core.browsing.upsert_tab(&TabIngest { tab_id: id.to_string(), state: "closed".into(), ..Default::default() }, now_ms());
+        }
+        for tab in kept.iter().filter(|t| restored.merged.contains(&t.id)) {
+            self.persist(tab, "hidden");
+        }
+        if !restored.removed.is_empty() {
+            self.core.log_event("info", "tab.restore.deduplicated", json!({"removed": restored.removed.len()}));
         }
         self.adopt_imported_tabs();
         let first = {
@@ -246,34 +247,61 @@ impl Shell {
 
     // --- tab operations --------------------------------------------------------------------------
 
+    /// The one way to open a destination: finds the tab already showing it (sleeping tabs
+    /// included) or allocates one, inside a single critical section so concurrent requests
+    /// yield one tab. An existing tab is left exactly as it is (playback, scroll, history).
+    /// Returns the id and whether it was created.
+    fn find_or_open(&self, loc: Loc) -> (u64, bool) {
+        let mut inner = self.lock();
+        let inner = &mut *inner;
+        let opened = tabs::find_or_open(&mut inner.tabs, &mut inner.next_id, loc, now_ms());
+        if let tabs::Opened::Created(id) = opened {
+            // Created and shown right away: nothing to restore for a new tab.
+            if let Some(t) = inner.tabs.iter_mut().find(|t| t.id == id) {
+                t.restoring = false;
+            }
+            Self::bump(inner);
+        }
+        (opened.id(), matches!(opened, tabs::Opened::Created(_)))
+    }
+
+    /// Opens a destination by find-or-open. `background` never takes the focus.
+    fn open_dest(self: &Arc<Self>, loc: Loc, background: bool) -> u64 {
+        let (id, created) = self.find_or_open(loc);
+        if background {
+            if created {
+                if let Some(t) = self.lock().tabs.iter().find(|t| t.id == id).cloned() {
+                    self.persist(&t, "hidden");
+                }
+            }
+        } else {
+            self.activate(id);
+        }
+        id
+    }
+
     /// Load through the existing persistent YouTube session without switching away
     /// from the feed page or the video playing in picture-in-picture.
     fn refresh_feed(self: &Arc<Self>, kind: &str) {
         if self.core.is_offline() { return; }
         let url = match kind { "channels" => "https://www.youtube.com/feed/channels", "subscriptions" => "https://www.youtube.com/feed/subscriptions", _ => HOME_URL };
-        let id = {
+        let (id, _) = self.find_or_open(Loc::Yt(url.into()));
+        {
             let mut inner = self.lock();
-            if let Some(tab) = inner.tabs.iter_mut().find(|t| t.yt_url == url && t.face() == Face::Yt) {
+            if let Some(tab) = inner.tabs.iter_mut().find(|t| t.id == id) {
                 tab.loading = true;
                 tab.last_active_ms = now_ms();
-                tab.id
-            } else {
-                let id = inner.next_id;
-                inner.next_id += 1;
-                let mut tab = Tab::new(id, Loc::Yt(url.into()), now_ms());
-                tab.restoring = false;
-                tab.loading = true;
-                inner.tabs.push(tab);
-                Self::bump(&mut inner);
-                id
             }
-        };
+            Self::bump(&mut inner);
+        }
         if self.view_exists(id) { self.eval_tab(id,"location.reload()"); }
         else { self.create_view(id); }
         if let Some(tab) = self.lock().tabs.iter().find(|t|t.id==id).cloned() { self.persist(&tab,"hidden"); }
         self.sync_native();
     }
 
+    /// Opens a destination in a tab: the existing tab for it when there is one (activated),
+    /// else a new one. A new blank tab is the Home destination.
     pub fn new_tab(self: &Arc<Self>, url: Option<&str>) -> u64 {
         self.core.log_event("info", "tab.new", json!({"has_url":url.is_some()}));
         let loc = match url.map(classify_input) {
@@ -286,19 +314,7 @@ impl Shell {
             }
             None => Loc::Yt(HOME_URL.into()),
         };
-        let id = {
-            let mut inner = self.lock();
-            let id = inner.next_id;
-            inner.next_id += 1;
-            let mut tab = Tab::new(id, loc, now_ms());
-            // Created and shown right away: nothing to restore for a new tab.
-            tab.restoring = false;
-            inner.tabs.push(tab);
-            Self::bump(&mut inner);
-            id
-        };
-        self.activate(id);
-        id
+        self.open_dest(loc, false)
     }
 
     /// The chrome may still show Library/Settings, or may not have loaded yet.
@@ -364,30 +380,31 @@ impl Shell {
         }
     }
 
+    /// A video is opened from `tab_id`. From a browsing page (or in the background) it gets
+    /// its own player tab; a player tab navigating to another video changes in place.
+    /// Either way a video already open in another tab is reused instead of duplicated: that
+    /// tab is focused (unless `background`) and playback in it is not touched. The tab that
+    /// asked stays where it was.
     pub fn open_video(self: &Arc<Self>, tab_id: u64, video_id: &str, background: bool) {
         let browsing = self.lock().tabs.iter().any(|tab|tab.id==tab_id && tab.face()==Face::Yt);
         if background || browsing {
-            let id = {
-                let mut inner = self.lock();
-                let id = inner.next_id;
-                inner.next_id += 1;
-                let mut t = Tab::new(id, Loc::Watch(video_id.to_string()), now_ms());
-                t.last_active_ms = now_ms();
-                inner.tabs.push(t);
-                Self::bump(&mut inner);
-                id
-            };
-            if let Some(t) = self.lock().tabs.iter().find(|t| t.id == id).cloned() {
-                self.persist(&t, "hidden");
-            }
-            if !background {self.activate(id);}
+            self.open_dest(Loc::Watch(video_id.to_string()), background);
             return;
         }
-        {
+        let key = tabs::loc_key(&Loc::Watch(video_id.to_string()));
+        let other = {
             let mut inner = self.lock();
-            let Some(tab) = inner.tabs.iter_mut().find(|t| t.id == tab_id) else { return };
-            tab.open_video(video_id);
-            Self::bump(&mut inner);
+            let other = tabs::find_by_dest(&inner.tabs, &key, Some(tab_id));
+            if other.is_none() {
+                let Some(tab) = inner.tabs.iter_mut().find(|t| t.id == tab_id) else { return };
+                tab.open_video(video_id);
+                Self::bump(&mut inner);
+            }
+            other
+        };
+        if let Some(other) = other {
+            self.activate(other);
+            return;
         }
         self.activate(tab_id);
         // The page behind the player can rest: hide it now (it keeps its state while warm).
@@ -406,8 +423,16 @@ impl Shell {
     }
 
     fn go_yt(self: &Arc<Self>, tab_id: u64, url: &str) {
+        let key = tabs::loc_key(&Loc::Yt(url.to_string()));
         let (live, restoring_needed) = {
             let mut inner = self.lock();
+            let other = tabs::find_by_dest(&inner.tabs, &key, Some(tab_id));
+            if let Some(other) = other {
+                // Already open elsewhere: show that tab, leave this one where it is.
+                drop(inner);
+                self.activate(other);
+                return;
+            }
             let Some(tab) = inner.tabs.iter_mut().find(|t| t.id == tab_id) else { return };
             tab.go_yt(url);
             tab.scroll_y = 0.0;
@@ -425,30 +450,43 @@ impl Shell {
     }
 
     pub fn back(self: &Arc<Self>, tab_id: u64) {
-        let mv = {
+        let (mv, other) = {
             let mut inner = self.lock();
-            let mv = inner.tabs.iter_mut().find(|t| t.id == tab_id).and_then(|t| t.back());
+            let other = inner.tabs.iter().find(|t| t.id == tab_id).and_then(|t| t.peek_back()).and_then(|l| tabs::find_by_dest(&inner.tabs, &tabs::loc_key(l), Some(tab_id)));
+            let mv = if other.is_some() { None } else { inner.tabs.iter_mut().find(|t| t.id == tab_id).and_then(|t| t.back()) };
             Self::bump(&mut inner);
-            mv
+            (mv, other)
         };
-        if let Some(mv) = mv {
+        if let Some(other) = other {
+            // The destination is open in another tab: show that one instead of duplicating it.
+            self.activate(other);
+        } else if let Some(mv) = mv {
             self.apply_move(tab_id, mv);
         }
     }
 
     pub fn forward(self: &Arc<Self>, tab_id: u64) {
-        let mv = {
+        let (mv, other) = {
             let mut inner = self.lock();
-            let mv = inner.tabs.iter_mut().find(|t| t.id == tab_id).and_then(|t| t.forward());
+            let other = inner.tabs.iter().find(|t| t.id == tab_id).and_then(|t| t.peek_forward()).and_then(|l| tabs::find_by_dest(&inner.tabs, &tabs::loc_key(l), Some(tab_id)));
+            let mv = if other.is_some() { None } else { inner.tabs.iter_mut().find(|t| t.id == tab_id).and_then(|t| t.forward()) };
             Self::bump(&mut inner);
-            mv
+            (mv, other)
         };
-        if let Some(mv) = mv {
+        if let Some(other) = other {
+            // The destination is open in another tab: show that one instead of duplicating it.
+            self.activate(other);
+        } else if let Some(mv) = mv {
             self.apply_move(tab_id, mv);
         }
     }
 
     fn apply_move(self: &Arc<Self>, tab_id: u64, mv: Move) {
+        self.run_move(tab_id, mv);
+        self.activate(tab_id);
+    }
+
+    fn run_move(self: &Arc<Self>, tab_id: u64, mv: Move) {
         match mv {
             Move::HistoryBack => self.eval_tab(tab_id, "history.back()"),
             Move::HistoryForward => self.eval_tab(tab_id, "history.forward()"),
@@ -459,7 +497,27 @@ impl Shell {
             }
             Move::ShowWatch(_) | Move::ShowYt => {}
         }
-        self.activate(tab_id);
+    }
+
+    /// The page in `dup` moved by itself (a single-page navigation) to a destination that
+    /// `keep` already shows. `keep` is focused and `dup` is sent back to where it was; if it
+    /// has nowhere to go back to, it is closed. Reports of the unwanted page are ignored
+    /// while the view is still on it.
+    fn yield_to(self: &Arc<Self>, dup: u64, keep: u64) {
+        let mv = {
+            let mut inner = self.lock();
+            let mv = inner.tabs.iter_mut().find(|t| t.id == dup).and_then(|t| {
+                t.bounce = Some(t.dest_key());
+                t.back()
+            });
+            Self::bump(&mut inner);
+            mv
+        };
+        match mv {
+            Some(mv) => self.run_move(dup, mv),
+            None => self.close_tab(dup),
+        }
+        self.activate(keep);
     }
 
     pub fn reload(self: &Arc<Self>, tab_id: u64) {
@@ -484,10 +542,13 @@ impl Shell {
             return;
         }
         // The scroll position of a tab whose view is hidden behind the player is still worth keeping.
-        let persist = {
+        let (persist, duplicate_of) = {
             let mut inner = self.lock();
             Self::bump(&mut inner);
             let Some(tab) = inner.tabs.iter_mut().find(|t| t.id == tab_id) else { return };
+            if tab.suppress_report(url) {
+                return;
+            }
             let moved = tab.yt_reported(url);
             if moved {
                 tab.scroll_y = 0.0;
@@ -499,8 +560,14 @@ impl Shell {
             if !clean.is_empty() {
                 tab.title = clean;
             }
-            tab.clone()
+            let tab = tab.clone();
+            let duplicate_of = if moved { tabs::find_by_dest(&inner.tabs, &tab.dest_key(), Some(tab_id)) } else { None };
+            (tab, duplicate_of)
         };
+        if let Some(keep) = duplicate_of {
+            self.yield_to(tab_id, keep);
+            return;
+        }
         self.persist(&persist, "open");
     }
 
@@ -564,14 +631,22 @@ impl Shell {
     }
 
     pub fn set_viewport_rect(self:&Arc<Self>,rect:Rect,width:Option<f64>,height:Option<f64>) {
-        // CSS pixels can differ from native logical points after page zoom.
-        // Align the YouTube child to the actual content viewport in either case.
-        let size=self.app.get_window(MAIN).and_then(|w|Some(w.inner_size().ok()?.to_logical::<f64>(w.scale_factor().ok()?)));
-        let scale=|actual:f64,css:Option<f64>|css.filter(|n|n.is_finite()&&*n>0.0).map(|n|(actual/n).clamp(0.25,4.0)).unwrap_or(1.0);
-        let (sx,sy)=size.map(|s|(scale(s.width,width),scale(s.height,height))).unwrap_or((1.0,1.0));
-        let next=Rect{x:rect.x*sx,y:rect.y*sy,w:rect.w*sx,h:rect.h*sy};
-        if ![next.x,next.y,next.w,next.h].iter().all(|n|n.is_finite())||next.w<0.0||next.h<0.0{return;}
-        self.core.log_event("info","webview.layout",json!({"x":next.x,"y":next.y,"w":next.w,"h":next.h,"scale_x":sx,"scale_y":sy,"viewport_width":width,"viewport_height":height}));
+        // One mapping (see geometry.rs): the chrome web view's own logical size over its CSS
+        // viewport gives a single uniform scale; the window's inner size is not used because
+        // it can include the title bar. The origin is the chrome web view's real position
+        // (logical points, same scale factor as size()); if it cannot be read, fall back to (0,0).
+        let chrome=self.app.get_webview(CHROME).and_then(|c|{
+            let scale=c.window().scale_factor().ok()?;
+            let size=c.size().ok()?.to_logical::<f64>(scale);
+            let (x,y)=match c.position() {
+                Ok(p)=>{let l=p.to_logical::<f64>(scale);(l.x,l.y)}
+                Err(e)=>{eprintln!("muninn: could not read the chrome web view position, using (0,0): {e}");(0.0,0.0)}
+            };
+            Some(crate::geometry::Bounds{x,y,w:size.width,h:size.height})
+        });
+        let Some(m)=crate::geometry::map_viewport_rect(crate::geometry::Bounds{x:rect.x,y:rect.y,w:rect.w,h:rect.h},width,height,chrome) else {return};
+        let next=Rect{x:m.rect.x,y:m.rect.y,w:m.rect.w,h:m.rect.h};
+        self.core.log_event("info","webview.layout",json!({"x":next.x,"y":next.y,"w":next.w,"h":next.h,"css_x":rect.x,"css_y":rect.y,"css_w":rect.w,"css_h":rect.h,"scale":m.scale,"clamped":m.clamped,"chrome_x":chrome.map(|c|c.x),"chrome_y":chrome.map(|c|c.y),"chrome_w":chrome.map(|c|c.w),"chrome_h":chrome.map(|c|c.h),"viewport_width":width,"viewport_height":height}));
         self.set_rect(next);
     }
 
@@ -829,17 +904,22 @@ impl Shell {
             .ok();
     }
 
+    /// CLI imports arrive as `import-*` rows: each becomes a sleeping tab unless its
+    /// destination is already open, in which case the existing tab is kept untouched.
     fn adopt_imported_tabs(&self) {
         for row in self.core.browsing.tabs().unwrap_or_default().into_iter().filter(|r|r.tab_id.starts_with("import-") && r.state!="closed") {
-            let tab = {
-                let mut inner=self.lock();
-                let id=inner.next_id;inner.next_id+=1;
-                let loc=match tabs::video_id_of_url(&row.url) {Some(v)=>Loc::Watch(v),None=>Loc::Yt(row.url.clone())};
-                let mut tab=Tab::new(id,loc,row.updated_at);
-                tab.title=row.title.clone().unwrap_or_default();
-                inner.tabs.push(tab.clone());Self::bump(&mut inner);tab
-            };
-            self.persist(&tab,"hidden");
+            let loc=match tabs::video_id_of_url(&row.url) {Some(v)=>Loc::Watch(v),None=>Loc::Yt(row.url.clone())};
+            let (id, created) = self.find_or_open(loc);
+            if created {
+                let tab = {
+                    let mut inner=self.lock();
+                    let Some(tab)=inner.tabs.iter_mut().find(|t|t.id==id) else {continue};
+                    tab.title=row.title.clone().unwrap_or_default();
+                    tab.last_active_ms=row.updated_at;
+                    tab.clone()
+                };
+                self.persist(&tab,"hidden");
+            }
             let _=self.core.browsing.upsert_tab(&TabIngest{tab_id:row.tab_id,url:row.url,state:"closed".into(),..Default::default()},now_ms());
         }
     }

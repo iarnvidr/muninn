@@ -136,6 +136,39 @@ pub async fn signin_popup(shell: Sh<'_>) -> Result<(), String> {
     shell.open_signin_window()
 }
 
+/// Asks where to save the support ZIP. `Ok(None)` = the user cancelled.
+#[cfg(target_os = "macos")]
+fn choose_export_path() -> Result<Option<std::path::PathBuf>, String> {
+    let script = format!(
+        "POSIX path of (choose file name with prompt \"Save Muninn diagnostics\" default name \"{}\")",
+        muninn_core::diagnostics::default_export_name_today()
+    );
+    let out = std::process::Command::new("osascript").arg("-e").arg(script).output().map_err(|e| e.to_string())?;
+    muninn_core::diagnostics::parse_save_dialog(
+        out.status.success(),
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn choose_export_path() -> Result<Option<std::path::PathBuf>, String> {
+    Err("Saving diagnostics from the app is only available on macOS. Use: muninn --cli diagnostics export FILE.zip".into())
+}
+
+/// Developer mode "Export diagnostics": save dialog, then the same redacted export the CLI uses.
+/// Resolves to {status:"cancelled"} or {status:"saved", path}. Runs off the UI thread.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn export_diagnostics(shell: Sh<'_>) -> Result<Value, String> {
+    let data_dir = shell.core.paths.data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let destination = choose_export_path()?;
+        muninn_core::diagnostics::export_to(&data_dir, destination.as_deref()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // --- called by the YouTube pages (inject.js) ------------------------------------------------------
 #[tauri::command(rename_all = "snake_case")]
 pub async fn channel_unsubscribe(shell: Sh<'_>, channel_id: String) -> Result<(), String> {
