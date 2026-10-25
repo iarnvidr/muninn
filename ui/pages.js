@@ -769,7 +769,7 @@
             h('h2', { class: 'h2', id: 'signin-h', text: 'Google sign-in' }),
 
             accountLine, accountDetail,
-            h('p', { class: 'muted', text: 'Downloads reuse the YouTube login saved in Browse. Subscription changes require a live account check in Browse. Saved login presence does not confirm that YouTube will accept it.' }),
+            h('p', { class: 'muted', text: 'Downloads use your saved YouTube login. Open YouTube in Browse to refresh the account used for subscriptions.' }),
             h('div', { class: 'actions' }, signBtn, signMsg)),
           devCard);
         renderUpdate(); renderSetup(); setupPoll.kick(); accountPoll.kick();

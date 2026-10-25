@@ -61,7 +61,7 @@ try:
         time.sleep(.1)
     check('native Settings accelerator and menu action work with YouTube focus',shortcut.get('ok'),shortcut)
     session_status=send({'op':'eval','target':'chrome','js':"return await window.Muninn.invoke('youtube_session_status');"})
-    check('session status IPC exposes only presence',isinstance(session_status,dict) and set(session_status)=={'state'} and session_status['state'] in ('present','absent','unavailable'),session_status)
+    check('session status IPC reads the saved store and exposes only presence',isinstance(session_status,dict) and set(session_status)=={'state'} and session_status['state'] in ('present','absent'),session_status)
     send({'op':'call','name':'tab_close','args':{'id':shortcut_tab}})
     for page in ('settings','library'):
         click(f'#sidebar [data-page="{page}"]')
