@@ -46,6 +46,20 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertIn("rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig", self.workflow)
         self.assertIn("stapler staple", self.signer)
 
+    def test_ad_hoc_mode_is_explicit_and_keeps_updater_verification(self):
+        self.assertIn("default: developer-id", self.workflow)
+        preflight = self.workflow.split("Fail-closed Apple signing credential preflight", 1)[1]
+        self.assertIn("if: inputs.apple_signing == 'developer-id'", preflight.split("env:", 1)[0])
+        notarize = self.workflow.split("Sign, notarize, staple and assess production app", 1)[1]
+        self.assertIn("if: inputs.apple_signing == 'developer-id'", notarize.split("env:", 1)[0])
+        ad_hoc = self.workflow.split("Record explicitly selected ad-hoc signing", 1)[1].split("Create final Tauri-compatible", 1)[0]
+        self.assertIn("if: inputs.apple_signing == 'ad-hoc'", ad_hoc)
+        self.assertIn("codesign --verify --deep --strict", ad_hoc)
+        self.assertIn("No Developer ID identity, notarization or Gatekeeper acceptance is claimed", ad_hoc)
+        archive = self.workflow.split("Create final Tauri-compatible archive, sign and verify", 1)[1]
+        self.assertIn("signer sign Muninn.app.tar.gz", archive)
+        self.assertIn("minisign -Vm Muninn.app.tar.gz", archive)
+
     def test_review_and_publish_contain_corresponding_source_and_evidence(self):
         for asset in ("corresponding-source/**", "signing-notarization-evidence.txt"):
             self.assertIn(asset, self.workflow)

@@ -1,10 +1,18 @@
 # Updater release preparation
 
-There is no published updater feed or release. The checked-in version is `0.2.14-preview.4`; intended stable `0.2.14` is not yet bumped or tagged. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as a published feed or owner acceptance.
+The checked-in version is `0.2.14`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
 
 Tauri v2 updater format uses GitHub Releases `latest.json` with `version`, `notes`, `pub_date`, and `platforms`; macOS Apple Silicon is `darwin-aarch64` with `url` and `signature`. Payload is gzip tar `Muninn.app.tar.gz` of exact bundle plus detached Tauri signature; it is not the manual-install ZIP. Workflow validates stable version, existing `v<version>` tag and exact equality of tag, protected-main commit and dispatched SHA. It prepares and verifies artifacts with `publish=false`; only the separate `publish=true` job has write permission and uploads to an already existing release. No tag/release is created by workflow.
 
 ## Provisioning and release gate
+
+Select `apple_signing=ad-hoc` explicitly for that distribution path; the default
+`developer-id` mode still requires all six Apple secrets and notarization. Both
+modes retain updater signing and verification, matching version/tag/main checks,
+and protected environment review. Publish ad-hoc candidates as GitHub prereleases
+while production acceptance remains outstanding; see the ad-hoc section of
+[RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md). The remaining production gate below
+describes promotion to a notarized, accepted stable release.
 
 Configure GitHub environment exactly `muninn-release`, required reviewer `efthomsen`, deployment branch limited to protected `main`. Verify current active main allowlist/ruleset; legacy branch-protection API 404 is not proof of missing protection.
 
