@@ -55,25 +55,22 @@ its playback and native webview behavior work on a Mac; see
 
 Requires **macOS 14 (Sonoma) or newer**.
 
-1. Until a [release](https://github.com/iarnvidr/muninn/releases) is published, open
-   [Apple Silicon builds](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml),
-   select a **successful** run for the branch you want to test, and download
-   **muninn-macos-arm64** under **Artifacts** (GitHub sign-in required). Unzip that
-   artifact to find `Muninn_<version>_macos-arm64.zip` and its checksum. PR builds
-   contain only that PR's changes; check the run's branch and commit before testing.
-   Verify the inner ZIP with
-   `shasum -a 256 -c Muninn_<version>_macos-arm64.zip.sha256`.
-
-   Until then, every push to `main` builds a test package: open
-   [Apple Silicon build](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml?query=branch%3Amain+is%3Asuccess),
-   pick the newest run and download **muninn-macos-arm64** from its summary (a GitHub
-   sign-in is needed; kept for 30 days). It contains the same zip and `.sha256`. These
-   builds are not releases; see [known issues](docs/KNOWN_ISSUES.md).
-2. Unzip the inner ZIP. **Quit any running copy of Muninn**, then move `Muninn.app`
-   to `/Applications` and reopen it. Installing a build does not update a running app.
+1. Download `Muninn_<version>_macos-arm64.dmg` from
+   [Releases](https://github.com/iarnvidr/muninn/releases). DMG is the installer
+   format going forward; the initial `0.2.14` prerelease used a ZIP.
+2. **Quit any running copy of Muninn**, open the DMG, then drag `Muninn.app` onto
+   its Applications shortcut and reopen the installed app. For the initial ZIP
+   release, unzip it and move the app to `/Applications` instead. Installing a
+   build does not update a running app.
 3. The app is **ad-hoc signed, not notarized**, so Gatekeeper blocks the first launch. Once:
    right-click the app, choose **Open**, confirm; or run
    `xattr -dr com.apple.quarantine /Applications/Muninn.app`.
+
+For unreleased test builds, open a successful
+[Apple Silicon build](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml)
+and download **muninn-macos-arm64** under **Artifacts** (GitHub sign-in required).
+That CI artifact contains the DMG and test evidence. Check its branch and commit;
+PR artifacts contain only that PR's changes and are not published releases.
 
 Then open Muninn and browse YouTube. Sign-in has been reported working on the user's
 Mac. Google may still reject some embedded-browser login flows. Configured public

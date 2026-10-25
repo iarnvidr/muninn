@@ -1,9 +1,7 @@
 """Static fail-closed checks for the protected production release workflow."""
-import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -77,63 +75,52 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertIn("signer sign Muninn.app.tar.gz", archive)
         self.assertIn("minisign -Vm Muninn.app.tar.gz", archive)
 
-    def test_review_and_publish_contain_corresponding_source_and_evidence(self):
+    def test_review_keeps_corresponding_source_evidence_and_updater_signature(self):
         for asset in ("corresponding-source/**", "signing-notarization-evidence.txt"):
             self.assertIn(asset, self.workflow)
         self.assertIn("build/release_sources.py prepare", self.workflow)
-        self.assertIn('source_root=release-assets/corresponding-source', self.workflow)
-        self.assertIn('find "$source_root" -type f -print0', self.workflow)
-        self.assertIn("while IFS= read -r -d '' file; do", self.workflow)
-        self.assertIn('if ((${#source_files[@]} == 0))', self.workflow)
-        self.assertNotIn('release-assets/corresponding-source/**', self.workflow)
-        self.assertIn("release-assets/signing-notarization-evidence.txt", self.workflow)
+        self.assertIn("build/package-dmg.sh", self.workflow)
+        self.assertIn("${{ runner.temp }}/muninn/Muninn.app.tar.gz.sig", self.workflow)
 
-    def test_release_source_upload_uses_real_unique_names_and_manifest(self):
-        block = self.workflow.split('source_root=release-assets/corresponding-source', 1)[1]
-        script = 'set -euo pipefail\nsource_root=release-assets/corresponding-source' + block
-        script = script.replace('gh release view "$INPUT_TAG" >/dev/null', ':')
-        script = script.replace('gh release upload "$INPUT_TAG" "${assets[@]}" --clobber', 'printf \'%s\\n\' "${assets[@]}"')
-        script = script.replace("trap 'rm -rf \"$upload_dir\"' EXIT", ':')
-        script = re.sub(r'(?m)^          ', '', script)
+    def test_publish_keeps_only_the_dmg_and_required_updater_files(self):
+        block = self.workflow.split('Upload the DMG and required updater files only', 1)[1]
+        script = re.sub(r'(?m)^          ', '', block.split('run: |', 1)[1])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            source = root / 'release-assets/corresponding-source'
-            (source / 'nested one').mkdir(parents=True)
-            (source / 'nested two').mkdir()
-            (source / 'nested one' / 'NOTICE').write_text('notice a')
-            (source / 'nested two' / 'NOTICE').write_text('notice b')
-            completed = subprocess.run(['bash', '-c', script], cwd=root, text=True, capture_output=True)
+            assets = root / 'release-assets'
+            assets.mkdir()
+            for name in ('Muninn_0.2.14_macos-arm64.dmg', 'unexpected.dmg', 'latest.json',
+                         'Muninn.app.tar.gz', 'Muninn.app.tar.gz.sig', 'SHA256SUMS', 'source.tar.xz'):
+                (assets / name).write_text('fixture')
+            binary = root / 'bin'
+            binary.mkdir()
+            gh = binary / 'gh'
+            gh.write_text('#!/usr/bin/env python3\nimport json,os,sys\n'
+                          'with open(os.environ["GH_CALLS"],"a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\n')
+            gh.chmod(0o755)
+            calls = root / 'calls.jsonl'
+            env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                       GH_CALLS=str(calls), INPUT_TAG='v0.2.14', INPUT_VERSION='0.2.14')
+            completed = subprocess.run(['bash', '-c', script], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            (source / 'nested one' / 'NOTICE').write_text('notice a')
-            completed = subprocess.run(['bash', '-c', script], cwd=root, text=True, capture_output=True)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            uploaded = [Path(line) for line in completed.stdout.splitlines() if Path(line).name.startswith('source-') and Path(line).exists() and Path(line).name != 'source-assets-manifest.json']
-            self.assertEqual(len(uploaded), 2)
-            manifest_path = next(Path(line) for line in completed.stdout.splitlines() if Path(line).name == 'source-assets-manifest.json')
-            manifest_records = json.loads(manifest_path.read_text())
-            expected = {
-                'nested one/NOTICE': ('notice a',),
-                'nested two/NOTICE': ('notice b',),
-            }
-            self.assertEqual({record['original_path'] for record in manifest_records}, set(expected))
-            self.assertEqual(len({record['asset_name'] for record in manifest_records}), 2)
-            for record in manifest_records:
-                content = expected[record['original_path']][0].encode()
-                self.assertEqual(record['asset_name'], f"source-{hashlib.sha256(record['original_path'].encode()).hexdigest()[:12]}-NOTICE")
-                self.assertEqual(record['sha256'], hashlib.sha256(content).hexdigest())
-            self.assertEqual(len({p.name for p in uploaded}), 2)
-            self.assertTrue(all('#' not in p.name and p.is_file() for p in uploaded))
-            # The workflow removes its temporary staging directory on exit; verify manifest construction contract too.
-            self.assertIn('"original_path": relative', self.workflow)
-            self.assertIn('"asset_name": asset_name', self.workflow)
-            self.assertIn('"sha256": hashlib.sha256(source.read_bytes()).hexdigest()', self.workflow)
-            self.assertIn('source_root=', self.workflow)
-            empty = root / 'empty'
-            empty.mkdir()
-            fail_script = script.replace('source_root=release-assets/corresponding-source', f'source_root={empty}')
-            rejected = subprocess.run(['bash', '-c', fail_script], cwd=root, text=True, capture_output=True)
-            self.assertNotEqual(rejected.returncode, 0)
-            self.assertIn('No corresponding-source files found', rejected.stderr)
+            uploads = [json.loads(line) for line in calls.read_text().splitlines()
+                       if json.loads(line)[:2] == ['release', 'upload']]
+            self.assertEqual(uploads, [['release', 'upload', 'v0.2.14',
+                                       'release-assets/Muninn_0.2.14_macos-arm64.dmg',
+                                       'release-assets/latest.json', 'release-assets/Muninn.app.tar.gz', '--clobber']])
+            (assets / 'Muninn_0.2.14_macos-arm64.dmg').unlink()
+            calls.write_text('')
+            rejected = subprocess.run(['bash', '-c', script], cwd=root, env=env, text=True, capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0, 'missing DMG must block upload')
+            self.assertFalse(any(json.loads(line)[:2] == ['release', 'upload']
+                                 for line in calls.read_text().splitlines()))
+            (assets / 'Muninn_0.2.14_macos-arm64.dmg').write_text('fixture')
+            (assets / 'latest.json').unlink()
+            calls.write_text('')
+            rejected = subprocess.run(['bash', '-c', script], cwd=root, env=env, text=True, capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0, 'missing updater manifest must block upload')
+            self.assertFalse(any(json.loads(line)[:2] == ['release', 'upload']
+                                 for line in calls.read_text().splitlines()))
 
     def test_hosted_checks_run_contract_test(self):
         self.assertIn("python3 -m unittest discover -s build -p 'test_release_production_contract.py' -v", self.checks)

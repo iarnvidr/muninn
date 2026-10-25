@@ -2,7 +2,11 @@
 
 The checked-in version is `0.2.14`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
 
-Tauri v2 updater format uses GitHub Releases `latest.json` with `version`, `notes`, `pub_date`, and `platforms`; macOS Apple Silicon is `darwin-aarch64` with `url` and `signature`. Payload is gzip tar `Muninn.app.tar.gz` of exact bundle plus detached Tauri signature; it is not the manual-install ZIP. Workflow validates stable version, existing `v<version>` tag and exact equality of tag, protected-main commit and dispatched SHA. It prepares and verifies artifacts with `publish=false`; only the separate `publish=true` job has write permission and uploads to an already existing release. No tag/release is created by workflow.
+Future releases attach exactly three files: `Muninn_<version>_macos-arm64.dmg` for installation, `latest.json` for the updater, and `Muninn.app.tar.gz` as the update payload. The initial `0.2.14` prerelease retains its older asset layout. The updater reads the signature embedded in `latest.json`; a separately attached `.sig` is unnecessary. Its existing endpoint and pinned verification key remain unchanged.
+
+Checksums, detached signatures, signing evidence and review metadata stay in CI artifacts. The DMG contains the app, an Applications shortcut, and a `Corresponding Source` folder with pinned source archives, recipe, manifest and notices. Packaging mounts the finished image read-only and verifies the app signature/version and source archive digests before publication.
+
+Tauri v2 updater format uses `latest.json` with `version`, `notes`, `pub_date`, and `platforms`; macOS Apple Silicon is `darwin-aarch64` with `url` and `signature`. The signed gzip tar update payload is separate from the manual-install DMG. Workflow validates stable version, existing `v<version>` tag and exact equality of tag, protected-main commit and dispatched SHA. It prepares and verifies artifacts with `publish=false`; only the separate `publish=true` job has write permission and uploads to an already existing release. No tag/release is created by workflow. A GitHub prerelease still does not activate the stable `releases/latest` updater feed.
 
 ## Provisioning and release gate
 

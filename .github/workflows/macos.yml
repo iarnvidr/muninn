@@ -33,6 +33,12 @@ jobs:
       # run the debug-only e2e harness.
       - name: Build, test and sign release artifact
         run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"
+      - name: Build and mount-verify the DMG with corresponding sources
+        run: |
+          set -euo pipefail
+          python3 build/release_sources.py prepare "$RUNNER_TEMP/muninn/corresponding-source"
+          version="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+          bash build/package-dmg.sh "$RUNNER_TEMP/muninn/Muninn.app" "$RUNNER_TEMP/muninn/corresponding-source" "$RUNNER_TEMP/muninn/Muninn_${version}_macos-arm64.dmg"
       - name: Release app launch and localhost health smoke
         env:
           SMOKE_EVIDENCE_DIR: ${{ runner.temp }}/muninn-release-evidence
@@ -72,6 +78,7 @@ jobs:
           path: |
             ${{ runner.temp }}/muninn/Muninn_*.zip
             ${{ runner.temp }}/muninn/Muninn_*.zip.sha256
+            ${{ runner.temp }}/muninn/Muninn_*.dmg
             ${{ runner.temp }}/muninn/verify-macos.txt
             ${{ runner.temp }}/muninn-release-evidence/**
             ${{ runner.temp }}/muninn-debug-ui-evidence/**
