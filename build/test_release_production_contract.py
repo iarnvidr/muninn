@@ -55,9 +55,13 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertNotIn('release-assets/corresponding-source/**', self.workflow)
         self.assertIn("release-assets/signing-notarization-evidence.txt", self.workflow)
 
-    def test_release_source_enumeration_handles_nested_and_empty(self):
-        block = self.workflow.split('source_root=release-assets/corresponding-source', 1)[1].split('gh release upload', 1)[0]
+    def test_release_source_upload_uses_real_unique_names_and_manifest(self):
+        block = self.workflow.split('source_root=release-assets/corresponding-source', 1)[1]
         script = 'set -euo pipefail\nsource_root=release-assets/corresponding-source' + block
+        script = script.replace('gh release view "$INPUT_TAG" >/dev/null', ':')
+        script = script.replace('gh release upload "$INPUT_TAG" "${assets[@]}" --clobber', 'printf \'%s\\n\' "${assets[@]}"')
+        script = script.replace("trap 'rm -rf \"$upload_dir\"' EXIT", ':')
+        script = re.sub(r'(?m)^          ', '', script)
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / 'release-assets/corresponding-source'
@@ -67,13 +71,17 @@ class ProductionReleaseContract(unittest.TestCase):
             (source / 'nested two' / 'NOTICE').write_text('notice b')
             completed = subprocess.run(['bash', '-c', script], cwd=root, text=True, capture_output=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(len(re.findall(r'^source_files\[', completed.stdout, re.M)), 0)
-            # Verify enumeration and flattened asset names using the exact workflow logic.
-            check = subprocess.run(['bash', '-c', script + '\nprintf \'%s\\n\' "${source_files[@]}"'], cwd=root, text=True, capture_output=True)
-            self.assertEqual(check.returncode, 0, check.stderr)
-            paths = check.stdout.splitlines()
-            self.assertEqual(len(paths), 2)
-            self.assertNotEqual(Path(paths[0]).parent, Path(paths[1]).parent)
+            (source / 'nested one' / 'NOTICE').write_text('notice a')
+            completed = subprocess.run(['bash', '-c', script], cwd=root, text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            uploaded = [Path(line) for line in completed.stdout.splitlines() if Path(line).name.startswith('source-') and Path(line).exists()]
+            self.assertEqual(len(uploaded), 2)
+            self.assertEqual(len({p.name for p in uploaded}), 2)
+            self.assertTrue(all('#' not in p.name and p.is_file() for p in uploaded))
+            # The workflow removes its temporary staging directory on exit; verify manifest construction contract too.
+            self.assertIn('"original_path": relative', self.workflow)
+            self.assertIn('"asset_name": asset_name', self.workflow)
+            self.assertIn('"sha256": hashlib.sha256(source.read_bytes()).hexdigest()', self.workflow)
             self.assertIn('source_root=', self.workflow)
             empty = root / 'empty'
             empty.mkdir()
