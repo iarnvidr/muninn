@@ -77,6 +77,45 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
     let u64_of = |k: &str| cmd["args"][k].as_u64().unwrap_or(0);
     let str_of = |k: &str| cmd["args"][k].as_str().unwrap_or("").to_string();
     match cmd["op"].as_str().unwrap_or("") {
+        #[cfg(all(debug_assertions, target_os = "macos"))]
+        "settings_menu" => {
+            let tab = cmd["tab_id"].as_u64().unwrap_or(0);
+            let app = shell.app.clone();
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            let _ = shell.app.run_on_main_thread(move || {
+                let result = (|| -> Result<Value, &'static str> {
+                    let view = app.get_webview(&label(tab)).ok_or("native focus view missing")?;
+                    view.set_focus().map_err(|_| "native focus failed")?;
+                    // Inspect the actual Cocoa accelerator and invoke the real
+                    // menu action with the YouTube webview holding focus.
+                    use objc2::{class, msg_send, runtime::AnyObject};
+                    unsafe {
+                        let native: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                        let menu: *mut AnyObject = msg_send![native, mainMenu];
+                        let root: *mut AnyObject = msg_send![menu, itemAtIndex: 0isize];
+                        let submenu: *mut AnyObject = msg_send![root, submenu];
+                        let title: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c"Settings…".as_ptr()];
+                        let item: *mut AnyObject = msg_send![submenu, itemWithTitle: title];
+                        if item.is_null() { return Err("Settings menu item missing"); }
+                        let key: *mut AnyObject = msg_send![item, keyEquivalent];
+                        let chars: *const std::ffi::c_char = msg_send![key, UTF8String];
+                        if chars.is_null() { return Err("Settings accelerator missing"); }
+                        let comma = std::ffi::CStr::from_ptr(chars).to_bytes() == b",";
+                        let modifiers: usize = msg_send![item, keyEquivalentModifierMask];
+                        let command = modifiers & (1 << 20) != 0;
+                        let index: isize = msg_send![submenu, indexOfItem: item];
+                        let _: () = msg_send![submenu, performActionForItemAtIndex: index];
+                        Ok(json!({"ok":comma && command,"comma":comma,"command":command}))
+                    }
+                })();
+                let _ = sender.send(result);
+            });
+            let result = receiver.recv_timeout(Duration::from_secs(10));
+            respond(d, id, &match result {
+                Ok(Ok(value)) => value,
+                _ => json!({"ok":false,"error":"Settings menu fixture failed"}),
+            });
+        }
         "youtube_cookie_fixture" => {
             // The real persistent YouTube WKWebView store, with synthetic
             // credentials only. Read on this worker, never the UI thread.

@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "muninn"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "block2",
  "core-foundation 0.10.1",
@@ -2269,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-core"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "axum",
  "bytes",

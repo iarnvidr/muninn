@@ -620,6 +620,7 @@
       installUpdate.hidden = !v.canInstall; installUpdate.disabled = !!M.offline; cancelUpdate.hidden = !v.canCancel; cancelUpdate.disabled = !!M.offline;
     }
     const accountLine=h('p',{class:'muted',role:'status','aria-live':'polite'});
+    const accountDetail=h('p',{class:'muted'});
     let accountPoll=null, accountBusy=false;
 
 
@@ -665,11 +666,14 @@
 
     async function refreshAccount(){
       if(accountBusy)return; accountBusy=true;
-      try { const res=await M.api('GET','/api/channels/status'); const observed=L.observedAccountState(res&&res.account);
-        setText(accountLine, observed.label+'. Account identifiers are not shown.');
-        signBtn.textContent=observed.state==='signed_in'?'Manage or switch account':'Sign in in a separate window';
+      try { const [account,session]=await Promise.allSettled([M.api('GET','/api/channels/status'),M.invoke('youtube_session_status')]);
+        const observed=L.observedAccountState(account.status==='fulfilled'?account.value?.account:null);
+        const saved=session.status==='fulfilled'?session.value:null;
+        setText(accountLine,L.youtubeSessionLabel(saved));
+        setText(accountDetail,observed.state==='not_observed'?'Account for subscriptions has not been checked in Browse yet.':observed.label+' · latest account check in Browse.');
+        signBtn.textContent=saved?.state==='present'||observed.state==='signed_in'?'Manage or switch account':'Sign in in a separate window';
         signBtn.hidden=false;
-      } catch(e) { setText(accountLine,'YouTube sign-in status is temporarily unavailable.'); signBtn.textContent='Sign in in a separate window'; signBtn.hidden=false; }
+      } catch(e) { setText(accountLine,L.youtubeSessionLabel(null)); setText(accountDetail,'Account status is temporarily unavailable.'); signBtn.textContent='Open sign-in window'; signBtn.hidden=false; }
       finally { accountBusy=false; }
     }
     accountPoll=poller(refreshAccount,()=>4000);
@@ -764,8 +768,8 @@
           h('section', { class: 'card', 'aria-labelledby': 'signin-h' },
             h('h2', { class: 'h2', id: 'signin-h', text: 'Google sign-in' }),
 
-            accountLine,
-            h('p', { class: 'muted', text: 'Sign-in status reflects the latest live YouTube page observation; opening a browser does not count as signing in. Google may reject some embedded-browser login flows; a separate window is available.' }),
+            accountLine, accountDetail,
+            h('p', { class: 'muted', text: 'Downloads use your saved YouTube login. Open YouTube in Browse to refresh the account used for subscriptions.' }),
             h('div', { class: 'actions' }, signBtn, signMsg)),
           devCard);
         renderUpdate(); renderSetup(); setupPoll.kick(); accountPoll.kick();

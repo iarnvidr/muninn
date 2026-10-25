@@ -30,7 +30,12 @@ jobs:
       - name: Install native dependencies
         run: |
           # The image's Azure mirror can stall package downloads for minutes.
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          # Newer runner images point ubuntu.sources at file-based mirror lists.
+          for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors*.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|https\?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev ffmpeg
       - name: Select the pinned Rust toolchain
