@@ -2,7 +2,7 @@
 import ast,copy,json,pathlib,shutil,subprocess,sys,tempfile,unittest
 HERE=pathlib.Path(__file__).resolve().parent
 BASE_H={'signature_accepted':True,'replacement_installed':True,'restart_requested':True,'restart_observed':True,'restart_process_exited':True,'settings_persisted':True,'tabs_persisted':True,'restart_identity':{'before_pid':101,'after_pid':202,'expected_executable':'/tmp/Muninn.app/Contents/MacOS/muninn','actual_executable':'/tmp/Muninn.app/Contents/MacOS/muninn'}}
-BASE_T={'tamper_rejected':True,'tamper_status':{'state':'failed','status':{'reason':'signature_verification_failed'}},'old_version_retained':True,'app_usable':True}
+BASE_T={'tamper_rejected':True,'tamper_status':{'state':'failed','reason':'signature_verification_failed'},'old_version_retained':True,'app_usable':True}
 def run(root): return subprocess.run([sys.executable,str(HERE/'verify_evidence.py'),str(root)],capture_output=True)
 class EvidenceProtocol(unittest.TestCase):
  def test_tampered_mode_usable_marker_does_not_require_healthy_fixture_theme(self):
@@ -74,8 +74,13 @@ class EvidenceProtocol(unittest.TestCase):
    for key,value in [('after_pid',101),('actual_executable','/wrong/app')]:
     bad=copy.deepcopy(h); bad['restart_identity'][key]=value
     (root/'healthy-result.json').write_text(json.dumps(bad)); self.assertNotEqual(run(root).returncode,0)
-   for reason in ('signature failed','different_reason'):
-    bad=copy.deepcopy(t); bad['tamper_status']['status']['reason']=reason
+   for bad_status in (
+    {'state':'failed','reason':'signature failed'},
+    {'state':'failed','reason':'different_reason'},
+    {'state':'available','reason':'signature_verification_failed'},
+    {'state':'failed','status':{'reason':'signature_verification_failed'}},
+   ):
+    bad=copy.deepcopy(t); bad['tamper_status']=bad_status
     (root/'healthy-result.json').write_text(json.dumps(h)); (root/'tampered-result.json').write_text(json.dumps(bad))
     self.assertNotEqual(run(root).returncode,0)
 if __name__=='__main__': unittest.main()

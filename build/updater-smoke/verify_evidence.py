@@ -18,7 +18,8 @@ checks=(healthy.get('signature_accepted') is True,healthy.get('replacement_insta
  bool(identity.get('expected_executable')) if isinstance(identity,dict) else False,
  identity.get('actual_executable')==identity.get('expected_executable') if isinstance(identity,dict) else False,
  tampered.get('tamper_rejected') is True,isinstance(tstatus,dict),
- tstatus.get('status',{}).get('reason')=='signature_verification_failed' if isinstance(tstatus,dict) and isinstance(tstatus.get('status'),dict) else False,
+ tstatus.get('state')=='failed' if isinstance(tstatus,dict) else False,
+ tstatus.get('reason')=='signature_verification_failed' if isinstance(tstatus,dict) else False,
  tampered.get('old_version_retained') is True,tampered.get('app_usable') is True)
 if not all(checks): raise SystemExit('FAIL: required restart identity/persistence/structured tamper assertions absent')
 (root/'evidence.json').write_text(json.dumps({'healthy':healthy,'tampered':tampered},sort_keys=True)+'\n')
