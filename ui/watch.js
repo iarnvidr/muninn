@@ -573,7 +573,9 @@
   });
   video.addEventListener('playing', () => { if (cur) { cur.started=true; report(); if(!cur.awaitingFrame)cur.buffering = false; cur.mediaError = null; cur.lastProgressAt=Date.now();cur.stallReported=false;logPlaybackState(cur,'playing'); } startReporter(); updateControls(); updateOverlay(); });
   video.addEventListener('pause', () => { stopReporter(); report(); updateControls(); updateOverlay(); });
+
   video.addEventListener('ended', () => { if(cur)cur.buffering=false;stopReporter(); report({ ended: true }); if(cur) advanceQueue(1, true); updateControls();updateOverlay(); });
+
   video.addEventListener('seeked', () => { maybeResume();report(); settleFrame(cur); updateControls(); updateOverlay(); });
   video.addEventListener('waiting', () => { if (cur && cur.sourceSet) { cur.buffering = true; updateOverlay(); } });
   video.addEventListener('canplay', () => { if (cur) { if(!cur.awaitingFrame)cur.buffering = false; maybeResume(); settleFrame(cur); updateOverlay(); } });

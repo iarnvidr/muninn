@@ -556,6 +556,7 @@
     const retry=h('button',{type:'button',text:'Retry save',hidden:true,onclick:()=>flush()});
     const feedback=h('div',{class:'settings-feedback'},msg,retry);
     const signMsg=slot('slot-xl');
+
     const updateState = { value: { state: 'idle' } };
     const updateStatus = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
     const updateDetails = h('p', { class: 'muted' });
@@ -611,6 +612,7 @@
     const accountLine=h('p',{class:'muted',role:'status','aria-live':'polite'});
     let accountPoll=null, accountBusy=false;
 
+
     /* Setup and repair: the plain-language home of what used to live on Diagnostics. */
     const toolsMsg=slot('slot-xl'),trustMsg=slot('slot-xl');
     const toolsLine=h('p',{class:'setup-text'}),trustLine=h('p',{class:'trust-line'}),trustDetail=h('p',{class:'muted trust-detail'});
@@ -630,13 +632,17 @@
       const y=tools.ytdlp||{},f=tools.ffmpeg||{};
       const parts=[];
       parts.push(y.installed?'Video downloader: ready'+(y.version?' ('+y.version+')':''):'Video downloader: not installed yet');
+
       parts.push(f.found?'FFmpeg video merging: available':'FFmpeg video merging: unavailable (higher qualities may be unavailable)');
       parts.push('Playback health: not inferred from helper availability; it is reported for an active playback only.');
+
       const phase=setup&&setup.phase&&setup.phase!=='ready'?' '+(setup.message||('Setup is '+setup.phase+'.')):'';
       setText(toolsLine,parts.join('. ')+'.'+phase);
       setHidden(updateBtn,!y.installed);
       const tr=M.trust;
+
       if(!tr){setText(trustLine,'Secure-browsing trust status is unavailable; it has not been checked.');setText(trustDetail,'');trustBtn.disabled=true;setHidden(trustBtn,true);return;}
+
       setHidden(trustBtn,false);
       const label={ok:'Secure browsing is set up.',needed:'Secure browsing is not set up yet. YouTube pages cannot be read until it is.',installing:'Setting up…',failed:'Setting up secure browsing failed. You can try again.'}[tr.state]||tr.state;
       setText(trustLine,label);setCls(trustLine,'trust-line '+(tr.state==='ok'?'ok':(tr.state==='needed'||tr.state==='failed'?'bad':'')));
@@ -646,6 +652,7 @@
     }
     async function refreshSetup(){try{await M.pollSystemNow();}catch(e){/* offline banner */}renderSetup();}
     const setupPoll=poller(async()=>{await M.pollSystemNow();renderSetup();},()=>5000);
+
     async function refreshAccount(){
       if(accountBusy)return; accountBusy=true;
       try { const res=await M.api('GET','/api/channels/status'); const observed=L.observedAccountState(res&&res.account);
@@ -656,6 +663,7 @@
       finally { accountBusy=false; }
     }
     accountPoll=poller(refreshAccount,()=>4000);
+
 
     /* Developer section: only present while developer mode is on. */
     const exportMsg=slot('slot-xl');
@@ -730,17 +738,20 @@
     return {
       mount(el) {
         el.append(pageHead('Settings', 'Limits, freshness and browsing behaviour.'), form,
+
           h('section', { class: 'card update-card', 'aria-labelledby': 'updates-h' },
             h('h2', { class: 'h2', id: 'updates-h', text: 'Muninn updates' }),
             h('p', { class: 'muted', text: 'Check for a trusted Muninn release. Updates are never installed automatically.' }),
             updateStatus, updateDetails, updateProgress,
             h('div', { class: 'actions' }, checkUpdate, downloadUpdate, installUpdate, cancelUpdate)),
+
           h('section', { class: 'card', 'aria-labelledby': 'setup-h' },
             h('h2', { class: 'h2', id: 'setup-h', text: 'Setup and repair' }),
             toolsLine, h('div', { class: 'actions' }, updateBtn, toolsMsg),
             trustLine, trustDetail, h('div', { class: 'actions' }, trustBtn, trustMsg)),
           h('section', { class: 'card', 'aria-labelledby': 'signin-h' },
             h('h2', { class: 'h2', id: 'signin-h', text: 'Google sign-in' }),
+
             accountLine,
             h('p', { class: 'muted', text: 'Sign-in status reflects the latest live YouTube page observation; opening a browser does not count as signing in. Google may reject some embedded-browser login flows; a separate window is available.' }),
             h('div', { class: 'actions' }, signBtn, signMsg)),
@@ -749,6 +760,7 @@
         fetchSettings().then(syncDeveloper).catch(M.flashError);
       },
       unmount() { clearTimeout(S.timer); setupPoll.stop(); accountPoll.stop(); flush(); },
+
     };
   }
 

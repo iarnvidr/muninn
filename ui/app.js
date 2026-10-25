@@ -561,7 +561,7 @@
   }
   for (const b of $$('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
   /* Diagnostics is a developer-mode page: its button exists only while the mode is on. */
-  // Diagnostics is reachable only from Settings; developer mode never adds a rail item.
+// Diagnostics is reachable only from Settings; developer mode never adds a rail item.
   function syncDeveloperNav() {
     $('#sidebar [data-page="diagnostics"]')?.remove();
   }

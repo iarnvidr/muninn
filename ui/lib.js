@@ -687,6 +687,7 @@
   /** Sidebar pages in order; developer pages are absent unless the mode is on. */
   function sidebarPages(settings) {
     const pages = ['browse', 'player', 'library', 'feeds', 'rules'];
+
     pages.push('settings');
     return pages;
   }

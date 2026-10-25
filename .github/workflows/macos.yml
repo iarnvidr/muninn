@@ -77,6 +77,7 @@ jobs:
             ${{ runner.temp }}/muninn-debug-ui-evidence/**
             ${{ runner.temp }}/muninn-updater-evidence/**
           if-no-files-found: error
+          # Builds of main stay downloadable for a month; PR builds for a week.
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
       - name: Show where to download this build
         env:
