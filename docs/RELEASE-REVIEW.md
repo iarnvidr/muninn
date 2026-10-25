@@ -1,59 +1,21 @@
-# Public release review — 2026-10-22
+# Release-readiness review — 2026-10-25
 
-Recommendation: keep all four feature PRs. Owner Mac verification is still a
-binary-release blocker (it does not gate source publication); Linux tests do not
-establish native playback correctness. At review time no PR had been merged and
-Actions was disabled; the reviewed stack became the initial public commit on
-2026-10-23.
+This is a documentation/readiness review, not approval to publish. Intended stable target is `0.2.14`; repository Cargo/Tauri metadata still says `0.2.14-preview.4`. No `v0.2.14` release tag or published release was found in the local checkout; no release publication is claimed. The owner must bump/tag on protected main and create the Release before workflow dispatch.
 
-## Review and merge order
+## Current controls and external dependency
 
-| Order | PR | Recommendation | Review result |
-| --- | --- | --- | --- |
-| 1 | #14 | Merge after owner verification | Apache-2.0 and public identity are consistent. Official FFmpeg/dav1d source downloads match their pinned hashes; dav1d build options exist in the pinned release. CI has read-only permissions, pinned actions and hosted runners. Added publication reference checks, made missing FFmpeg capabilities fatal, and corrected the declared Rust minimum to 1.90 to match locked Tauri dependencies. |
-| 2 | #8 | Keep / merge | Rebased onto #14. Target parsing rejects unrelated origins, credentials, ambiguous app actions and invalid short links. Cold/warm delivery retains pending requests. Resolved packaging conflicts using shared bundle metadata; replaced the stale URL registration identity in both plist and regression test. Native Launch Services behavior still needs the Mac test. |
-| 3 | #9 | Keep / merge | Rebased onto #8. Browse groups copies without changing Manage entries; search matches all query words and runs before the display limit. Representative-copy selection and search have regression coverage. Committed screenshots use synthetic library content. |
-| 4 | #10 | Keep / merge | Rebased onto #9. The marker uses backend completion policy and the playback reporter's rounding; Keep promotes the playing entry. Protected copies and keep rules suppress the reminder. Errors leave retry available. |
-| 5 | #11 | Keep / merge | Rebased onto #10. Offline policy gates fetches, workers and proxy access while preserving local playback; cancelled jobs are requeued only after exit. Cached channel refreshes retain stale data and bound concurrent work. Account actions require current account-bound subscription evidence and positive acknowledgement. Recorded-start, paused-stall recovery and cancelled-source fixes have regression coverage. Native account switching and playback remain Mac checks. |
+The protected updater release workflow is manual-only, requires dispatch from `main`, exact matching existing tag/commit/version, builds on hosted macOS, signs/notarizes/staples the app, prepares updater assets plus corresponding source, and separates read-only prepare from write-capable upload. Publishing targets an existing release only. `muninn-release` must be configured to require reviewer `efthomsen`, with deployment branches restricted to protected `main`. Confirm active protected-main allowlist/ruleset directly; a legacy protection API HTTP 404 is not evidence main lacks protection.
 
-#8 targets `public-prep`; #9–#11 retain their existing stacked targets. Resolve
-the stack in the order above using merge commits so descendant ancestry remains
-intact. If the owner chooses squash merges, rebase each remaining descendant and
-retarget its base before proceeding. The overseer will replace this history with
-one fresh commit at publication.
+Actual production signing is contingent on the account holder providing a valid Developer ID Application PKCS#12 certificate/password and App Store Connect notarization API credentials. Required exact environment secret names: `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`, `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_NOTARY_API_KEY_ID`, `APPLE_NOTARY_API_ISSUER_ID`, `APPLE_NOTARY_API_PRIVATE_KEY`. No Apple account keys were supplied, accessed, or validated. Updater secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are separate. Stubbed helper tests are contract-only and are not evidence of a signed or notarized artifact.
 
-All rewritten feature commits use the owner's GitHub noreply identity. Every
-final branch tree must pass the publication boundary check. Dependabot PRs are
-left open and are not part of this merge order; reassess updates after publication.
+## Notice/source audit facts and remaining work
 
-## Validation and remaining blockers
+The repository contains license texts/notices for hls.js, the bundled fonts, yt-dlp including its third-party license file, Deno's top-level MIT license, FFmpeg LGPL-2.1 and dav1d BSD-2-Clause. THIRD_PARTY_NOTICES.md describes helper versions, provenance and FFmpeg configuration; `licenses/rust-packages.json` records 507 locked crates. Its `license_file_declared` field is false for all 507 records, and `build/license_inventory.py` only collects available files. Thus crate metadata is not a complete notice bundle. Deno's top-level license does not resolve its bundled dependency notices/source provenance. These are concrete remaining audit blockers, not a blanket claim that no shipped notices exist.
 
-The following suites pass on each rebased tree (Rust 1.99.1):
+Before binary publication: derive actual Apple Silicon shipped/linked dependency set from build provenance; check applicable Rust crate notices and collect missing license texts/attributions; audit Deno bundled dependency notice/source provenance; compare every required notice with bundle contents. Inspect `build/release_sources.py prepare` output against actual binary and build recipe, including exact FFmpeg/dav1d archives/configuration and corresponding source/redistribution obligations for bundled helper components. Have owner/reviewer record the source and distribution review. This is preparation, not a legal-compliance determination.
 
-| PR | Core Rust tests | JavaScript tests | Packaging tests |
-| --- | ---: | ---: | ---: |
-| #14 | 225 | 36 | 26 |
-| #8 | 225 | 36 | 27 |
-| #9 | 225 | 38 | 27 |
-| #10 | 226 | 40 | 27 |
-| #11 | 238 | 48 | 27 |
+Automated macOS CI produces a build artifact and synthetic updater checks; neither is owner acceptance of live Mac playback, import/retry/resume/seeking, app-link delivery, login persistence, theatre/PiP, or production notarization. Follow [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md), retain real owner evidence, and keep `publish=false` until reviewed.
 
-- Publication boundary checks and `git diff --check` pass on every tree.
-- Gitleaks 8.30.1 (checksum verified): source tree and Git history report no leaks.
-- Official source archives: both SHA-256 values match `tools.lock.json` and the
-  dav1d recipe. No Mac build is claimed from this download verification.
-- Full workspace compilation with pinned Rust 1.99.1 reaches native dependency
-  discovery but this Linux host lacks pkg-config/GTK development packages.
-- Owner must run [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md) on the final #11
-  tree: native workspace tests/build, LGPL helper build, VideoToolbox/HTTPS,
-  compatibility HLS playback, URL handoff and feature smoke tests.
-- Before a binary release, finish the source-archive and dependency-notice gates
-  in [PUBLICATION.md](PUBLICATION.md). Source publication and binary release have
-  separate gates; this review does not mark the existing unchecked items done.
+## Decision
 
-The repository was confirmed private with Actions disabled before pushing the
-rebased stack. No workflow was enabled or dispatched, no self-hosted runner was
-introduced, and no release or repository recreation was performed.
-
-Runner-label reference: GitHub currently lists `macos-15` as a standard arm64
-hosted runner in its [runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+**Not ready for production binary publication.** Blockers: version/tag/release not prepared; protected environment/reviewer configuration must be confirmed; real Apple account credentials are an external prerequisite; target-specific notices and corresponding-source review are unfinished; owner Mac acceptance is not recorded. No checks are marked complete by this review.

@@ -1,29 +1,27 @@
-# Release checklist
+# Publication and release readiness
 
-Build success does not by itself authorize a public release.
+Source publication and distributing a production macOS binary are separate decisions. The repository has a manual release workflow, but **no release has been published**. The checked-in Cargo/Tauri version is `0.2.14-preview.4`; intended stable target `0.2.14` is not yet bumped, tagged, or releasable. No owner Mac acceptance is recorded here. GitHub macOS CI (including its launch/localhost smoke and synthetic updater artifacts) is automated evidence only, not owner-live acceptance of WKWebView, playback, or the shipped app.
 
-## Source
+## Source/repository readiness
 
-- [x] Apache-2.0 for Muninn's own code (`LICENSE`, package metadata).
-- [x] Secret scans and `build/check_publication.py` boundary checks pass.
-- [x] CI uses read-only permissions, SHA-pinned actions, no secrets on pull request
-  paths and no `pull_request_target`.
-- [ ] Review contribution and security documents; enable private vulnerability reports.
-- [ ] Review native macOS CI results and update verification notes accurately.
+The project source is Apache-2.0 (`LICENSE`, Cargo/Tauri metadata). Third-party inventory is in `THIRD_PARTY_NOTICES.md`; its component-specific coverage and open audit work are below. Do not interpret an inventory or this document as legal advice or a legal-compliance certification. Owner still needs to review contribution/security documents and enable private vulnerability reporting.
 
-## Binary releases
+Repository release controls must be checked immediately before use: workflow only dispatches from protected `main`; protected `main` allowlist/ruleset must be active. The legacy branch-protection endpoint returning HTTP 404 is not evidence that main is unprotected; inspect the applicable ruleset/allowlist instead. The GitHub environment must be named exactly `muninn-release`, require owner/reviewer `efthomsen`, and restrict deployment branches to protected `main`. The workflow's prepare job is read-only; publish job has contents-write and uploads only to an already-existing Release.
 
-- [ ] Collect complete Rust and Deno dependency notices for the shipped build.
-- [x] FFmpeg is built from the pinned official 9.0.2 source release with an LGPL-only
-  configuration, plus dav1d (BSD-2-Clause), by `build/ffmpeg_lgpl.py`; no GPL,
-  non-free, x264 or x265.
-- [ ] Publish the exact FFmpeg and dav1d source tarballs, configure options and recipe
-  next to each binary release (LGPL source offer), and test the build on an Apple
-  Silicon Mac.
-- [ ] Ship `licenses/` (including `yt-dlp-THIRD_PARTY_LICENSES.txt`, which carries the GPL
-  texts for the GPL components bundled in the yt-dlp executable) with every binary.
-- [ ] Test the actual Apple Silicon app: imported files, retry, resume, seeking,
-  1×/1.5× playback, theatre toggle-back, PiP and login persistence.
-- [ ] Publish a clearly labelled preview with known issues and verified checksums.
+## Binary notice and source preparation
 
-No release assets are created automatically by the workflows.
+The app packaging path includes `licenses/`, `THIRD_PARTY_NOTICES.md`, and font notices in the app's `Contents/Resources/licenses`. `build/license_inventory.py` gathers available Rust crate license files, not all of them. `licenses/rust-packages.json` inventories 507 locked Cargo packages (all 507 currently say `license_file_declared: false`); it is metadata, not copied full texts or a verified list of compiled-only dependencies. Complete and review the **target-specific shipped dependency** notice set from actual Mac build provenance before redistribution. In particular, obtain and inspect Deno 2.9.7's bundled dependency notices/source provenance; `licenses/deno-LICENSE.md` is only its top-level MIT text. Review Rust licenses/attributions against the actual Apple Silicon build and fill missing applicable texts/attributions. Do not leave the generic collector as the sole evidence.
+
+Already present: hls.js 1.6.15 Apache text; Cinzel, Inter and IBM Plex Mono OFL texts; yt-dlp 2026.08.19 license and `yt-dlp-THIRD_PARTY_LICENSES.txt` (including its macOS mutagen GPL-2.0-or-later and certifi MPL-2.0 entries; Linux-only items are identified there); Deno top-level MIT; FFmpeg 9.0.2 LGPL-2.1 text and dav1d 1.5.4 BSD-2-Clause text. This list confirms files exist, **not** completeness or legal sufficiency. FFmpeg is built with the documented LGPL-only configuration; verify the exact produced executable and notices for each release.
+
+Workflow `build/release_sources.py prepare` creates source archives and recipe for corresponding-source assets; this is not an independent legal audit. Before release, independently review that output against the exact binary, FFmpeg/dav1d pinned sources, build recipe/configuration, corresponding source of applicable bundled GPL components, complete notices and exact distribution method. Do not publish until the source offer is complete, accessible and checked.
+
+## Release blockers / next actions
+
+1. Owner updates stable version from preview to `0.2.14` consistently in Cargo/Tauri and relevant metadata, reviews the exact main commit, creates `v0.2.14` tag and GitHub Release on that protected-main commit. Workflow will not create either.
+2. Repo owner confirms protected-main allowlist/ruleset active (do not infer status from legacy endpoint 404), and configures `muninn-release` with required reviewer `efthomsen` plus protected-main deployment branch rule.
+3. **External Apple-account dependency:** account holder must provide an active Apple Developer Program membership/team and create/provision a valid Developer ID Application certificate exported as password-protected PKCS#12, plus an App Store Connect API key authorized for notarization. The six exact `muninn-release` environment secret names consumed by workflow/helper are `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`, `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_NOTARY_API_KEY_ID`, `APPLE_NOTARY_API_ISSUER_ID`, and `APPLE_NOTARY_API_PRIVATE_KEY` (the last is the API private-key PEM). None is provisioned by this work; no Apple keys were supplied or accessed. Secret values must be added by an authorized account holder to the protected environment. Existing updater signing secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are a separate requirement; this task did not read them.
+4. Finish target-specific Deno and Rust notice audit and exact corresponding-source/package review above. Keep bundled notice material with every artifact.
+5. Owner dispatches from `main` with version/tag matching `0.2.14`, `publish=false`; reviews the signed/notarized/stapled app, Gatekeeper assessment, exact source bundle, notices, checksum and manifest. Separately perform owner Mac acceptance in [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md), including user-facing playback. Only after explicit review/approval may owner dispatch with publish true to upload assets to the existing Release.
+
+No local build, tests, Apple account operations, downloads, repository setting changes, or release publication are claimed by this documentation update.

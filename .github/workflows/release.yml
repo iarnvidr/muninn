@@ -53,13 +53,37 @@ jobs:
           test "$version" = "$INPUT_VERSION"
           test "$INPUT_TAG" = "v$INPUT_VERSION"
           python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"build"); from updater_release import stable; assert stable(sys.argv[1])' "$version"
+      - name: Fail-closed Apple signing credential preflight
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_NOTARY_API_PRIVATE_KEY: ${{ secrets.APPLE_NOTARY_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD APPLE_TEAM_ID APPLE_NOTARY_API_KEY_ID APPLE_NOTARY_API_ISSUER_ID APPLE_NOTARY_API_PRIVATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then echo "Required Apple credential is unset: $name" >&2; exit 1; fi
+          done
       - name: Install native build dependencies
         run: brew install meson ninja pkgconf minisign
       - name: Build, test and sign exact app bundle
         run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"
       - name: App launch and localhost health smoke
         run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"
-      - name: Create Tauri-compatible archive, sign and verify
+      - name: Sign, notarize, staple and assess production app
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_NOTARY_API_PRIVATE_KEY: ${{ secrets.APPLE_NOTARY_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          bash build/sign-notarize-macos.sh "$RUNNER_TEMP/muninn/Muninn.app" > "$RUNNER_TEMP/muninn/signing-notarization-evidence.txt"
+      - name: Create final Tauri-compatible archive, sign and verify
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -73,6 +97,7 @@ jobs:
           test -d Muninn.app/Contents/Resources/licenses
           bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Muninn.app/Contents/Info.plist)
           python3 build/updater_release.py check-version "$bundle_version" "$INPUT_VERSION"
+          rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig
           tar -czf Muninn.app.tar.gz Muninn.app
           npx --yes @tauri-apps/cli@2.10.1 signer sign Muninn.app.tar.gz
           test -s Muninn.app.tar.gz.sig
@@ -87,6 +112,8 @@ jobs:
           echo "version=$INPUT_VERSION tag=$INPUT_TAG commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" > release-review.txt
           shasum -a 256 Muninn.app.tar.gz Muninn.app.tar.gz.sig > SHA256SUMS
 
+      - name: Prepare corresponding source archives, manifest and recipe
+        run: python3 build/release_sources.py prepare "$RUNNER_TEMP/muninn/corresponding-source"
       - name: Generate and validate updater manifest
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -106,6 +133,8 @@ jobs:
             ${{ runner.temp }}/muninn/SHA256SUMS
             ${{ runner.temp }}/muninn/release-review.txt
             ${{ runner.temp }}/muninn/verify-macos.txt
+            ${{ runner.temp }}/muninn/signing-notarization-evidence.txt
+            ${{ runner.temp }}/muninn/corresponding-source/**
           if-no-files-found: error
           retention-days: 30
   publish:
@@ -128,4 +157,41 @@ jobs:
         run: |
           set -euo pipefail
           gh release view "$INPUT_TAG" >/dev/null
-          gh release upload "$INPUT_TAG" release-assets/Muninn.app.tar.gz release-assets/Muninn.app.tar.gz.sig release-assets/latest.json release-assets/SHA256SUMS --clobber
+          source_root=release-assets/corresponding-source
+          source_files=()
+          while IFS= read -r -d '' file; do
+            source_files+=("$file")
+          done < <(find "$source_root" -type f -print0)
+          if ((${#source_files[@]} == 0)); then
+            echo "No corresponding-source files found" >&2
+            exit 1
+          fi
+          upload_dir=$(mktemp -d)
+          trap 'rm -rf "$upload_dir"' EXIT
+          source_manifest="$upload_dir/source-assets-manifest.json"
+          python3 - "$source_root" "$upload_dir" "$source_manifest" <<'PY'
+          import hashlib, json, pathlib, shutil, sys
+          root, staging, manifest = map(pathlib.Path, sys.argv[1:])
+          records = []
+          names = set()
+          for source in sorted((p for p in root.rglob('*') if p.is_file()), key=lambda p: p.relative_to(root).as_posix()):
+              relative = source.relative_to(root).as_posix()
+              asset_name = f"source-{hashlib.sha256(relative.encode()).hexdigest()[:12]}-{source.name}"
+              if asset_name in names:
+                  raise SystemExit(f"Release asset name collision: {asset_name}")
+              names.add(asset_name)
+              shutil.copyfile(source, staging / asset_name)
+              records.append({"original_path": relative, "asset_name": asset_name,
+                              "sha256": hashlib.sha256(source.read_bytes()).hexdigest()})
+          if not records:
+              raise SystemExit("No corresponding-source files found")
+          manifest.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n")
+          PY
+          assets=(release-assets/Muninn.app.tar.gz release-assets/Muninn.app.tar.gz.sig release-assets/latest.json release-assets/SHA256SUMS release-assets/signing-notarization-evidence.txt "$source_manifest")
+          for file in "${source_files[@]}"; do
+            relative=${file#"$source_root"/}
+            digest=$(printf '%s' "$relative" | shasum -a 256 | cut -c1-12)
+            base=${relative##*/}
+            assets+=("$upload_dir/source-$digest-$base")
+          done
+          gh release upload "$INPUT_TAG" "${assets[@]}" --clobber
