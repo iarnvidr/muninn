@@ -158,7 +158,10 @@ jobs:
           set -euo pipefail
           gh release view "$INPUT_TAG" >/dev/null
           source_root=release-assets/corresponding-source
-          mapfile -d '' -t source_files < <(find "$source_root" -type f -print0)
+          source_files=()
+          while IFS= read -r -d '' file; do
+            source_files+=("$file")
+          done < <(find "$source_root" -type f -print0)
           if ((${#source_files[@]} == 0)); then
             echo "No corresponding-source files found" >&2
             exit 1

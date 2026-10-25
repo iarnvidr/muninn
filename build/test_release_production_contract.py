@@ -52,7 +52,7 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertIn("build/release_sources.py prepare", self.workflow)
         self.assertIn('source_root=release-assets/corresponding-source', self.workflow)
         self.assertIn('find "$source_root" -type f -print0', self.workflow)
-        self.assertIn('mapfile -d \'\' -t source_files', self.workflow)
+        self.assertIn("while IFS= read -r -d '' file; do", self.workflow)
         self.assertIn('if ((${#source_files[@]} == 0))', self.workflow)
         self.assertNotIn('release-assets/corresponding-source/**', self.workflow)
         self.assertIn("release-assets/signing-notarization-evidence.txt", self.workflow)
@@ -105,7 +105,7 @@ class ProductionReleaseContract(unittest.TestCase):
             self.assertIn('No corresponding-source files found', rejected.stderr)
 
     def test_hosted_checks_run_contract_test(self):
-        self.assertIn("python3 -m unittest -v test_release_production_contract", self.checks)
+        self.assertIn("python3 -m unittest -v discover -s build -p 'test_release_production_contract.py'", self.checks)
 
 
 if __name__ == "__main__":
