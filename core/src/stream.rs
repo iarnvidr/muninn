@@ -1307,6 +1307,25 @@ mod tests {
     }
 
     #[test]
+    fn playback_resolver_receives_native_cookies_and_removes_jar_after_resolution() {
+        let body = format!("jar=''\nwhile [ $# -gt 0 ]; do if [ \"$1\" = --cookies ]; then shift; jar=\"$1\"; fi; shift; done\n[ -n \"$jar\" ] && grep -q 'fixture-session' \"$jar\" || {{ echo 'ERROR: Sign in' >&2; exit 1; }}\nprintf '%s' \"$jar\" > \"$0.jar\"\n{}", ytdlp_json("http://127.0.0.1:9/v", true));
+        let r = rig(&body, FFMPEG_OK, None);
+        let key = "a".repeat(64);
+        let now = r.core.now();
+        r.core.observe_youtube_account(true, Some(&key), now).unwrap();
+        r.core.observe_youtube_cookies(&key, now, vec![crate::youtube_session::YoutubeCookie {
+            domain: ".youtube.com".into(), path: "/".into(), name: "SID".into(), value: "fixture-session".into(),
+            secure: true, http_only: true, expires: None,
+        }]);
+        let job = r.core.start_stream(ID, false).unwrap();
+        wait_terminal(&job);
+        assert_eq!(phase(&job), "done", "{}", r.log_text());
+        let path = std::fs::read_to_string(r.bin.path().join("yt-dlp.jar")).unwrap();
+        assert!(!Path::new(&path).exists());
+        assert!(!r.log_text().contains("fixture-session"));
+    }
+
+    #[test]
     fn failed_resolution_is_categorised_not_retried_and_redacted() {
         let r = rig(&format!("echo 'ERROR: [youtube] {ID}: Video unavailable. This video has been removed' >&2\nexit 1"), FFMPEG_OK, None);
         let job = r.core.start_stream(ID, false).unwrap();
