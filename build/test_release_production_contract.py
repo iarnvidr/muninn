@@ -74,7 +74,7 @@ class ProductionReleaseContract(unittest.TestCase):
             (source / 'nested one' / 'NOTICE').write_text('notice a')
             completed = subprocess.run(['bash', '-c', script], cwd=root, text=True, capture_output=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            uploaded = [Path(line) for line in completed.stdout.splitlines() if Path(line).name.startswith('source-') and Path(line).exists()]
+            uploaded = [Path(line) for line in completed.stdout.splitlines() if Path(line).name.startswith('source-') and Path(line).exists() and Path(line).name != 'source-assets-manifest.json']
             self.assertEqual(len(uploaded), 2)
             self.assertEqual(len({p.name for p in uploaded}), 2)
             self.assertTrue(all('#' not in p.name and p.is_file() for p in uploaded))
