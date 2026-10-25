@@ -45,7 +45,14 @@ try:
         state=ev("({pageOpen:document.querySelector('#app').dataset.pageOpen, selected:[...document.querySelectorAll('#sidebar [aria-current=\\\"page\\\"]')].map(x=>x.dataset.page), content:document.querySelector('#content').innerText.slice(0,120)})")
         check('sidebar '+page, state.get('selected')==[page],state)
         check('page shown '+page, state.get('pageOpen')=='1',state)
-        if page=='settings': screenshot('settings')
+        if page=='settings':
+            deadline=time.monotonic()+10
+            while not ev("!!document.querySelector('#set-theme')"):
+                if time.monotonic()>deadline: raise TimeoutError('settings fields did not load')
+                time.sleep(.1)
+            layout=ev("(()=>{const f=document.querySelector('.settings-feedback'), n=document.querySelector('#set-favourite_carousel_days');return {feedbackPosition:getComputedStyle(f).position,numberWidth:n.getBoundingClientRect().width,channel:document.querySelector('#update-channel').value}})()")
+            check('settings feedback stays in flow and numeric fields are bounded',layout['feedbackPosition'] not in ('sticky','fixed') and layout['numberWidth']<=160 and layout['channel']=='stable',layout)
+            screenshot('settings')
     hover=ev("(()=>{const e=document.querySelector('#sidebar [data-page=\\\"settings\\\"]');if(!e)throw Error('missing settings');const before=e.getAttribute('aria-current');e.dispatchEvent(new MouseEvent('mouseenter',{bubbles:false,clientX:4,clientY:4}));return {before,after:e.getAttribute('aria-current'),className:e.className}})()")
     check('synthetic OS-hover does not select settings',hover['before']==hover['after'],hover)
     for expanded in (False, True):
@@ -55,6 +62,13 @@ try:
         state=ev("({expanded:document.querySelector('#side-toggle').getAttribute('aria-expanded'), width:document.querySelector('#sidebar').getBoundingClientRect().width, appSidebar:document.querySelector('#app').dataset.sidebar})")
         check('sidebar state '+wanted,state['expanded']==wanted and state['width']>0,state)
     screenshot('rail')
+    for theme in ('classified','classified_light','system'):
+        ev(f"(()=>{{window.Muninn.settings.theme={json.dumps(theme)};window.Muninn.applyAppearance();return true}})()")
+        click('#side-toggle')
+        bounds=ev("(()=>{const rail=document.querySelector('#sidebar').getBoundingClientRect();return [...document.querySelectorAll('.side-nav .side-item')].filter(e=>!e.hidden).map(e=>{const b=e.getBoundingClientRect(),i=e.querySelector('.side-icon').getBoundingClientRect();return {fits:b.left>=rail.left&&b.right<=rail.right&&i.left>=b.left&&i.right<=b.right,width:b.width}})})()")
+        check('collapsed navigation fits '+theme,all(b['fits'] and b['width']>=32 for b in bounds),bounds)
+        screenshot('rail-'+theme)
+        click('#side-toggle')
     for theme in ('dark','light'):
         state=ev(f"(()=>{{window.Muninn.settings.theme={json.dumps(theme)};window.Muninn.applyAppearance();return {{theme:document.documentElement.dataset.theme,computed:getComputedStyle(document.documentElement).colorScheme}}}})()")
         check('appearance '+theme,state['theme']==theme,state)

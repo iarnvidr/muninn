@@ -558,19 +558,28 @@
     const signMsg=slot('slot-xl');
 
     const updateState = { value: { state: 'idle' } };
+    const updateChannel = h('select', { id: 'update-channel', onchange: async () => {
+      try {
+        await M.invoke('updater_cancel');
+        localStorage.setItem('muninn.updates.previews', updateChannel.value);
+        updateState.value = { state: 'idle' }; renderUpdate();
+      } catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+    } }, h('option', { value: 'stable', text: 'Stable only' }), h('option', { value: 'preview', text: 'Stable and previews' }));
+    try { updateChannel.value = localStorage.getItem('muninn.updates.previews') === 'preview' ? 'preview' : 'stable'; } catch (e) { /* default stable */ }
+    const updateOptions = () => ({ includePreviews: updateChannel.value === 'preview' });
     const updateStatus = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
     const updateDetails = h('p', { class: 'muted' });
     const updateProgress = h('progress', { max: 100, value: 0, class: 'update-progress', hidden: true, 'aria-label': 'Update download progress' });
     const checkUpdate = h('button', { type: 'button', text: 'Check for updates', onclick: async () => {
       if (['checking','downloading','installing'].includes(updateState.value.state)) return;
       updateState.value = { state: 'checking' }; renderUpdate();
-      try { updateState.value = await M.invoke('updater_check'); renderUpdate(); await pollUpdate(); }
+      try { updateState.value = await M.invoke('updater_check', updateOptions()); renderUpdate(); await pollUpdate(); }
       catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
     } });
     const downloadUpdate = h('button', { type: 'button', class: 'primary', text: 'Download update', hidden: true, onclick: async () => {
       if (updateState.value.state !== 'available' || M.offline) return;
       downloadUpdate.disabled = true; updateState.value = { ...updateState.value, state: 'downloading', downloaded: 0, content_length: null }; renderUpdate();
-      try { await M.invoke('updater_download'); await pollUpdate(); }
+      try { await M.invoke('updater_download', updateOptions()); await pollUpdate(); }
       catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
       finally { downloadUpdate.disabled = false; }
     } });
@@ -603,7 +612,8 @@
       const v = window.MuninnUpdates.view(updateState.value);
       setText(updateStatus, v.label);
       const installed = v.installedVersion || v.currentVersion;
-      updateDetails.replaceChildren(document.createTextNode([installed ? 'Installed version ' + installed : '', v.availableVersion ? 'Available version ' + v.availableVersion : '', v.channel === 'stable' ? 'Stable channel: previews are not offered; only a newer stable release can update this installation.' : '', v.notes].filter(Boolean).join('\\n')));
+      updateDetails.replaceChildren(document.createTextNode([installed ? 'Installed version ' + installed : '', v.availableVersion ? 'Available version ' + v.availableVersion : '', updateChannel.value === 'preview' ? 'Preview updates may contain unfinished changes and may not be notarized.' : 'Stable channel: only stable releases are offered.', v.notes].filter(Boolean).join('\n')));
+      updateChannel.disabled = ['checking','downloading','installing'].includes(v.state);
       updateProgress.hidden = v.state !== 'downloading';
       if (v.progress != null) updateProgress.value = v.progress;
       checkUpdate.disabled = !v.canCheck || !!M.offline; downloadUpdate.hidden = !v.canDownload; downloadUpdate.disabled = !!M.offline;
@@ -724,7 +734,8 @@
         else if(f.kind==='select'||f.kind==='choice'){input=h('select',{id,onchange:()=>change(true)},...f.options.map(([value,text])=>h('option',{value:String(value),text})));input.value=value;}
         else input=h('input',{type:'number',id,value,min:String(f.min??0),max:f.max==null?null:String(f.max),step:f.kind==='bytes'?'any':'1',oninput:()=>change(false),onchange:()=>change(true)});
         S.inputs[f.key]=input;
-        return h('div',{class:'field'},f.kind==='bool'?h('label',{class:'check',for:id},input,' '+f.label):h('label',{for:id,text:f.label+(f.unit?' ('+f.unit+')':'')}),f.kind==='bool'?null:input,h('span',{class:'hint',text:f.hint||' '}));
+        if(f.hint)input.setAttribute('aria-describedby',id+'-hint');
+        return h('div',{class:'field'},f.kind==='bool'?h('label',{class:'check',for:id},input,' '+f.label):h('label',{for:id,text:f.label+(f.unit?' ('+f.unit+')':'')}),f.kind==='bool'?null:input,f.hint?h('span',{class:'hint',id:id+'-hint',text:f.hint}):null);
       })))));
     }
     async function fetchSettings(){S.orig=await M.api('GET','/api/settings');render();}
@@ -742,6 +753,7 @@
           h('section', { class: 'card update-card', 'aria-labelledby': 'updates-h' },
             h('h2', { class: 'h2', id: 'updates-h', text: 'Muninn updates' }),
             h('p', { class: 'muted', text: 'Check for a trusted Muninn release. Updates are never installed automatically.' }),
+            h('div', { class: 'field' }, h('label', { for: 'update-channel', text: 'Update channel' }), updateChannel),
             updateStatus, updateDetails, updateProgress,
             h('div', { class: 'actions' }, checkUpdate, downloadUpdate, installUpdate, cancelUpdate)),
 
@@ -756,7 +768,7 @@
             h('p', { class: 'muted', text: 'Sign-in status reflects the latest live YouTube page observation; opening a browser does not count as signing in. Google may reject some embedded-browser login flows; a separate window is available.' }),
             h('div', { class: 'actions' }, signBtn, signMsg)),
           devCard);
-        renderSetup(); setupPoll.kick(); accountPoll.kick();
+        renderUpdate(); renderSetup(); setupPoll.kick(); accountPoll.kick();
         fetchSettings().then(syncDeveloper).catch(M.flashError);
       },
       unmount() { clearTimeout(S.timer); setupPoll.stop(); accountPoll.stop(); flush(); },

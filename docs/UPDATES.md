@@ -1,6 +1,10 @@
 # Updater release preparation
 
-The checked-in version is `0.2.16`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
+The checked-in version is `0.2.17`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
+
+Settings defaults to **Stable only**. With no stable release, it explains that no stable update has been published. Choose **Stable and previews** to check published GitHub prereleases as well. This preference is local to the installation. Discovery selects the highest numeric version among the latest 100 published releases with a matching repository-owned `latest.json` asset; drafts and malformed tags are excluded. Preview manifests use their fixed release tag. The pinned verification key and signature checks apply to both channels; older and equal versions cannot be installed. A successful check with no newer version reports up to date. Preview builds may be unfinished and non-notarized; this option does not promote a build to stable.
+
+Versions through `0.2.16` use only the stable endpoint. Install `0.2.17` manually once to gain preview-channel support. The owner confirmed playback works in `0.2.16`; actual owner-Mac updater installation acceptance is still pending.
 
 Releases attach exactly three files: `Muninn_<version>_macos-arm64.dmg` for installation, `latest.json` for the updater, and `Muninn.app.tar.gz` as the update payload. The legacy repack workflow converts the initial `0.2.14` layout without rebuilding its app or changing updater files. The updater reads the signature embedded in `latest.json`; a separately attached `.sig` is unnecessary. Its existing endpoint and pinned verification key remain unchanged.
 

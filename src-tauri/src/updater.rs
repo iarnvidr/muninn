@@ -17,10 +17,54 @@ pub fn plugin_builder() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_u
     tauri_plugin_updater::Builder::new().build()
 }
 
-fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+// GitHub's latest endpoint excludes prereleases. Preview discovery is explicit;
+// only this repository's fixed-tag manifest is handed to the signature verifier.
+fn release_endpoint(releases: &serde_json::Value, previews: bool) -> Result<String, String> {
+    let release = releases.as_array().ok_or("Invalid release listing")?
+        .iter()
+        .filter(|r| r["draft"] == false && (previews || r["prerelease"] == false))
+        .filter_map(|r| {
+            let tag = r["tag_name"].as_str()?;
+            let version = semver::Version::parse(tag.strip_prefix('v')?).ok()?;
+            if !version.pre.is_empty() || tag != format!("v{version}") {
+                return None;
+            }
+            let manifest = format!("https://github.com/iarnvidr/muninn/releases/download/{tag}/latest.json");
+            let has_manifest = r["assets"].as_array()?.iter().any(|a|
+                a["name"] == "latest.json" && a["browser_download_url"] == manifest);
+            has_manifest.then_some((version, manifest))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0));
+    release.map(|(_, endpoint)| if previews { endpoint } else { ENDPOINT.into() })
+        .ok_or_else(|| if previews {
+            "No published update is available yet.".into()
+        } else {
+            "No stable release has been published yet. Select ‘Stable and previews’ to receive preview updates.".into()
+        })
+}
+
+async fn configured_updater(app: &AppHandle, previews: bool) -> Result<tauri_plugin_updater::Updater, String> {
     let mut builder = app.updater_builder();
     let smoke_mode = debug_smoke_mode();
     let smoke_current = smoke_mode.then(current_version);
+    if !smoke_mode {
+        let endpoint = tauri::async_runtime::spawn_blocking(move || {
+            let response = ureq::get("https://api.github.com/repos/iarnvidr/muninn/releases?per_page=100")
+                .set("User-Agent", "Muninn updater")
+                .set("Accept", "application/vnd.github+json")
+                .timeout(std::time::Duration::from_secs(20))
+                .call().map_err(|_| "Could not check releases. Check your connection and try again.".to_string())?;
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            response.into_reader().take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > 2 * 1024 * 1024 { return Err("Release listing is too large".into()); }
+            let releases = serde_json::from_slice(&bytes).map_err(|_| "Invalid release listing".to_string())?;
+            release_endpoint(&releases, previews)
+        }).await.map_err(|e| e.to_string())??;
+        builder = builder.endpoints(vec![url::Url::parse(&endpoint).map_err(|e| e.to_string())?])
+            .map_err(|e| e.to_string())?;
+    }
     #[cfg(debug_assertions)]
     if debug_smoke_mode() {
         if let (Ok(endpoint), Ok(pubkey)) = (
@@ -202,6 +246,7 @@ pub async fn updater_check(
     app: AppHandle,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<UpdaterState>>,
+    include_previews: Option<bool>,
 ) -> Result<UpdateStatus, String> {
     trusted(&webview)?;
     if let Some(shell) = app.try_state::<Arc<crate::shell::Shell>>() {
@@ -222,11 +267,13 @@ pub async fn updater_check(
     let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         let result = async {
-            let update = configured_updater(&app)?
+            let update = configured_updater(&app, include_previews.unwrap_or(false)).await?
                 .check()
                 .await
-                .map_err(|e| format!("updater check failed: {}", error_cause_chain(&e)))?
-                .ok_or("no valid signed release available (or no newer version)")?;
+                .map_err(|e| format!("updater check failed: {}", error_cause_chain(&e)))?;
+            let Some(update) = update else {
+                return Ok(UpdateStatus::Current { version: current_version() });
+            };
             match compare_versions(&current_version(), &update.version)? {
                 std::cmp::Ordering::Greater => Ok(UpdateStatus::Available {
                     version: update.version,
@@ -254,6 +301,7 @@ pub async fn updater_download(
     app: AppHandle,
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<UpdaterState>>,
+    include_previews: Option<bool>,
 ) -> Result<UpdateStatus, String> {
     trusted(&webview)?;
     if let Some(shell) = app.try_state::<Arc<crate::shell::Shell>>() {
@@ -274,7 +322,7 @@ pub async fn updater_download(
     state.set(UpdateStatus::Checking);
     tauri::async_runtime::spawn(async move {
         let result = async {
-            let update = configured_updater(&app)
+            let update = configured_updater(&app, include_previews.unwrap_or(false)).await
                 .map_err(|e| (e, None))?
                 .check()
                 .await
@@ -405,6 +453,28 @@ pub async fn updater_cancel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn published_preview_requires_opt_in_and_uses_repository_manifest() {
+        let release = |tag: &str, preview: bool, draft: bool| serde_json::json!({
+            "tag_name": tag, "prerelease": preview, "draft": draft,
+            "assets": [{"name": "latest.json", "browser_download_url":
+                format!("https://github.com/iarnvidr/muninn/releases/download/{tag}/latest.json")}]
+        });
+        let previews = serde_json::json!([release("v0.2.16", true, false)]);
+        assert!(release_endpoint(&previews, false).unwrap_err().contains("No stable release"));
+        assert!(release_endpoint(&previews, true).unwrap().ends_with("/v0.2.16/latest.json"));
+        let mixed = serde_json::json!([
+            release("v0.2.17", true, false), release("v9.0.0", true, true),
+            release("v0.2.16", false, false), release("v0.2.15", true, false)
+        ]);
+        assert_eq!(release_endpoint(&mixed, false).unwrap(), ENDPOINT);
+        assert!(release_endpoint(&mixed, true).unwrap().ends_with("/v0.2.17/latest.json"));
+        let mut foreign = release("v0.2.18", true, false);
+        foreign["assets"][0]["browser_download_url"] = "https://example.com/latest.json".into();
+        assert!(release_endpoint(&serde_json::json!([foreign]), true).is_err());
+        assert!(release_endpoint(&serde_json::json!([release("v../escape", true, false)]), true).is_err());
+        assert!(release_endpoint(&serde_json::json!([]), true).is_err());
+    }
     #[test]
     fn only_greater_is_eligible() {
         assert_eq!(
