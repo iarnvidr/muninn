@@ -121,7 +121,9 @@ class FetchToolsTests(unittest.TestCase):
             build.assert_called_once_with(tarball)
             self.assertEqual(get.call_count, 1)
             # A second run reuses the cached, re-verified build and does not rebuild.
-            with patch("fetch_tools.ffmpeg_lgpl.verify") as verify:
+            with patch("fetch_tools.os.access", return_value=True), patch("fetch_tools.ffmpeg_lgpl.verify") as verify:
+                cached = next(self.cache.glob("ffmpeg-lgpl-*"))
+                cached.chmod(0o755)
                 fetch_tools.build(out, self.ffmpeg_lock(tarball), self.cache, lipo=False, archs=("arm64",))
             verify.assert_called_once()
             build.assert_called_once()
@@ -167,6 +169,24 @@ class FetchToolsTests(unittest.TestCase):
             self.assertEqual(fetch_tools.build_ffmpeg_lgpl(lock["ffmpeg"]["arm64"], self.cache), good)
         build.assert_called_once_with(tarball)
         verify.assert_not_called()  # the rebuilt binary was already verified by the builder
+
+    def test_ffmpeg_exec_permission_error_diagnostics_do_not_swallow_failure(self):
+        tarball = b"pinned source"
+        lock = self.ffmpeg_lock(tarball)
+        recipe = fetch_tools.sha256_of((Path(fetch_tools.__file__).parent / "ffmpeg_lgpl.py").read_bytes())[:16]
+        cached = self.cache / f"ffmpeg-lgpl-{lock['ffmpeg']['arm64']['sha256']}-{recipe}"
+        self.cache.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(b"cached")
+        cached.chmod(0o755)
+        failure = PermissionError("hosted exec denied")
+        with patch("fetch_tools.os.access", return_value=True), patch("fetch_tools.ffmpeg_lgpl.verify", side_effect=failure), patch("fetch_tools.ffmpeg_lgpl.build", return_value=b"binary"), patch("fetch_tools.urllib.request.urlopen", return_value=FakeResponse(tarball)), patch("sys.stderr") as stderr:
+            with self.assertRaises(PermissionError) as caught:
+                fetch_tools.build_ffmpeg_lgpl(lock["ffmpeg"]["arm64"], self.cache)
+        self.assertIs(caught.exception, failure)
+        diagnostic = "".join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertIn("FFmpeg exec diagnostic", diagnostic)
+        self.assertIn(repr(str(cached)), diagnostic)
+        self.assertIn("X_OK=True", diagnostic)
 
     def test_ffmpeg_tarball_checksum_mismatch_builds_nothing(self):
         with patch("fetch_tools.urllib.request.urlopen", return_value=FakeResponse(b"tampered")), \
