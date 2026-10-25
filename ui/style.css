@@ -146,7 +146,7 @@ table.lib .c-expiry { width:130px; }
 .now-playing .mini-control { display:inline-flex; align-items:center; justify-content:center; width:29px; height:30px; min-height:30px; padding:0; border:0; }
 .now-playing .mini-control:hover { background:var(--hover); }
 .has-playback-mini .sidebar-note { display:none!important; }
-.settings-feedback { position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; margin-bottom:14px; background:var(--bg); border-bottom:1px solid var(--border); color:var(--muted); }
+.settings-feedback { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; margin-bottom:14px; border-bottom:1px solid var(--border); color:var(--muted); }
 .tab[draggable=true],.organize-tab[draggable=true] { cursor:grab; }
 .dragging { opacity:.4; }
 .tab-drop-target { outline:2px solid var(--accent)!important; outline-offset:-2px; background:var(--accent-soft)!important; }
@@ -523,7 +523,16 @@ table.rules { min-width: 1220px; }
 .fieldgrid .field { margin: 0 0 4px; }
 .fieldgrid input[type="number"], .fieldgrid select { width: 100%; }
 .settings-form { max-width: 1000px; }
+.settings-form .fieldgrid { grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); align-items:start; gap:16px 24px; padding:12px 0; }
+.settings-form .field { min-width:0; }
+.settings-form .check { height:auto; min-height:32px; align-items:flex-start; }
+.settings-form .check input { flex:none; margin-top:2px; }
+.settings-form input[type=number] { max-width:160px; }
+.settings-form select { max-width:340px; }
+.settings-form .hint { max-width:48ch; }
 .update-card { max-width: 1000px; }
+.update-card select { width:min(100%,340px); min-height:36px; }
+.update-card p { max-width:80ch; overflow-wrap:anywhere; white-space:pre-line; }
 .update-progress { display:block; width: min(100%, 420px); height: 8px; accent-color: var(--accent); margin: 12px 0; }
 .update-card [aria-live] { min-height: 1.4em; }
 .page .card { max-width: 1000px; }
@@ -614,6 +623,10 @@ table.rules { min-width: 1220px; }
 :root[data-theme^=classified] #app[data-sidebar=collapsed] .muninn-brand { padding:16px 0; margin:0 0 12px; justify-content:center; }
 :root[data-theme^=classified] #app[data-sidebar=collapsed] .brand-raven { width:28px; height:38px; }
 :root[data-theme^=classified] #app[data-sidebar=collapsed] .muninn-brand div,:root[data-theme^=classified] #app[data-sidebar=collapsed] .nav-caption,:root[data-theme^=classified] #app[data-sidebar=collapsed] .sidebar-note { display:none; }
+/* Keep theme padding out of the compact rail's icon hit areas. */
+#app[data-sidebar=collapsed] .sidebar { padding-left:4px; padding-right:4px; }
+#app[data-sidebar=collapsed] .side-nav { margin:0; padding:2px 0; align-items:stretch; }
+#app[data-sidebar=collapsed] .side-item { margin:0; padding:0; min-width:0; width:100%; min-height:40px; justify-content:center; }
 @media(max-width:1000px) {
   .channel-discovery { grid-template-columns:1fr; gap:16px; }
   :root[data-theme^=classified] .view-internal { padding:24px; }
