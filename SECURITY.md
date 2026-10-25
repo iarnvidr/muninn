@@ -1,10 +1,10 @@
 # Security reports
 
 Muninn is experimental and has not undergone an independent security audit.
-Report vulnerabilities through the repository's **Security → Report a vulnerability**
-feature when private vulnerability reporting is enabled. If that option is not
-available, contact the maintainer through their GitHub profile to arrange a private
-channel. Do not disclose exploit details in a public issue.
+Report vulnerabilities using [GitHub's private vulnerability reporting](https://github.com/iarnvidr/muninn/security/advisories/new)
+(**Security → Report a vulnerability**). If that option is unavailable, contact
+the maintainer through their GitHub profile to arrange a private channel. Do not
+disclose exploit details in a public issue.
 
 Include the affected version, platform, reproduction steps and impact. Do not send
 account cookies, authorization tokens, CA private keys, browser profiles or full

@@ -12,6 +12,7 @@ tarball with an LGPL-only configuration (ffmpeg_lgpl.py; Apple Silicon Mac only,
 or set FFMPEG_LGPL_BINARY to a binary built that way), so only arm64 is available.
 """
 import argparse
+import stat
 import hashlib
 import io
 import json
@@ -64,6 +65,34 @@ class ToolUnavailable(Exception):
     pass
 
 
+def _diagnose_ffmpeg_exec_failure(binary):
+    """Emit nonfatal filesystem diagnostics for a failed hosted FFmpeg exec."""
+    binary = Path(binary)
+    try:
+        info = binary.lstat()
+        kind = "symlink" if stat.S_ISLNK(info.st_mode) else (
+            "regular" if stat.S_ISREG(info.st_mode) else "directory" if stat.S_ISDIR(info.st_mode) else "other")
+        print(f"FFmpeg exec diagnostic: path={str(binary)!r} mode={stat.filemode(info.st_mode)!r} "
+              f"type={kind} symlink={binary.is_symlink()} is_file={binary.is_file()} "
+              f"X_OK={os.access(binary, os.X_OK)}", file=sys.stderr)
+    except Exception as error:
+        print(f"FFmpeg exec diagnostic: path={str(binary)!r} lstat_error={type(error).__name__}", file=sys.stderr)
+    for parent in (binary.parent, *binary.parents[1:]):
+        try:
+            info = parent.stat()
+            print(f"FFmpeg exec diagnostic: parent={str(parent)!r} mode={stat.filemode(info.st_mode)!r}", file=sys.stderr)
+        except Exception as error:
+            print(f"FFmpeg exec diagnostic: parent={str(parent)!r} stat_error={type(error).__name__}", file=sys.stderr)
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(["xattr", "-p", "com.apple.quarantine", str(binary)],
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, check=False)
+            print(f"FFmpeg exec diagnostic: quarantine_present={result.returncode == 0}", file=sys.stderr)
+        except Exception as error:
+            print(f"FFmpeg exec diagnostic: quarantine_check_error={type(error).__name__}", file=sys.stderr)
+
+
 def build_ffmpeg_lgpl(spec, cache):
     """An LGPL-only ffmpeg: a verified override, a cached earlier build, or a fresh build.
 
@@ -76,11 +105,24 @@ def build_ffmpeg_lgpl(spec, cache):
         return Path(override).read_bytes()
     recipe = sha256_of((HERE / "ffmpeg_lgpl.py").read_bytes())[:16]
     built = cache / f"ffmpeg-lgpl-{spec['sha256']}-{recipe}"
-    if built.is_file():
-        try:
-            ffmpeg_lgpl.verify(built)
-            return built.read_bytes()
-        except ffmpeg_lgpl.LicenseError:
+    # Cache entries must be executable regular files. A stale/corrupt cache may
+    # instead be an extraction directory (or a non-executable file); never pass
+    # either to subprocess as the FFmpeg executable. Remove only the exact cache
+    # entry, then rebuild from the pinned source and verify it as usual.
+    if built.exists() or built.is_symlink():
+        usable = built.is_file() and os.access(built, os.X_OK)
+        if usable:
+            try:
+                ffmpeg_lgpl.verify(built)
+                return built.read_bytes()
+            except PermissionError:
+                _diagnose_ffmpeg_exec_failure(built)
+                raise
+            except (ffmpeg_lgpl.LicenseError, OSError):
+                pass
+        if built.is_dir() and not built.is_symlink():
+            shutil.rmtree(built)
+        else:
             built.unlink()
     try:
         data = ffmpeg_lgpl.build(download(spec["url"], spec["sha256"], cache))
@@ -89,6 +131,7 @@ def build_ffmpeg_lgpl(spec, cache):
     cache.mkdir(parents=True, exist_ok=True)
     partial = built.with_suffix(".part")
     partial.write_bytes(data)
+    partial.chmod(0o755)
     partial.rename(built)
     return data
 
