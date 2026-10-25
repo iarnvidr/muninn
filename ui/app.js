@@ -816,6 +816,7 @@
   let shortcutLast = { act: '', t: 0 };
   /** Called by the native menu (Cmd+L). */
   window.muninnFocusAddress = function () { addr.focus(); addr.select(); };
+  window.muninnOpenSettings = function () { M.page = 'settings'; render(); content.focus(); };
   window.addEventListener('keydown', (ev) => {
     const act = L.shortcutAction(ev);
     if (!act) return;
@@ -826,6 +827,7 @@
     if (shortcutLast.act === act && nowMs - shortcutLast.t < 80) return;
     shortcutLast = { act, t: nowMs };
     switch (act) {
+      case 'settings': window.muninnOpenSettings(); break;
       case 'new-tab': M.newTab(); break;
       case 'close-tab': if (tab) M.closeTab(tab.id); break;
       case 'focus-address': if(M.page||tab?.face==='watch')M.newTab();else {addr.focus();addr.select();} break;

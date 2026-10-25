@@ -107,6 +107,7 @@
     const k = String(e.key || '').toLowerCase();
     if (e.shiftKey && k !== '[' && k !== ']') return null;
     switch (k) {
+      case ',': return 'settings';
       case 't': return 'new-tab';
       case 'w': return 'close-tab';
       case 'l': return 'focus-address';
@@ -817,6 +818,12 @@
     return { state: 'not_observed', label: 'YouTube sign-in has not been observed yet', canSignIn: true };
   }
 
+  function youtubeSessionLabel(session) {
+    if (session?.state === 'present') return 'Saved YouTube login detected. Downloads use this browser session.';
+    if (session?.state === 'absent') return 'No saved YouTube login detected. Open YouTube in Browse to sign in.';
+    return 'Saved YouTube login could not be checked. This does not mean you are signed out.';
+  }
+
   /** Keep independent readiness dimensions explicit; helper presence is not playback health. */
   function settingsReadiness(tools, trust, playback) {
     const t = tools || {}, y = t.ytdlp || {}, f = t.ffmpeg || {};
@@ -829,7 +836,7 @@
   }
 
   return {
-    observedAccountState, settingsReadiness,
+    observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
     chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,

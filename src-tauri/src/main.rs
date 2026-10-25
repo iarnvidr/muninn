@@ -45,6 +45,8 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
     let app_menu = SubmenuBuilder::new(app, "Muninn")
         .about(None)
         .separator()
+        .item(&item("settings", "Settings…", "CmdOrCtrl+,")?)
+        .separator()
         .services()
         .separator()
         .hide()
@@ -89,6 +91,7 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         let shell = shell.inner().clone();
         let active = shell.tabs_state()["active"].as_u64();
         match (event.id().as_ref(), active) {
+            ("settings", _) => open_settings(app),
             ("new_tab", _) => {
                 shell.new_tab(None);
             }
@@ -107,6 +110,14 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+pub(crate) fn open_settings(app: &tauri::AppHandle) {
+    show_main(app);
+    if let Some(view) = app.get_webview(shell::CHROME) {
+        let _ = view.eval("window.muninnOpenSettings && window.muninnOpenSettings()");
+        let _ = view.set_focus();
+    }
 }
 
 fn show_main(app: &tauri::AppHandle) {
@@ -189,6 +200,7 @@ fn main() {
             commands::trust_status,
             commands::trust_install,
             commands::signin_popup,
+            commands::youtube_session_status,
             commands::export_diagnostics,
             commands::channel_unsubscribe,
             commands::page_open_video,

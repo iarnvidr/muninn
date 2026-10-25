@@ -20,6 +20,12 @@ pub fn youtube_domain(domain: &str) -> bool {
     domain == "youtube.com" || domain.ends_with(".youtube.com")
 }
 
+/// Presence only: this never proves server acceptance or an account identity.
+pub fn youtube_login_present(cookies: &[YoutubeCookie]) -> bool {
+    cookies.iter().any(|c| !c.value.is_empty() && cookie_line(c).is_some()
+        && matches!(c.name.as_str(), "SID" | "SAPISID" | "__Secure-1PSID" | "__Secure-3PSID"))
+}
+
 fn cookie_line(cookie: &YoutubeCookie) -> Option<String> {
     if !youtube_domain(&cookie.domain) || cookie.name.is_empty() || !cookie.path.starts_with('/')
         || [&cookie.domain, &cookie.path, &cookie.name, &cookie.value].iter()
@@ -67,7 +73,7 @@ impl Core {
                 crate::Error::other("Could not read the YouTube browser session. Retry the download.")
             })?;
             let cookies: Vec<_> = cookies.into_iter().filter(|c| cookie_line(c).is_some()).collect();
-            let login = cookies.iter().any(|c| matches!(c.name.as_str(), "SID" | "SAPISID" | "__Secure-1PSID" | "__Secure-3PSID"));
+            let login = youtube_login_present(&cookies);
             (cookies.iter().filter_map(cookie_line).collect::<String>(), login, "native_browser")
         } else {
             let account = self.account.read().unwrap_or_else(|e| e.into_inner());
@@ -105,6 +111,18 @@ mod tests {
     fn cookie(domain: &str) -> YoutubeCookie {
         YoutubeCookie { domain: domain.into(), path: "/".into(), name: "SID".into(),
             value: "synthetic-secret".into(), secure: true, http_only: true, expires: None }
+    }
+    #[test]
+    fn login_presence_requires_a_valid_youtube_login_cookie() {
+        assert!(youtube_login_present(&[cookie(".youtube.com")]));
+        assert!(!youtube_login_present(&[cookie(".example.com")]));
+        let mut invalid = cookie(".youtube.com"); invalid.value = "bad\nvalue".into();
+        assert!(!youtube_login_present(&[invalid]));
+        let mut anonymous = cookie(".youtube.com"); anonymous.name = "PREF".into();
+        assert!(!youtube_login_present(&[anonymous]));
+        let mut empty = cookie(".youtube.com"); empty.value.clear();
+        assert!(!youtube_login_present(&[empty]));
+        assert!(!youtube_login_present(&[]));
     }
     #[test]
     fn live_reader_works_before_page_observation_and_refreshes_each_helper() {

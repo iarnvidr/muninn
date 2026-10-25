@@ -188,12 +188,24 @@ test('window shortcuts', () => {
   assert.equal(k('w', { metaKey: true }), 'close-tab');
   assert.equal(k('l', { ctrlKey: true }), 'focus-address');
   assert.equal(k('r', { metaKey: true }), 'reload');
+  assert.equal(k(',', { metaKey: true }), 'settings');
+  assert.equal(k(',', { ctrlKey: true }), 'settings');
+  assert.equal(k(',', {}), null);
+  assert.equal(k(',', { metaKey: true, shiftKey: true }), null);
   assert.equal(k('[', { metaKey: true }), 'back');
   assert.equal(k(']', { metaKey: true }), 'forward');
   assert.equal(k('[', { ctrlKey: true }), null);
   assert.equal(k('t', {}), null);
   assert.equal(k('t', { metaKey: true, altKey: true }), null);
   assert.equal(k('t', { metaKey: true, shiftKey: true }), null);
+});
+
+test('saved login is separate from the live subscription account observation', () => {
+  assert.match(L.youtubeSessionLabel({state:'present',value:'secret'}), /Saved YouTube login detected/);
+  assert.equal(L.observedAccountState(null).state,'not_observed');
+  assert.match(L.youtubeSessionLabel({state:'absent'}), /No saved YouTube login/);
+  assert.match(L.youtubeSessionLabel(null), /does not mean you are signed out/);
+  assert.doesNotMatch(L.youtubeSessionLabel({state:'present',value:'secret'}), /secret/);
 });
 
 test('YouTube-style player keys and protected editing/native contexts', () => {

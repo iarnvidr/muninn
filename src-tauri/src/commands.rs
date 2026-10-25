@@ -9,6 +9,21 @@ use tauri::{State, Webview};
 
 type Sh<'a> = State<'a, Arc<Shell>>;
 
+/// Read the shared native store off the UI thread; return only presence.
+#[tauri::command]
+pub async fn youtube_session_status(app: tauri::AppHandle, webview: Webview) -> Result<Value, String> {
+    if webview.label() != crate::shell::CHROME { return Err("restricted to the Muninn UI".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let reader = crate::shell::youtube_cookie_reader(app);
+        let state = match reader() {
+            Ok(cookies) if muninn_core::youtube_session::youtube_login_present(&cookies) => "present",
+            Ok(_) => "absent",
+            Err(_) => "unavailable",
+        };
+        json!({"state":state})
+    }).await.map_err(|_| "Could not check the saved session".into())
+}
+
 /// Call off the UI thread. Credentials never pass through a page command.
 pub(crate) fn read_youtube_cookies(webview: &Webview) -> Result<Vec<muninn_core::youtube_session::YoutubeCookie>, &'static str> {
     let cookies = webview.cookies().map_err(|_| "Could not read the YouTube session")?;

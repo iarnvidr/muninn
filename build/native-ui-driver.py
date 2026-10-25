@@ -40,6 +40,29 @@ def screenshot(name):
 try:
     session = send({'op':'youtube_cookie_fixture'})
     check('native downloader reads shared cookies before page observation and follows rotation/sign-out', session.get('ok') is True, session)
+    click('#sidebar [data-page="library"]')
+    ev("(()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}));return true})()")
+    check('Cmd comma fallback opens Settings',ev("window.Muninn.page")=='settings')
+    shortcut_tab=send({'op':'call','name':'tab_new','args':{'url':'https://www.youtube.com/'}})['id']
+    deadline=time.monotonic()+10
+    while str(ev("window.Muninn.tabs.active"))!=str(shortcut_tab):
+        if time.monotonic()>deadline: raise TimeoutError('shortcut fixture tab did not activate')
+        time.sleep(.1)
+    ev("(()=>{window.Muninn.page=null;window.Muninn.render();return true})()")
+    deadline=time.monotonic()+10
+    while True:
+        shortcut=send({'op':'settings_menu','tab_id':shortcut_tab})
+        if shortcut.get('ok'): break
+        if time.monotonic()>deadline: raise AssertionError(shortcut)
+        time.sleep(.2)
+    deadline=time.monotonic()+10
+    while ev("window.Muninn.page")!='settings':
+        if time.monotonic()>deadline: raise TimeoutError('native Settings action did not open Settings')
+        time.sleep(.1)
+    check('native Settings accelerator and menu action work with YouTube focus',shortcut.get('ok'),shortcut)
+    session_status=send({'op':'eval','target':'chrome','js':"return await window.Muninn.invoke('youtube_session_status');"})
+    check('session status IPC exposes only presence',isinstance(session_status,dict) and set(session_status)=={'state'} and session_status['state'] in ('present','absent','unavailable'),session_status)
+    send({'op':'call','name':'tab_close','args':{'id':shortcut_tab}})
     for page in ('settings','library'):
         click(f'#sidebar [data-page="{page}"]')
         state=ev("({pageOpen:document.querySelector('#app').dataset.pageOpen, selected:[...document.querySelectorAll('#sidebar [aria-current=\\\"page\\\"]')].map(x=>x.dataset.page), content:document.querySelector('#content').innerText.slice(0,120)})")
