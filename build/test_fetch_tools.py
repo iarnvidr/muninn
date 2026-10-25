@@ -121,7 +121,9 @@ class FetchToolsTests(unittest.TestCase):
             build.assert_called_once_with(tarball)
             self.assertEqual(get.call_count, 1)
             # A second run reuses the cached, re-verified build and does not rebuild.
-            with patch("fetch_tools.ffmpeg_lgpl.verify") as verify:
+            with patch("fetch_tools.os.access", return_value=True), patch("fetch_tools.ffmpeg_lgpl.verify") as verify:
+                cached = next(self.cache.glob("ffmpeg-lgpl-*"))
+                cached.chmod(0o755)
                 fetch_tools.build(out, self.ffmpeg_lock(tarball), self.cache, lipo=False, archs=("arm64",))
             verify.assert_called_once()
             build.assert_called_once()
@@ -130,6 +132,61 @@ class FetchToolsTests(unittest.TestCase):
         self.assertIn("--disable-gpl", notice)
         self.assertIn("--disable-nonfree", notice)
         self.assertNotIn("--enable-gpl", notice)
+
+    def test_ffmpeg_stale_cache_directory_is_removed_and_rebuilt_from_pinned_lgpl_source(self):
+        tarball = b"pinned source"
+        lock = self.ffmpeg_lock(tarball)
+        recipe = fetch_tools.sha256_of((Path(fetch_tools.__file__).parent / "ffmpeg_lgpl.py").read_bytes())[:16]
+        cached = self.cache / f"ffmpeg-lgpl-{lock['ffmpeg']['arm64']['sha256']}-{recipe}"
+        cached.mkdir(parents=True)
+        (cached / "old-extraction").write_text("stale")
+        good = b"\0--disable-gpl --disable-nonfree\0libavcodec license: LGPL version 2.1 or later\0"
+        with patch("fetch_tools.urllib.request.urlopen", return_value=FakeResponse(tarball)) as get, \
+             patch("fetch_tools.ffmpeg_lgpl.build", return_value=good) as build, \
+             patch("fetch_tools.ffmpeg_lgpl.verify") as verify:
+            result = fetch_tools.build_ffmpeg_lgpl(lock["ffmpeg"]["arm64"], self.cache)
+        self.assertEqual(result, good)
+        build.assert_called_once_with(tarball)
+        verify.assert_not_called()  # the rebuilt binary was already verified by the builder
+        self.assertEqual(get.call_count, 1)
+        self.assertTrue(cached.is_file())
+        self.assertEqual(cached.read_bytes(), good)
+        self.assertIn("--disable-gpl", good.decode())
+        self.assertNotIn("--enable-gpl", good.decode())
+
+    def test_ffmpeg_non_executable_cache_is_rebuilt_not_executed(self):
+        tarball = b"pinned source"
+        lock = self.ffmpeg_lock(tarball)
+        recipe = fetch_tools.sha256_of((Path(fetch_tools.__file__).parent / "ffmpeg_lgpl.py").read_bytes())[:16]
+        cached = self.cache / f"ffmpeg-lgpl-{lock['ffmpeg']['arm64']['sha256']}-{recipe}"
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b"stale")
+        cached.chmod(0o644)
+        good = b"\0--disable-gpl\0libavcodec license: LGPL version 2.1 or later\0"
+        with patch("fetch_tools.urllib.request.urlopen", return_value=FakeResponse(tarball)), \
+             patch("fetch_tools.ffmpeg_lgpl.build", return_value=good) as build, \
+             patch("fetch_tools.ffmpeg_lgpl.verify") as verify:
+            self.assertEqual(fetch_tools.build_ffmpeg_lgpl(lock["ffmpeg"]["arm64"], self.cache), good)
+        build.assert_called_once_with(tarball)
+        verify.assert_not_called()  # the rebuilt binary was already verified by the builder
+
+    def test_ffmpeg_exec_permission_error_diagnostics_do_not_swallow_failure(self):
+        tarball = b"pinned source"
+        lock = self.ffmpeg_lock(tarball)
+        recipe = fetch_tools.sha256_of((Path(fetch_tools.__file__).parent / "ffmpeg_lgpl.py").read_bytes())[:16]
+        cached = self.cache / f"ffmpeg-lgpl-{lock['ffmpeg']['arm64']['sha256']}-{recipe}"
+        self.cache.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(b"cached")
+        cached.chmod(0o755)
+        failure = PermissionError("hosted exec denied")
+        with patch("fetch_tools.os.access", return_value=True), patch("fetch_tools.ffmpeg_lgpl.verify", side_effect=failure), patch("fetch_tools.ffmpeg_lgpl.build", return_value=b"binary"), patch("fetch_tools.urllib.request.urlopen", return_value=FakeResponse(tarball)), patch("sys.stderr") as stderr:
+            with self.assertRaises(PermissionError) as caught:
+                fetch_tools.build_ffmpeg_lgpl(lock["ffmpeg"]["arm64"], self.cache)
+        self.assertIs(caught.exception, failure)
+        diagnostic = "".join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertIn("FFmpeg exec diagnostic", diagnostic)
+        self.assertIn(repr(str(cached)), diagnostic)
+        self.assertIn("X_OK=True", diagnostic)
 
     def test_ffmpeg_tarball_checksum_mismatch_builds_nothing(self):
         with patch("fetch_tools.urllib.request.urlopen", return_value=FakeResponse(b"tampered")), \
