@@ -53,6 +53,12 @@ try:
             layout=ev("(()=>{const f=document.querySelector('.settings-feedback'), n=document.querySelector('#set-favourite_carousel_days');return {feedbackPosition:getComputedStyle(f).position,numberWidth:n.getBoundingClientRect().width,channel:document.querySelector('#update-channel').value}})()")
             check('settings feedback stays in flow and numeric fields are bounded',layout['feedbackPosition'] not in ('sticky','fixed') and layout['numberWidth']<=160 and layout['channel']=='stable',layout)
             screenshot('settings')
+            for theme in ('classified','classified_light','system'):
+                ev(f"(()=>{{window.Muninn.settings.theme={json.dumps(theme)};window.Muninn.applyAppearance();const n=document.querySelector('#set-favourite_carousel_days'),v=document.querySelector('#view-internal');v.scrollTop+=n.getBoundingClientRect().top-v.getBoundingClientRect().top-8;return true}})()")
+                hit=ev("(()=>{const n=document.querySelector('#set-favourite_carousel_days'),b=n.getBoundingClientRect(),hit=document.elementFromPoint(b.left+b.width/2,b.top+8);return {uncovered:hit===n,covering:hit?.className}})()")
+                check('scrolled settings input is not covered '+theme,hit['uncovered'],hit)
+                screenshot('settings-scroll-'+theme)
+            ev("(()=>{document.querySelector('#view-internal').scrollTop=0;return true})()")
     hover=ev("(()=>{const e=document.querySelector('#sidebar [data-page=\\\"settings\\\"]');if(!e)throw Error('missing settings');const before=e.getAttribute('aria-current');e.dispatchEvent(new MouseEvent('mouseenter',{bubbles:false,clientX:4,clientY:4}));return {before,after:e.getAttribute('aria-current'),className:e.className}})()")
     check('synthetic OS-hover does not select settings',hover['before']==hover['after'],hover)
     for expanded in (False, True):
