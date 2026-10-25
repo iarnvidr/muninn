@@ -75,7 +75,7 @@ impl Core {
             (text, false, "observation")
         };
         // Presence only, never names/values/identifiers or the cookie file path.
-        self.log_event("info", "youtube.session", serde_json::json!({"source":source,"jar_supplied":!text.is_empty(),"login_present":login_cookies}));
+        self.log_event("info", "youtube.session", serde_json::json!({"source":source,"jar_supplied":!text.is_empty(),"login_present":login_cookies,"helper_version":self.tools().ytdlp.version}));
         if text.is_empty() { return Ok(None); }
         let directory = std::env::temp_dir().join(format!("muninn-session-{}", uuid::Uuid::new_v4()));
         let mut builder = std::fs::DirBuilder::new();

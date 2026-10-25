@@ -87,7 +87,7 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                 if std::time::Instant::now() > deadline { break None; }
                 std::thread::sleep(Duration::from_millis(50));
             };
-            let result = (|| -> Result<bool, &'static str> {
+            let result = (|| -> Result<Value, &'static str> {
                 let view = webview.as_ref().ok_or("fixture webview missing")?;
                 let cookie = tauri::webview::Cookie::build(("MUNINN_NATIVE_SESSION_TEST", "synthetic-only"))
                     .domain(".youtube.com").path("/").secure(true).http_only(true).build();
@@ -106,10 +106,10 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                 let _ = view.delete_cookie(cookie);
                 let cleared = !reader().map_err(|_| "native sign-out reread failed")?.iter().any(|cookie|
                     cookie.name == "MUNINN_NATIVE_SESSION_TEST");
-                Ok(initial && rotated && cleared)
+                Ok(json!({"ok":initial && rotated && cleared,"before_observation":initial,"after_rotation":rotated,"after_deletion":cleared}))
             })();
             shell.close_tab(tab);
-            respond(d, id, &match result { Ok(ok) => json!({"ok":ok}), Err(error) => json!({"ok":false,"error":error}) });
+            respond(d, id, &match result { Ok(result) => result, Err(error) => json!({"ok":false,"error":error}) });
         }
         "state" => {
             let mut state = shell.tabs_state();
