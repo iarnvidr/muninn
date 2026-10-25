@@ -1,5 +1,20 @@
 # Owner production release gate
 
+## Ad-hoc distribution
+
+An Apple Developer account is optional for distributing a GitHub release. Select
+`apple_signing=ad-hoc` explicitly to retain the native build's ad-hoc signatures
+and skip Developer ID signing/notarization. The workflow still verifies the app's
+code signatures and signs/verifies the updater archive against the pinned public
+key. Protected main, matching source version/tag and environment approval still
+apply. `developer-id` remains the default and requires the Apple secrets below.
+
+Ad-hoc release notes must disclose that the app is not notarized and macOS may
+block the initial launch. Use a GitHub prerelease while the owner Mac acceptance
+and full notice/source review below remain outstanding; it must not be described
+as accepted production software. The prerelease is excluded from GitHub's
+`releases/latest` endpoint, so it does not activate the stable updater feed.
+
 This is an owner acceptance checklist for the exact protected-main commit intended for a production macOS release. Record commit, macOS version/hardware, and evidence. A CI build, CI launch smoke, synthetic updater artifacts, or this checklist text are not owner-live acceptance. No release has been published; current version is `0.2.14-preview.4`, and intended `0.2.14` is not yet bumped/tagged.
 
 ## Before dispatch

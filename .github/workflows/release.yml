@@ -10,6 +10,14 @@ on:
         description: Existing tag (for example v1.2.3); never created by this workflow
         required: true
         type: string
+      apple_signing:
+        description: Apple signing mode (ad-hoc releases are not notarized)
+        required: true
+        default: developer-id
+        type: choice
+        options:
+          - developer-id
+          - ad-hoc
       publish:
         description: Publish reviewed assets to the existing GitHub Release (approval required)
         required: true
@@ -54,6 +62,7 @@ jobs:
           test "$INPUT_TAG" = "v$INPUT_VERSION"
           python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"build"); from updater_release import stable; assert stable(sys.argv[1])' "$version"
       - name: Fail-closed Apple signing credential preflight
+        if: inputs.apple_signing == 'developer-id'
         env:
           APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
           APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
@@ -73,6 +82,7 @@ jobs:
       - name: App launch and localhost health smoke
         run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"
       - name: Sign, notarize, staple and assess production app
+        if: inputs.apple_signing == 'developer-id'
         env:
           APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
           APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
@@ -83,6 +93,12 @@ jobs:
         run: |
           set -euo pipefail
           bash build/sign-notarize-macos.sh "$RUNNER_TEMP/muninn/Muninn.app" > "$RUNNER_TEMP/muninn/signing-notarization-evidence.txt"
+      - name: Record explicitly selected ad-hoc signing
+        if: inputs.apple_signing == 'ad-hoc'
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict "$RUNNER_TEMP/muninn/Muninn.app"
+          printf '%s\n' 'Apple signing: ad-hoc. No Developer ID identity, notarization or Gatekeeper acceptance is claimed.' > "$RUNNER_TEMP/muninn/signing-notarization-evidence.txt"
       - name: Create final Tauri-compatible archive, sign and verify
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -99,6 +115,7 @@ jobs:
           python3 build/updater_release.py check-version "$bundle_version" "$INPUT_VERSION"
           rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig
           tar -czf Muninn.app.tar.gz Muninn.app
+          ditto -c -k --sequesterRsrc --keepParent Muninn.app "Muninn_${INPUT_VERSION}_macos-arm64.zip"
           npx --yes @tauri-apps/cli@2.10.1 signer sign Muninn.app.tar.gz
           test -s Muninn.app.tar.gz.sig
           python3 - "$GITHUB_WORKSPACE/src-tauri/tauri.conf.json" <<'PY'
@@ -110,7 +127,7 @@ jobs:
           PY
           minisign -Vm Muninn.app.tar.gz -p updater.pub -x Muninn.app.tar.gz.sig.minisig
           echo "version=$INPUT_VERSION tag=$INPUT_TAG commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" > release-review.txt
-          shasum -a 256 Muninn.app.tar.gz Muninn.app.tar.gz.sig > SHA256SUMS
+          shasum -a 256 Muninn.app.tar.gz Muninn.app.tar.gz.sig "Muninn_${INPUT_VERSION}_macos-arm64.zip" > SHA256SUMS
 
       - name: Prepare corresponding source archives, manifest and recipe
         run: python3 build/release_sources.py prepare "$RUNNER_TEMP/muninn/corresponding-source"
@@ -129,6 +146,7 @@ jobs:
           path: |
             ${{ runner.temp }}/muninn/Muninn.app.tar.gz
             ${{ runner.temp }}/muninn/Muninn.app.tar.gz.sig
+            ${{ runner.temp }}/muninn/Muninn_*_macos-arm64.zip
             ${{ runner.temp }}/muninn/latest.json
             ${{ runner.temp }}/muninn/SHA256SUMS
             ${{ runner.temp }}/muninn/release-review.txt
@@ -153,6 +171,7 @@ jobs:
       - name: Upload assets to existing GitHub Release only
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -187,7 +206,7 @@ jobs:
               raise SystemExit("No corresponding-source files found")
           manifest.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n")
           PY
-          assets=(release-assets/Muninn.app.tar.gz release-assets/Muninn.app.tar.gz.sig release-assets/latest.json release-assets/SHA256SUMS release-assets/signing-notarization-evidence.txt "$source_manifest")
+          assets=(release-assets/Muninn.app.tar.gz release-assets/Muninn.app.tar.gz.sig release-assets/Muninn_*_macos-arm64.zip release-assets/latest.json release-assets/SHA256SUMS release-assets/signing-notarization-evidence.txt "$source_manifest")
           for file in "${source_files[@]}"; do
             relative=${file#"$source_root"/}
             digest=$(printf '%s' "$relative" | shasum -a 256 | cut -c1-12)

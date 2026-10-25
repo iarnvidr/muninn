@@ -143,14 +143,13 @@ class NativeSmokeWiringTests(unittest.TestCase):
         self.assertIn("focusedTab", decoded)
         self.assertIsNone(decoded["focusedTab"])
 
-    def test_preview_version_agrees_across_metadata_and_lockfile(self):
+    def test_source_version_agrees_across_metadata_and_lockfile(self):
         import json
         import tomllib
-        version = "0.2.14-preview.4"
         config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text())
         cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())
         lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
-        self.assertEqual(cargo["workspace"]["package"]["version"], version)
+        version = cargo["workspace"]["package"]["version"]
         self.assertEqual(config["version"], version)
         for package in lock["package"]:
             if package["name"] in {"muninn", "muninn-core"}:
