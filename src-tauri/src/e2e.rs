@@ -77,6 +77,30 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
     let u64_of = |k: &str| cmd["args"][k].as_u64().unwrap_or(0);
     let str_of = |k: &str| cmd["args"][k].as_str().unwrap_or("").to_string();
     match cmd["op"].as_str().unwrap_or("") {
+        "youtube_cookie_fixture" => {
+            // The real persistent YouTube WKWebView store, with synthetic
+            // credentials only. Read on this worker, never the UI thread.
+            let tab = shell.new_tab(Some("https://www.youtube.com/"));
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let webview = loop {
+                if let Some(view) = shell.app.get_webview(&label(tab)) { break Some(view); }
+                if std::time::Instant::now() > deadline { break None; }
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            let result = (|| -> Result<bool, &'static str> {
+                let view = webview.as_ref().ok_or("fixture webview missing")?;
+                let cookie = tauri::webview::Cookie::build(("MUNINN_NATIVE_SESSION_TEST", "synthetic-only"))
+                    .domain(".youtube.com").path("/").secure(true).http_only(true).build();
+                view.set_cookie(cookie.clone()).map_err(|_| "fixture cookie setup failed")?;
+                let cookies = crate::commands::read_youtube_cookies(view);
+                let _ = view.delete_cookie(cookie);
+                Ok(cookies?.iter().any(|cookie| cookie.name == "MUNINN_NATIVE_SESSION_TEST"
+                    && cookie.value == "synthetic-only" && cookie.secure && cookie.http_only
+                    && cookie.path == "/" && cookie.domain == ".youtube.com"))
+            })();
+            shell.close_tab(tab);
+            respond(d, id, &match result { Ok(ok) => json!({"ok":ok}), Err(error) => json!({"ok":false,"error":error}) });
+        }
         "state" => {
             let mut state = shell.tabs_state();
             state["process_id"] = json!(std::process::id());

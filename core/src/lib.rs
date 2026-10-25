@@ -16,6 +16,7 @@ pub mod channel_catalog;
 mod offline;
 mod featured;
 mod account;
+pub mod youtube_session;
 pub mod cli;
 pub mod capture;
 pub mod ca;

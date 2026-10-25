@@ -681,6 +681,9 @@ impl Core {
         let bin = tools.ytdlp.path.clone().ok_or_else(|| Failure::new(FailureReason::ToolsPending, "yt-dlp is not installed"))?;
         let mut args: Vec<String> =
             ["--ignore-config", "--no-playlist", "--no-warnings", "-f", selector, "-J"].iter().map(|s| s.to_string()).collect();
+        let cookies = self.youtube_cookie_file()
+            .map_err(|_| Failure::new(FailureReason::HelperExit, "Could not prepare the YouTube session"))?;
+        if let Some(jar) = &cookies { args.extend(jar.args()); }
         if let Some(dir) = tools.ffmpeg_dir() {
             args.push("--ffmpeg-location".into());
             args.push(dir.display().to_string());

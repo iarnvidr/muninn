@@ -207,8 +207,11 @@ async fn playlist_metadata(State(core): S, Query(q): Query<HashMap<String,String
     let index = q.get("index").and_then(|s| s.parse::<usize>().ok()).filter(|i| *i > 0);
     let bin = crate::ytdlp::find_ytdlp(&core.paths.bin_dir, &core.tool_dirs).ok_or_else(|| Error::bad("yt-dlp is not installed"))?;
     let url = format!("https://www.youtube.com/playlist?list={list_id}");
+    let cookies = core.youtube_cookie_file()?;
     let output = tokio::time::timeout(std::time::Duration::from_secs(20), tokio::process::Command::new(bin)
+        .args(cookies.as_ref().map(|jar| jar.args()).into_iter().flatten())
         .args(["--ignore-config", "--flat-playlist", "--dump-single-json", "--playlist-end", "200", "--no-warnings", "--", &url])
+        .kill_on_drop(true)
         .env("PATH", crate::ytdlp::search_path()).stdin(std::process::Stdio::null()).output())
         .await.map_err(|_| Error::bad("Playlist lookup timed out"))?.map_err(|e| Error::other(format!("Could not run yt-dlp: {e}")))?;
     if !output.status.success() { return Err(Error::bad("yt-dlp could not read playlist metadata").into()); }
