@@ -8,7 +8,9 @@ detached `.sig` is a CI review artifact rather than another release download.
 Checksums and signing/review evidence also remain in CI artifacts. Corresponding
 source archives, their manifest, build recipe and notices are accessible inside
 the DMG's `Corresponding Source` folder. Verify the mounted DMG, including those
-source digests, before publication. The initial `0.2.14` release is unchanged.
+source digests, before publication. The protected legacy repack workflow wraps
+the exact published `0.2.14` app and sources in a DMG without replacing its updater
+archive, manifest or tag. Verify that DMG before removing redundant old assets.
 
 ## Ad-hoc distribution
 
@@ -25,14 +27,14 @@ and full notice/source review below remain outstanding; it must not be described
 as accepted production software. The prerelease is excluded from GitHub's
 `releases/latest` endpoint, so it does not activate the stable updater feed.
 
-This is an owner acceptance checklist for the exact protected-main commit intended for a production macOS release. Record commit, macOS version/hardware, and evidence. A CI build, CI launch smoke, synthetic updater artifacts, or this checklist text are not owner-live acceptance. No release has been published; current version is `0.2.14-preview.4`, and intended `0.2.14` is not yet bumped/tagged.
+This is an owner acceptance checklist for the exact protected-main commit intended for a production macOS release. Record commit, macOS version/hardware, and evidence. A CI build, CI launch smoke, synthetic updater artifacts, or this checklist text are not owner-live acceptance. Version `0.2.14` was published as a non-notarized prerelease; `0.2.15` prepares the browser-session fix. Production acceptance remains outstanding.
 
 ## Before dispatch
 
 - [ ] Owner confirms `main` protection via active allowlist/ruleset (legacy branch-protection API 404 does not prove unprotected).
 - [ ] `muninn-release` environment has required reviewer `efthomsen` and a deployment branch rule limited to protected `main`.
 - [ ] Account holder provisions Developer ID Application signing certificate and App Store Connect notarization API key from the active Apple Developer account into these exact environment secrets: `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`, `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_NOTARY_API_KEY_ID`, `APPLE_NOTARY_API_ISSUER_ID`, `APPLE_NOTARY_API_PRIVATE_KEY`. No actual Apple keys are included/provided here. Existing updater secrets are separate: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-- [ ] Owner updates Cargo/Tauri version to stable `0.2.14`, reviews commit on protected main, creates matching `v0.2.14` tag and GitHub Release. Workflow requires an existing tag/Release and never creates them.
+- [ ] Cargo/Tauri versions match the intended release; owner reviews the protected-main commit and creates its matching tag and GitHub Release. Workflow requires an existing tag/Release and never creates them.
 - [ ] Complete target-specific Rust and Deno notice audit; inspect generated corresponding-source bundle and confirm exact licenses, notices, build recipe and distribution method. See [PUBLICATION.md](PUBLICATION.md).
 
 ## Workflow preparation evidence
