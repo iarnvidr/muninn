@@ -105,7 +105,7 @@ class ProductionReleaseContract(unittest.TestCase):
             self.assertIn('No corresponding-source files found', rejected.stderr)
 
     def test_hosted_checks_run_contract_test(self):
-        self.assertIn("python3 -m unittest -v discover -s build -p 'test_release_production_contract.py'", self.checks)
+        self.assertIn("python3 -m unittest discover -s build -p 'test_release_production_contract.py' -v", self.checks)
 
 
 if __name__ == "__main__":
