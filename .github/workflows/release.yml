@@ -182,7 +182,7 @@ jobs:
                               "sha256": hashlib.sha256(source.read_bytes()).hexdigest()})
           if not records:
               raise SystemExit("No corresponding-source files found")
-          manifest.write_text(json.dumps(records, indent=2, sort_keys=True) + "\\n")
+          manifest.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n")
           PY
           assets=(release-assets/Muninn.app.tar.gz release-assets/Muninn.app.tar.gz.sig release-assets/latest.json release-assets/SHA256SUMS release-assets/signing-notarization-evidence.txt "$source_manifest")
           for file in "${source_files[@]}"; do

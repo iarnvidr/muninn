@@ -1,4 +1,6 @@
 """Static fail-closed checks for the protected production release workflow."""
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -76,6 +78,18 @@ class ProductionReleaseContract(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             uploaded = [Path(line) for line in completed.stdout.splitlines() if Path(line).name.startswith('source-') and Path(line).exists() and Path(line).name != 'source-assets-manifest.json']
             self.assertEqual(len(uploaded), 2)
+            manifest_path = next(Path(line) for line in completed.stdout.splitlines() if Path(line).name == 'source-assets-manifest.json')
+            manifest_records = json.loads(manifest_path.read_text())
+            expected = {
+                'nested one/NOTICE': ('notice a',),
+                'nested two/NOTICE': ('notice b',),
+            }
+            self.assertEqual({record['original_path'] for record in manifest_records}, set(expected))
+            self.assertEqual(len({record['asset_name'] for record in manifest_records}), 2)
+            for record in manifest_records:
+                content = expected[record['original_path']][0].encode()
+                self.assertEqual(record['asset_name'], f"source-{hashlib.sha256(record['original_path'].encode()).hexdigest()[:12]}-NOTICE")
+                self.assertEqual(record['sha256'], hashlib.sha256(content).hexdigest())
             self.assertEqual(len({p.name for p in uploaded}), 2)
             self.assertTrue(all('#' not in p.name and p.is_file() for p in uploaded))
             # The workflow removes its temporary staging directory on exit; verify manifest construction contract too.
