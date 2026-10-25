@@ -121,34 +121,6 @@ impl Tab {
         }
     }
 
-    /// The logical destination this tab shows right now (see [`loc_key`]).
-    pub fn dest_key(&self) -> String {
-        loc_key(self.loc())
-    }
-
-    /// Where Back would go, without moving.
-    pub fn peek_back(&self) -> Option<&Loc> {
-        self.idx.checked_sub(1).and_then(|i| self.hist.get(i))
-    }
-
-    /// Where Forward would go, without moving.
-    pub fn peek_forward(&self) -> Option<&Loc> {
-        self.hist.get(self.idx + 1)
-    }
-
-    /// True when `url` is a page this tab was just turned away from (see `bounce`) and
-    /// the report must be ignored. Any other report ends the bounce.
-    pub fn suppress_report(&mut self, url: &str) -> bool {
-        match &self.bounce {
-            Some(k) if *k == url_key(url) => true,
-            Some(_) => {
-                self.bounce = None;
-                false
-            }
-            None => false,
-        }
-    }
-
     pub fn can_back(&self) -> bool {
         self.idx > 0
     }
