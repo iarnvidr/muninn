@@ -22,6 +22,12 @@ test('native player fixture uses real API schemas, valid ids, blob media, and ob
   assert.match(fixture, /M\.api = async function fixtureApi/);
   assert.match(fixture, /\/api\/watch\//);
   assert.match(fixture, /\/api\/playlist\?/);
+  assert.match(fixture, /new URL\(path, M\.origin\)/, 'fixture must parse the real playlist request query');
+  assert.match(fixture, /searchParams\.get\('video'\)/);
+  assert.match(fixture, /queueIds\.indexOf\(requestedVideo\)/);
+  assert.match(fixture, /active_index: activeIndex/, 'active_index must be the matching zero-based queue index');
+  assert.match(fixture, /second-video queue request returns zero-based index 1/);
+  assert.match(fixture, /third-video queue request returns zero-based index 2/);
   assert.match(fixture, /\/api\/video\/\' \+ activeId/);
   assert.match(fixture, /playback:\{ready:true,state:'ready',kind:'file'/);
   assert.match(fixture, /url_path:'\/media\/native-smoke-'\+activeId/);
