@@ -175,6 +175,7 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/tools/ytdlp/install", post(ytdlp_install))
         .route("/api/tools/ytdlp/update", post(ytdlp_update))
         .route("/api/watch/{id}", get(watch_status).post(watch_open))
+        .route("/api/playlist", get(playlist_metadata))
         .route("/api/video/{id}/comments/more", post(comments_more))
         .route("/api/video/{id}/comments/{comment}/replies", post(comment_replies))
         .route("/api/proxy", get(proxy_info))
@@ -198,6 +199,23 @@ pub fn router(core: Arc<Core>) -> Router {
 }
 
 // --- handlers: open --------------------------------------------------------------------------------
+
+async fn playlist_metadata(State(core): S, Query(q): Query<HashMap<String,String>>) -> ApiResult {
+    let list_id = q.get("list").map(String::as_str).unwrap_or("");
+    if !crate::playlist::valid_list_id(list_id) { return Err(Error::bad("Invalid playlist id").into()); }
+    let current = q.get("video").filter(|v| crate::util::valid_video_id(v)).map(String::as_str);
+    let index = q.get("index").and_then(|s| s.parse::<usize>().ok()).filter(|i| *i > 0);
+    let bin = crate::ytdlp::find_ytdlp(&core.paths.bin_dir, &core.tool_dirs).ok_or_else(|| Error::bad("yt-dlp is not installed"))?;
+    let url = format!("https://www.youtube.com/playlist?list={list_id}");
+    let output = tokio::time::timeout(std::time::Duration::from_secs(20), tokio::process::Command::new(bin)
+        .args(["--ignore-config", "--flat-playlist", "--dump-single-json", "--playlist-end", "200", "--no-warnings", "--", &url])
+        .env("PATH", crate::ytdlp::search_path()).stdin(std::process::Stdio::null()).output())
+        .await.map_err(|_| Error::bad("Playlist lookup timed out"))?.map_err(|e| Error::other(format!("Could not run yt-dlp: {e}")))?;
+    if !output.status.success() { return Err(Error::bad("yt-dlp could not read playlist metadata").into()); }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let playlist = crate::playlist::parse_flat_json(&raw, list_id, current, index).map_err(Error::bad)?;
+    Ok(Json(serde_json::to_value(playlist).unwrap_or_else(|_| json!({}))) )
+}
 
 async fn health() -> Json<Value> {
     Json(json!({"ok": true, "app": "muninn", "version": crate::engine::VERSION}))

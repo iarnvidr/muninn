@@ -36,8 +36,10 @@ jobs:
       - name: Rust tests
         run: cargo test --locked --workspace
       - name: JavaScript tests
-        run: node --test src-tauri/test/*.test.js ui/test/*.test.js
+        run: node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js
       - name: Packaging tests
-        run: python3 -m unittest discover -s build -p 'test_*.py' -v
+        run: |
+          python3 -m unittest discover -s build -p 'test_*.py' -v
+          python3 build/updater-smoke/test_protocol.py
       - name: Publication boundary checks
         run: python3 build/check_publication.py

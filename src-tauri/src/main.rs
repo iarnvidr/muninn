@@ -13,6 +13,7 @@ mod shell;
 mod trust;
 #[cfg(target_os = "macos")]
 mod trust_mac;
+mod updater;
 
 use muninn_core::{CoreConfig, Service};
 use shell::Shell;
@@ -24,7 +25,11 @@ fn bundled_bin(app: &tauri::App) -> Option<std::path::PathBuf> {
     if let Some(p) = std::env::var_os("MUNINN_BUNDLED_BIN") {
         return Some(p.into());
     }
-    app.path().resource_dir().ok().map(|d| d.join("bin")).filter(|d| d.is_dir())
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("bin"))
+        .filter(|d| d.is_dir())
 }
 
 /// The macOS menu bar: the standard App/Edit/Window menus plus the browser shortcuts, which
@@ -32,20 +37,55 @@ fn bundled_bin(app: &tauri::App) -> Option<std::path::PathBuf> {
 #[cfg(target_os = "macos")]
 fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-    let item = |id: &str, text: &str, accel: &str| MenuItemBuilder::with_id(id, text).accelerator(accel).build(app);
-    let app_menu = SubmenuBuilder::new(app, "Muninn").about(None).separator().services().separator().hide().hide_others().show_all().separator().quit().build()?;
-    let file = SubmenuBuilder::new(app, "File").item(&item("new_tab", "New Tab", "CmdOrCtrl+T")?).item(&item("close_tab", "Close Tab", "CmdOrCtrl+W")?).build()?;
-    let edit = SubmenuBuilder::new(app, "Edit").undo().redo().separator().cut().copy().paste().select_all().build()?;
+    let item = |id: &str, text: &str, accel: &str| {
+        MenuItemBuilder::with_id(id, text)
+            .accelerator(accel)
+            .build(app)
+    };
+    let app_menu = SubmenuBuilder::new(app, "Muninn")
+        .about(None)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+    let file = SubmenuBuilder::new(app, "File")
+        .item(&item("new_tab", "New Tab", "CmdOrCtrl+T")?)
+        .item(&item("close_tab", "Close Tab", "CmdOrCtrl+W")?)
+        .build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
     let view = SubmenuBuilder::new(app, "View")
         .item(&item("reload", "Reload", "CmdOrCtrl+R")?)
         .item(&item("focus_address", "Focus Address Bar", "CmdOrCtrl+L")?)
         .build()?;
-    let history = SubmenuBuilder::new(app, "History").item(&item("back", "Back", "CmdOrCtrl+[")?).item(&item("forward", "Forward", "CmdOrCtrl+]")?).build()?;
-    let window = SubmenuBuilder::new(app, "Window").minimize().close_window().build()?;
-    let menu = MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &history, &window]).build()?;
+    let history = SubmenuBuilder::new(app, "History")
+        .item(&item("back", "Back", "CmdOrCtrl+[")?)
+        .item(&item("forward", "Forward", "CmdOrCtrl+]")?)
+        .build()?;
+    let window = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .close_window()
+        .build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&app_menu, &file, &edit, &view, &history, &window])
+        .build()?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
-        let Some(shell) = app.try_state::<Arc<Shell>>() else { return };
+        let Some(shell) = app.try_state::<Arc<Shell>>() else {
+            return;
+        };
         let shell = shell.inner().clone();
         let active = shell.tabs_state()["active"].as_u64();
         match (event.id().as_ref(), active) {
@@ -81,10 +121,14 @@ fn show_main(app: &tauri::AppHandle) {
 struct PendingAppLinks(std::sync::Mutex<Vec<tauri::Url>>);
 
 fn flush_app_links(app: &tauri::AppHandle) {
-    let Some(shell) = app.try_state::<Arc<Shell>>() else { return };
+    let Some(shell) = app.try_state::<Arc<Shell>>() else {
+        return;
+    };
     let pending = app.state::<PendingAppLinks>();
     let targets = std::mem::take(&mut *pending.0.lock().unwrap_or_else(|e| e.into_inner()));
-    if targets.is_empty() { return; }
+    if targets.is_empty() {
+        return;
+    }
     for target in targets {
         shell.open_from_link(&target);
     }
@@ -92,13 +136,20 @@ fn flush_app_links(app: &tauri::AppHandle) {
 }
 
 fn open_app_links(app: &tauri::AppHandle, links: impl IntoIterator<Item = impl AsRef<str>>) {
-    let targets: Vec<_> = links.into_iter().filter_map(|link| deep_link::youtube_target(link.as_ref())).collect();
+    let targets: Vec<_> = links
+        .into_iter()
+        .filter_map(|link| deep_link::youtube_target(link.as_ref()))
+        .collect();
     if targets.is_empty() {
         return;
     }
     // Opened events can precede Ready/setup on macOS. Keep requests until the
     // shell exists, then let its retained handoff revision reach the chrome.
-    app.state::<PendingAppLinks>().0.lock().unwrap_or_else(|e| e.into_inner()).extend(targets);
+    app.state::<PendingAppLinks>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .extend(targets);
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || flush_app_links(&handle));
 }
@@ -114,6 +165,8 @@ fn main() {
     }
     let app = tauri::Builder::default()
         .manage(PendingAppLinks::default())
+        .manage(Arc::new(updater::UpdaterState::default()))
+        .plugin(updater::plugin_builder())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             open_app_links(app, args.iter().skip(1));
             show_main(app);
@@ -141,15 +194,28 @@ fn main() {
             commands::page_open_video,
             commands::page_state,
             commands::e2e_result,
+            updater::updater_status,
+            updater::updater_check,
+            updater::updater_download,
+            updater::updater_install,
+            updater::updater_cancel,
         ])
         .setup(|app| {
             // ~/Library/Application Support/io.github.iarnvidr.muninn (follows the bundle id)
             let data_dir = app.path().app_data_dir()?;
             let service = Arc::new(Service::start(
-                CoreConfig { data_dir, bundled_bin: bundled_bin(app), ..CoreConfig::default() },
+                CoreConfig {
+                    data_dir,
+                    bundled_bin: bundled_bin(app),
+                    ..CoreConfig::default()
+                },
                 0,
             )?);
-            let window = tauri::window::WindowBuilder::new(app, shell::MAIN).title("Muninn").inner_size(1360.0, 860.0).min_inner_size(900.0, 600.0).build()?;
+            let window = tauri::window::WindowBuilder::new(app, shell::MAIN)
+                .title("Muninn")
+                .inner_size(1360.0, 860.0)
+                .min_inner_size(900.0, 600.0)
+                .build()?;
             let handle = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {

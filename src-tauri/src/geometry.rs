@@ -17,7 +17,9 @@ pub struct Bounds {
 
 impl Bounds {
     fn finite(&self) -> bool {
-        [self.x, self.y, self.w, self.h].iter().all(|n| n.is_finite())
+        [self.x, self.y, self.w, self.h]
+            .iter()
+            .all(|n| n.is_finite())
     }
 }
 
@@ -42,7 +44,12 @@ fn valid_extent(n: Option<f64>) -> Option<f64> {
 /// `chrome` is the chrome web view's own logical bounds (origin and size) when known.
 /// `viewport_w`/`viewport_h` are the chrome's CSS viewport (`innerWidth`/`innerHeight`).
 /// Returns `None` for unusable input (non-finite or negative values).
-pub fn map_viewport_rect(css: Bounds, viewport_w: Option<f64>, viewport_h: Option<f64>, chrome: Option<Bounds>) -> Option<Mapped> {
+pub fn map_viewport_rect(
+    css: Bounds,
+    viewport_w: Option<f64>,
+    viewport_h: Option<f64>,
+    chrome: Option<Bounds>,
+) -> Option<Mapped> {
     if !css.finite() || css.w < 0.0 || css.h < 0.0 {
         return None;
     }
@@ -83,7 +90,11 @@ pub fn map_viewport_rect(css: Bounds, viewport_w: Option<f64>, viewport_h: Optio
         w: (right - left).max(0.0) * scale,
         h: (bottom - top).max(0.0) * scale,
     };
-    Some(Mapped { rect, scale, clamped })
+    Some(Mapped {
+        rect,
+        scale,
+        clamped,
+    })
 }
 
 #[cfg(test)]
@@ -94,13 +105,23 @@ mod tests {
         (a - b).abs() < 0.01
     }
     fn chrome(w: f64, h: f64) -> Option<Bounds> {
-        Some(Bounds { x: 0.0, y: 0.0, w, h })
+        Some(Bounds {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+        })
     }
 
     #[test]
     fn observed_1360_viewport_has_no_28px_overflow() {
         // Pane below 34px tabs + 38px toolbar in a 1360x832 CSS viewport, sidebar 224px.
-        let css = Bounds { x: 224.0, y: 72.0, w: 1136.0, h: 760.0 };
+        let css = Bounds {
+            x: 224.0,
+            y: 72.0,
+            w: 1136.0,
+            h: 760.0,
+        };
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), chrome(1360.0, 832.0)).unwrap();
         assert!(close(m.rect.y, 72.0) && close(m.rect.h, 760.0));
         assert!(close(m.rect.y + m.rect.h, 832.0));
@@ -112,16 +133,30 @@ mod tests {
     fn title_bar_height_in_window_inner_size_is_ignored() {
         // The old code divided a 860pt window height by the 832px viewport (scale_y 1.0337).
         // The chrome web view reports 1360 wide, so the scale is 1 whatever its height says.
-        let css = Bounds { x: 224.0, y: 72.4, w: 1136.0, h: 759.6 };
+        let css = Bounds {
+            x: 224.0,
+            y: 72.4,
+            w: 1136.0,
+            h: 759.6,
+        };
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), chrome(1360.0, 860.0)).unwrap();
         assert!(close(m.rect.y, 72.4));
-        assert!(close(m.rect.y + m.rect.h, 832.0), "bottom {}", m.rect.y + m.rect.h);
+        assert!(
+            close(m.rect.y + m.rect.h, 832.0),
+            "bottom {}",
+            m.rect.y + m.rect.h
+        );
         assert!(close(m.scale, 1.0));
     }
 
     #[test]
     fn observed_1512_viewport() {
-        let css = Bounds { x: 52.0, y: 72.0, w: 1460.0, h: 848.0 };
+        let css = Bounds {
+            x: 52.0,
+            y: 72.0,
+            w: 1460.0,
+            h: 848.0,
+        };
         let m = map_viewport_rect(css, Some(1512.0), Some(920.0), chrome(1512.0, 948.0)).unwrap();
         assert!(close(m.rect.y, 72.0) && close(m.rect.y + m.rect.h, 920.0));
         assert!(close(m.rect.x + m.rect.w, 1512.0));
@@ -130,10 +165,18 @@ mod tests {
     #[test]
     fn resize_transient_is_uniform_and_stays_inside_the_pane() {
         // Chrome already shrank to 1224 wide while the page still reports 1360 CSS px.
-        let css = Bounds { x: 224.0, y: 72.0, w: 1136.0, h: 760.0 };
+        let css = Bounds {
+            x: 224.0,
+            y: 72.0,
+            w: 1136.0,
+            h: 760.0,
+        };
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), chrome(1224.0, 780.0)).unwrap();
         assert!(close(m.scale, 1224.0 / 1360.0));
-        assert!(close(m.rect.w / css.w, m.rect.h / css.h), "axes must not be stretched independently");
+        assert!(
+            close(m.rect.w / css.w, m.rect.h / css.h),
+            "axes must not be stretched independently"
+        );
         assert!(close(m.rect.y, 72.0 * m.scale));
         assert!(m.rect.x + m.rect.w <= 1224.0 + 0.01);
     }
@@ -141,7 +184,12 @@ mod tests {
     #[test]
     fn zoom_scales_uniformly() {
         // 125% page zoom: CSS viewport is 1088x665.6 for a 1360x832 point chrome.
-        let css = Bounds { x: 179.2, y: 57.6, w: 908.8, h: 608.0 };
+        let css = Bounds {
+            x: 179.2,
+            y: 57.6,
+            w: 908.8,
+            h: 608.0,
+        };
         let m = map_viewport_rect(css, Some(1088.0), Some(665.6), chrome(1360.0, 832.0)).unwrap();
         assert!(close(m.scale, 1.25));
         assert!(close(m.rect.x, 224.0) && close(m.rect.y, 72.0));
@@ -152,24 +200,55 @@ mod tests {
     fn display_scale_does_not_matter_in_logical_points() {
         // Retina: physical sizes are converted to logical points before the mapping,
         // so the same logical chrome yields the same rectangle at any backing scale.
-        let css = Bounds { x: 52.0, y: 72.0, w: 1460.0, h: 848.0 };
+        let css = Bounds {
+            x: 52.0,
+            y: 72.0,
+            w: 1460.0,
+            h: 848.0,
+        };
         let a = map_viewport_rect(css, Some(1512.0), Some(920.0), chrome(1512.0, 920.0)).unwrap();
-        let b = map_viewport_rect(css, Some(1512.0), Some(920.0), chrome(3024.0 / 2.0, 1840.0 / 2.0)).unwrap();
+        let b = map_viewport_rect(
+            css,
+            Some(1512.0),
+            Some(920.0),
+            chrome(3024.0 / 2.0, 1840.0 / 2.0),
+        )
+        .unwrap();
         assert_eq!(a, b);
     }
 
     #[test]
     fn chrome_origin_is_the_content_origin() {
-        let css = Bounds { x: 52.0, y: 72.0, w: 100.0, h: 100.0 };
-        let c = Some(Bounds { x: 0.0, y: 28.0, w: 1512.0, h: 920.0 });
+        let css = Bounds {
+            x: 52.0,
+            y: 72.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let c = Some(Bounds {
+            x: 0.0,
+            y: 28.0,
+            w: 1512.0,
+            h: 920.0,
+        });
         let m = map_viewport_rect(css, Some(1512.0), Some(920.0), c).unwrap();
         assert!(close(m.rect.y, 100.0) && close(m.rect.x, 52.0));
     }
 
     #[test]
     fn nonzero_origin_offsets_the_rect_and_not_its_size() {
-        let css = Bounds { x: 224.0, y: 72.0, w: 1136.0, h: 760.0 };
-        let c = Some(Bounds { x: 10.0, y: 28.0, w: 1360.0, h: 832.0 });
+        let css = Bounds {
+            x: 224.0,
+            y: 72.0,
+            w: 1136.0,
+            h: 760.0,
+        };
+        let c = Some(Bounds {
+            x: 10.0,
+            y: 28.0,
+            w: 1360.0,
+            h: 832.0,
+        });
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), c).unwrap();
         assert!(close(m.rect.x, 234.0) && close(m.rect.y, 100.0));
         assert!(close(m.rect.w, 1136.0) && close(m.rect.h, 760.0));
@@ -180,8 +259,18 @@ mod tests {
     #[test]
     fn nonzero_origin_is_added_after_scaling_and_clamping() {
         // 125% zoom with a chrome at (6, 28): the origin is in points and is not scaled.
-        let css = Bounds { x: 179.2, y: 57.6, w: 908.8, h: 700.0 };
-        let c = Some(Bounds { x: 6.0, y: 28.0, w: 1360.0, h: 832.0 });
+        let css = Bounds {
+            x: 179.2,
+            y: 57.6,
+            w: 908.8,
+            h: 700.0,
+        };
+        let c = Some(Bounds {
+            x: 6.0,
+            y: 28.0,
+            w: 1360.0,
+            h: 832.0,
+        });
         let m = map_viewport_rect(css, Some(1088.0), Some(665.6), c).unwrap();
         assert!(m.clamped && close(m.scale, 1.25));
         assert!(close(m.rect.x, 230.0) && close(m.rect.y, 100.0));
@@ -190,19 +279,39 @@ mod tests {
 
     #[test]
     fn negative_origin_is_kept() {
-        let css = Bounds { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
-        let c = Some(Bounds { x: -5.0, y: -3.0, w: 500.0, h: 500.0 });
+        let css = Bounds {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let c = Some(Bounds {
+            x: -5.0,
+            y: -3.0,
+            w: 500.0,
+            h: 500.0,
+        });
         let m = map_viewport_rect(css, Some(500.0), Some(500.0), c).unwrap();
         assert!(close(m.rect.x, -5.0) && close(m.rect.y, -3.0));
     }
 
     #[test]
     fn overflow_is_clamped_to_the_viewport_below_the_toolbar() {
-        let css = Bounds { x: 224.0, y: 72.0, w: 1136.0, h: 900.0 };
+        let css = Bounds {
+            x: 224.0,
+            y: 72.0,
+            w: 1136.0,
+            h: 900.0,
+        };
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), chrome(1360.0, 832.0)).unwrap();
         assert!(m.clamped);
         assert!(close(m.rect.y + m.rect.h, 832.0));
-        let above = Bounds { x: 224.0, y: -10.0, w: 100.0, h: 100.0 };
+        let above = Bounds {
+            x: 224.0,
+            y: -10.0,
+            w: 100.0,
+            h: 100.0,
+        };
         let m = map_viewport_rect(above, Some(1360.0), Some(832.0), chrome(1360.0, 832.0)).unwrap();
         assert!(m.rect.y >= 0.0 && m.clamped);
     }
@@ -210,14 +319,24 @@ mod tests {
     #[test]
     fn carousel_offset_pane_stays_below_the_carousel() {
         // Favourites carousel (200px) pushes the pane to y=272.
-        let css = Bounds { x: 224.0, y: 272.0, w: 1136.0, h: 560.0 };
+        let css = Bounds {
+            x: 224.0,
+            y: 272.0,
+            w: 1136.0,
+            h: 560.0,
+        };
         let m = map_viewport_rect(css, Some(1360.0), Some(832.0), chrome(1360.0, 832.0)).unwrap();
         assert!(close(m.rect.y, 272.0) && close(m.rect.y + m.rect.h, 832.0));
     }
 
     #[test]
     fn missing_data_falls_back_to_identity_and_bad_data_is_rejected() {
-        let css = Bounds { x: 1.0, y: 2.0, w: 3.0, h: 4.0 };
+        let css = Bounds {
+            x: 1.0,
+            y: 2.0,
+            w: 3.0,
+            h: 4.0,
+        };
         let m = map_viewport_rect(css, None, None, None).unwrap();
         assert_eq!(m.rect, css);
         assert!(map_viewport_rect(Bounds { w: f64::NAN, ..css }, None, None, None).is_none());

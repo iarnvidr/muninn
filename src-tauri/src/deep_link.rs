@@ -64,7 +64,10 @@ mod tests {
             "https://www.youtube.com/@channel",
             "https://www.youtube.com/results?search_query=a%26b+exercise",
         ] {
-            assert_eq!(youtube_target(&app_link(target)), Some(Url::parse(target).unwrap()));
+            assert_eq!(
+                youtube_target(&app_link(target)),
+                Some(Url::parse(target).unwrap())
+            );
             assert_eq!(youtube_target(target), Some(Url::parse(target).unwrap()));
         }
     }
@@ -116,7 +119,10 @@ mod tests {
             "https://www.youtube.com/results?search_query=rust",
         ] {
             let target = youtube_target(&app_link(target)).unwrap();
-            assert!(!matches!(muninn_core::tabs::classify_input(target.as_str()), muninn_core::tabs::Input::External(_)));
+            assert!(!matches!(
+                muninn_core::tabs::classify_input(target.as_str()),
+                muninn_core::tabs::Input::External(_)
+            ));
         }
     }
 }

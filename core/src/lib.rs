@@ -4,6 +4,7 @@
 pub mod browsing;
 pub mod automation;
 pub mod organization;
+pub mod playlist;
 pub mod logging;
 pub mod diagnostics;
 pub mod imports;

@@ -198,6 +198,7 @@
     setHidden(btn, !action);
     if (action) setText(btn, action);
     status.action = action ? (M.settings?.offline_mode ? 'reconnect' : banner?.kind) : null;
+    if (banner?.kind === 'error' && banner.action === 'settings') status.action = 'settings';
     const fill = $('#status-fill');
     const bar = fill.parentNode;
     const showBar = kind === 'setup' && !status.kind;
@@ -207,6 +208,7 @@
   }
 
   $('#status-action').addEventListener('click', async () => {
+    if (status.action === 'settings') { M.page = 'settings'; M.render(); return; }
     if (status.action === 'reconnect') {
       try { M.settings = await api('PUT', '/api/settings', {offline_mode:false}); render(); renderStatus(); }
       catch (e) { M.flash('error',errText(e)); }
@@ -431,17 +433,19 @@
     }
   }
 
+  // Only Ctrl+Tab cycles tabs. Plain arrows/Home/End/Delete/Backspace belong to
+  // the player, native YouTube page, or focused control, never the tab strip.
   $('#tabstrip').addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Tab' || !ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const mains = $$('.tab-main', $('#tabstrip')).filter((n) => !n.parentNode.hidden);
-    const i = mains.indexOf(document.activeElement);
+    if (!mains.length) return;
+    const activeIndex = mains.findIndex((n) => Number(n.parentNode.dataset.id) === M.tabs.active);
+    const i = activeIndex < 0 ? mains.indexOf(document.activeElement) : activeIndex;
     if (i < 0) return;
-    let n = -1;
-    if (ev.key === 'ArrowRight') n = (i + 1) % mains.length;
-    else if (ev.key === 'ArrowLeft') n = (i - 1 + mains.length) % mains.length;
-    else if (ev.key === 'Home') n = 0;
-    else if (ev.key === 'End') n = mains.length - 1;
-    else if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); M.closeTab(Number(mains[i].parentNode.dataset.id)); return; }
-    if (n >= 0) { ev.preventDefault(); mains[n].focus(); M.activateTab(Number(mains[n].parentNode.dataset.id)); }
+    ev.preventDefault();
+    const delta = ev.shiftKey ? -1 : 1;
+    const next = mains[(i + delta + mains.length) % mains.length];
+    next.focus(); M.activateTab(Number(next.parentNode.dataset.id));
   });
   $('#tab-new').addEventListener('click', () => M.newTab());
   $('#empty-new').addEventListener('click', () => M.newTab());
@@ -526,6 +530,10 @@
     const t = $('#side-toggle');
     t.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    for (const b of $$('#sidebar [data-page]')) {
+      if (b.dataset.page === 'player' || b.dataset.page === 'browse') continue;
+      b.title = collapsed ? ($('.side-label', b)?.textContent || b.dataset.page) : '';
+    }
     t.title = label; t.setAttribute('aria-label', label);
     setText($('.side-label', t), collapsed ? 'Expand' : 'Collapse');
     const ico = $('.side-icon', t);
@@ -553,14 +561,9 @@
   }
   for (const b of $$('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
   /* Diagnostics is a developer-mode page: its button exists only while the mode is on. */
+// Diagnostics is reachable only from Settings; developer mode never adds a rail item.
   function syncDeveloperNav() {
-    const existing = $('#sidebar [data-page="diagnostics"]');
-    if (!L.developerMode(M.settings)) { existing?.remove(); return; }
-    if (existing) return;
-    const b = h('button', { type: 'button', class: 'side-item', 'data-page': 'diagnostics', title: 'Diagnostics' }, h('span', { class: 'side-icon', 'data-icon': 'pulse' }), h('span', { class: 'side-label', text: 'Diagnostics' }));
-    b.addEventListener('click', () => onSidebarClick(b));
-    $('#sidebar [data-page="settings"]').before(b);
-    fillIcons(b);
+    $('#sidebar [data-page="diagnostics"]')?.remove();
   }
   M.syncDeveloperNav = syncDeveloperNav;
   function renderSidebar() {

@@ -557,6 +557,62 @@
     const feedback=h('div',{class:'settings-feedback'},msg,retry);
     const signMsg=slot('slot-xl');
 
+    const updateState = { value: { state: 'idle' } };
+    const updateStatus = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
+    const updateDetails = h('p', { class: 'muted' });
+    const updateProgress = h('progress', { max: 100, value: 0, class: 'update-progress', hidden: true, 'aria-label': 'Update download progress' });
+    const checkUpdate = h('button', { type: 'button', text: 'Check for updates', onclick: async () => {
+      if (['checking','downloading','installing'].includes(updateState.value.state)) return;
+      updateState.value = { state: 'checking' }; renderUpdate();
+      try { updateState.value = await M.invoke('updater_check'); renderUpdate(); await pollUpdate(); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+    } });
+    const downloadUpdate = h('button', { type: 'button', class: 'primary', text: 'Download update', hidden: true, onclick: async () => {
+      if (updateState.value.state !== 'available' || M.offline) return;
+      downloadUpdate.disabled = true; updateState.value = { ...updateState.value, state: 'downloading', downloaded: 0, content_length: null }; renderUpdate();
+      try { await M.invoke('updater_download'); await pollUpdate(); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+      finally { downloadUpdate.disabled = false; }
+    } });
+    const installUpdate = h('button', { type: 'button', class: 'primary', text: 'Install and restart', hidden: true, onclick: async () => {
+      if (updateState.value.state !== 'ready_to_install' || M.offline) return;
+      if (!(await M.confirm('Install this verified update and restart Muninn? Any unsaved settings changes will be saved first.', 'Install and restart'))) return;
+      installUpdate.disabled = true; updateState.value = { ...updateState.value, state: 'installing' }; renderUpdate();
+      try { await flush(); updateState.value = await M.invoke('updater_install'); renderUpdate(); await pollUpdate(); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
+      finally { installUpdate.disabled = false; }
+    } });
+    const cancelUpdate = h('button', { type: 'button', text: 'Cancel update', hidden: true, onclick: async () => {
+      if (!['checking','downloading'].includes(updateState.value.state)) return;
+      cancelUpdate.disabled = true;
+      try { await M.invoke('updater_cancel'); updateState.value = await M.invoke('updater_status'); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; }
+      finally { cancelUpdate.disabled = false; renderUpdate(); }
+    } });
+    async function pollUpdate() {
+      let previous = 0;
+      for (let i = 0; i < 120; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const next = await M.invoke('updater_status');
+        if (next.downloaded != null && updateState.value.downloaded != null) next.downloaded = Math.max(Number(next.downloaded)||0, Number(updateState.value.downloaded)||0, previous);
+        previous = Number(next.downloaded)||previous; updateState.value = next; renderUpdate();
+        if (!['checking','downloading','installing'].includes(updateState.value.state)) break;
+      }
+    }
+    function renderUpdate() {
+      const v = window.MuninnUpdates.view(updateState.value);
+      setText(updateStatus, v.label);
+      const installed = v.installedVersion || v.currentVersion;
+      updateDetails.replaceChildren(document.createTextNode([installed ? 'Installed version ' + installed : '', v.availableVersion ? 'Available version ' + v.availableVersion : '', v.channel === 'stable' ? 'Stable channel: previews are not offered; only a newer stable release can update this installation.' : '', v.notes].filter(Boolean).join('\\n')));
+      updateProgress.hidden = v.state !== 'downloading';
+      if (v.progress != null) updateProgress.value = v.progress;
+      checkUpdate.disabled = !v.canCheck || !!M.offline; downloadUpdate.hidden = !v.canDownload; downloadUpdate.disabled = !!M.offline;
+      installUpdate.hidden = !v.canInstall; installUpdate.disabled = !!M.offline; cancelUpdate.hidden = !v.canCancel; cancelUpdate.disabled = !!M.offline;
+    }
+    const accountLine=h('p',{class:'muted',role:'status','aria-live':'polite'});
+    let accountPoll=null, accountBusy=false;
+
+
     /* Setup and repair: the plain-language home of what used to live on Diagnostics. */
     const toolsMsg=slot('slot-xl'),trustMsg=slot('slot-xl');
     const toolsLine=h('p',{class:'setup-text'}),trustLine=h('p',{class:'trust-line'}),trustDetail=h('p',{class:'muted trust-detail'});
@@ -576,12 +632,17 @@
       const y=tools.ytdlp||{},f=tools.ffmpeg||{};
       const parts=[];
       parts.push(y.installed?'Video downloader: ready'+(y.version?' ('+y.version+')':''):'Video downloader: not installed yet');
-      parts.push(f.found?'Video merging: ready':'Video merging: not available (higher qualities may be unavailable)');
+
+      parts.push(f.found?'FFmpeg video merging: available':'FFmpeg video merging: unavailable (higher qualities may be unavailable)');
+      parts.push('Playback health: not inferred from helper availability; it is reported for an active playback only.');
+
       const phase=setup&&setup.phase&&setup.phase!=='ready'?' '+(setup.message||('Setup is '+setup.phase+'.')):'';
       setText(toolsLine,parts.join('. ')+'.'+phase);
       setHidden(updateBtn,!y.installed);
       const tr=M.trust;
-      if(!tr){setText(trustLine,'Secure browsing setup is only available in the Muninn app.');setText(trustDetail,'');trustBtn.disabled=true;setHidden(trustBtn,true);return;}
+
+      if(!tr){setText(trustLine,'Secure-browsing trust status is unavailable; it has not been checked.');setText(trustDetail,'');trustBtn.disabled=true;setHidden(trustBtn,true);return;}
+
       setHidden(trustBtn,false);
       const label={ok:'Secure browsing is set up.',needed:'Secure browsing is not set up yet. YouTube pages cannot be read until it is.',installing:'Setting up…',failed:'Setting up secure browsing failed. You can try again.'}[tr.state]||tr.state;
       setText(trustLine,label);setCls(trustLine,'trust-line '+(tr.state==='ok'?'ok':(tr.state==='needed'||tr.state==='failed'?'bad':'')));
@@ -591,6 +652,18 @@
     }
     async function refreshSetup(){try{await M.pollSystemNow();}catch(e){/* offline banner */}renderSetup();}
     const setupPoll=poller(async()=>{await M.pollSystemNow();renderSetup();},()=>5000);
+
+    async function refreshAccount(){
+      if(accountBusy)return; accountBusy=true;
+      try { const res=await M.api('GET','/api/channels/status'); const observed=L.observedAccountState(res&&res.account);
+        setText(accountLine, observed.label+'. Account identifiers are not shown.');
+        signBtn.textContent=observed.state==='signed_in'?'Manage or switch account':'Sign in in a separate window';
+        signBtn.hidden=false;
+      } catch(e) { setText(accountLine,'YouTube sign-in status is temporarily unavailable.'); signBtn.textContent='Sign in in a separate window'; signBtn.hidden=false; }
+      finally { accountBusy=false; }
+    }
+    accountPoll=poller(refreshAccount,()=>4000);
+
 
     /* Developer section: only present while developer mode is on. */
     const exportMsg=slot('slot-xl');
@@ -665,19 +738,29 @@
     return {
       mount(el) {
         el.append(pageHead('Settings', 'Limits, freshness and browsing behaviour.'), form,
+
+          h('section', { class: 'card update-card', 'aria-labelledby': 'updates-h' },
+            h('h2', { class: 'h2', id: 'updates-h', text: 'Muninn updates' }),
+            h('p', { class: 'muted', text: 'Check for a trusted Muninn release. Updates are never installed automatically.' }),
+            updateStatus, updateDetails, updateProgress,
+            h('div', { class: 'actions' }, checkUpdate, downloadUpdate, installUpdate, cancelUpdate)),
+
           h('section', { class: 'card', 'aria-labelledby': 'setup-h' },
             h('h2', { class: 'h2', id: 'setup-h', text: 'Setup and repair' }),
             toolsLine, h('div', { class: 'actions' }, updateBtn, toolsMsg),
             trustLine, trustDetail, h('div', { class: 'actions' }, trustBtn, trustMsg)),
           h('section', { class: 'card', 'aria-labelledby': 'signin-h' },
             h('h2', { class: 'h2', id: 'signin-h', text: 'Google sign-in' }),
-            h('p', { class: 'muted', text: 'Sign in inside Muninn to browse your subscriptions and recommendations. The app remembers your session. Google may reject some embedded-browser login flows; the sign-in window provides another entry point.' }),
+
+            accountLine,
+            h('p', { class: 'muted', text: 'Sign-in status reflects the latest live YouTube page observation; opening a browser does not count as signing in. Google may reject some embedded-browser login flows; a separate window is available.' }),
             h('div', { class: 'actions' }, signBtn, signMsg)),
           devCard);
-        renderSetup(); setupPoll.kick();
+        renderSetup(); setupPoll.kick(); accountPoll.kick();
         fetchSettings().then(syncDeveloper).catch(M.flashError);
       },
-      unmount() { clearTimeout(S.timer); setupPoll.stop(); flush(); },
+      unmount() { clearTimeout(S.timer); setupPoll.stop(); accountPoll.stop(); flush(); },
+
     };
   }
 

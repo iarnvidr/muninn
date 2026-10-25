@@ -11,8 +11,8 @@
 //! back to the keychain.
 
 use crate::shell::Shell;
-use objc2::runtime::AnyObject;
 use objc2::msg_send;
+use objc2::runtime::AnyObject;
 use security_framework::certificate::SecCertificate;
 use security_framework::trust::SecTrust;
 use std::ffi::{c_char, c_void, CStr};
@@ -24,7 +24,12 @@ static CA_DER: OnceLock<Vec<u8>> = OnceLock::new();
 extern "C" {
     fn object_getClass(obj: *const c_void) -> *const c_void;
     fn sel_registerName(name: *const c_char) -> *const c_void;
-    fn class_addMethod(cls: *const c_void, name: *const c_void, imp: *const c_void, types: *const c_char) -> bool;
+    fn class_addMethod(
+        cls: *const c_void,
+        name: *const c_void,
+        imp: *const c_void,
+        types: *const c_char,
+    ) -> bool;
     fn objc_getClass(name: *const c_char) -> *const c_void;
 }
 
@@ -46,8 +51,12 @@ unsafe fn nsstring(obj: *mut AnyObject) -> Option<String> {
 /// True when the trust object's chain validates with Muninn's CA as the only anchor.
 unsafe fn chain_ends_in_muninn_ca(trust_ptr: *mut c_void) -> bool {
     use core_foundation::base::TCFType;
-    let Some(der) = CA_DER.get() else { return false };
-    let Some(ca) = SecCertificate::from_der(der).ok() else { return false };
+    let Some(der) = CA_DER.get() else {
+        return false;
+    };
+    let Some(ca) = SecCertificate::from_der(der).ok() else {
+        return false;
+    };
     let mut trust = SecTrust::wrap_under_get_rule(trust_ptr as _);
     if trust.set_anchor_certificates(&[ca]).is_err() {
         return false;
@@ -56,7 +65,13 @@ unsafe fn chain_ends_in_muninn_ca(trust_ptr: *mut c_void) -> bool {
     trust.evaluate_with_error().is_ok()
 }
 
-extern "C" fn did_receive_challenge(_this: *mut AnyObject, _cmd: *const c_void, _webview: *mut AnyObject, challenge: *mut AnyObject, handler: *mut c_void) {
+extern "C" fn did_receive_challenge(
+    _this: *mut AnyObject,
+    _cmd: *const c_void,
+    _webview: *mut AnyObject,
+    challenge: *mut AnyObject,
+    handler: *mut c_void,
+) {
     // 0 = use credential, 1 = perform default handling.
     let (mut disposition, mut credential): (isize, *mut AnyObject) = (1, std::ptr::null_mut());
     unsafe {
@@ -99,8 +114,15 @@ pub fn prepare(shell: &Arc<Shell>, wv: &Webview) {
             return;
         }
         let class = object_getClass(delegate as *const c_void);
-        let sel = sel_registerName(c"webView:didReceiveAuthenticationChallenge:completionHandler:".as_ptr());
+        let sel = sel_registerName(
+            c"webView:didReceiveAuthenticationChallenge:completionHandler:".as_ptr(),
+        );
         // v@:@@@? = void, self, _cmd, webview, challenge, block
-        let _ = class_addMethod(class, sel, did_receive_challenge as *const c_void, c"v@:@@@?".as_ptr());
+        let _ = class_addMethod(
+            class,
+            sel,
+            did_receive_challenge as *const c_void,
+            c"v@:@@@?".as_ptr(),
+        );
     });
 }
