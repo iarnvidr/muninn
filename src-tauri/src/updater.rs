@@ -311,7 +311,10 @@ pub async fn updater_download(
                     || {},
                 )
                 .await
-                .map_err(|e| (e.to_string(), None))?;
+                .map_err(|e| {
+                    let reason = signature_error_reason(&e).map(str::to_string);
+                    (e.to_string(), reason)
+                })?;
             Ok::<_, (String, Option<String>)>((update, bytes, version))
         };
         let result =
