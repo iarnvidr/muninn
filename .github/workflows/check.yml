@@ -40,6 +40,7 @@ jobs:
       - name: Packaging tests
         run: |
           python3 -m unittest discover -s build -p 'test_*.py' -v
+          python3 -m unittest -v test_release_production_contract
           python3 build/updater-smoke/test_protocol.py
       - name: Publication boundary checks
         run: python3 build/check_publication.py

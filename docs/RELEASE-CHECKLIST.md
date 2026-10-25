@@ -1,101 +1,32 @@
-# Owner Mac release gate
+# Owner production release gate
 
-Run on an Apple Silicon Mac, macOS 14+, from the commit a binary release is
-cut from. The source repository is public and its hosted Checks and macOS
-workflows run on every push. Record the commit (`git rev-parse HEAD`), macOS
-version and results below before a binary is published. Any failed step blocks
-that binary release; this checklist does not gate source visibility.
+This is an owner acceptance checklist for the exact protected-main commit intended for a production macOS release. Record commit, macOS version/hardware, and evidence. A CI build, CI launch smoke, synthetic updater artifacts, or this checklist text are not owner-live acceptance. No release has been published; current version is `0.2.14-preview.4`, and intended `0.2.14` is not yet bumped/tagged.
 
-## Build and package
+## Before dispatch
 
-```sh
-uname -sm
-sw_vers -productVersion
-xcode-select -p
-brew install meson ninja pkgconf node python
-rustup show active-toolchain
-python3 build/check_publication.py
-bash build/build-native-macos.sh "$PWD/dist/mac-review"
-```
+- [ ] Owner confirms `main` protection via active allowlist/ruleset (legacy branch-protection API 404 does not prove unprotected).
+- [ ] `muninn-release` environment has required reviewer `efthomsen` and a deployment branch rule limited to protected `main`.
+- [ ] Account holder provisions Developer ID Application signing certificate and App Store Connect notarization API key from the active Apple Developer account into these exact environment secrets: `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`, `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_NOTARY_API_KEY_ID`, `APPLE_NOTARY_API_ISSUER_ID`, `APPLE_NOTARY_API_PRIVATE_KEY`. No actual Apple keys are included/provided here. Existing updater secrets are separate: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- [ ] Owner updates Cargo/Tauri version to stable `0.2.14`, reviews commit on protected main, creates matching `v0.2.14` tag and GitHub Release. Workflow requires an existing tag/Release and never creates them.
+- [ ] Complete target-specific Rust and Deno notice audit; inspect generated corresponding-source bundle and confirm exact licenses, notices, build recipe and distribution method. See [PUBLICATION.md](PUBLICATION.md).
 
-Expected: `Darwin arm64`, macOS 14 or newer, a valid developer directory, the
-toolchain from `rust-toolchain.toml`, `Standalone boundary checks passed`, all
-Rust/JavaScript/Python tests pass (one synthetic binary test is skipped on macOS),
-and signing reports `valid on disk` / `satisfies its Designated Requirement`.
-The last line names `Muninn_<version>_macos-arm64.zip`. This script runs
-`cargo test --locked --workspace`, compiles the native shell and builds the
-SHA-256-pinned FFmpeg and dav1d sources. No Actions run is needed.
+## Workflow preparation evidence
 
-```sh
-cd dist/mac-review
-shasum -a 256 -c Muninn_*.zip.sha256
-mkdir -p unpacked
-ditto -x -k Muninn_*.zip unpacked
-cd ../..
-app="$PWD/dist/mac-review/unpacked/Muninn.app"
-ffmpeg="$app/Contents/Resources/bin/ffmpeg"
-python3 build/ffmpeg_lgpl.py verify "$ffmpeg"
-otool -L "$ffmpeg"
-```
+Dispatch `Protected updater release` from `main` with version `0.2.14`, tag `v0.2.14`, `publish=false`. Verify exact tag commit equals workflow `github.sha` and protected main commit; version matches config and app. Review downloadable artifacts: production app signing/notarization evidence, `Muninn.app.tar.gz`, detached updater signature and successful verification against configured public key, `latest.json`, checksums, source archives/recipe and review metadata. Confirm app bundle contains `Contents/Resources/licenses`. Any missing/failed verification blocks release. The production workflow requires Developer ID signing, notarization Accepted, stapling and Gatekeeper assessment; helper-only stub tests do not establish any actual Apple signature or notarization.
 
-Expected: archive `OK`; verifier exits zero, prints configure flags including
-`--disable-gpl`, `--disable-nonfree`, `--enable-libdav1d`,
-`--enable-videotoolbox`, `--enable-securetransport`, with no missing capabilities.
-`otool` must show only macOS system libraries/frameworks, with no Homebrew or
-temporary build paths. Bundled notices and license files must be present.
+## Owner Mac acceptance
 
-## VideoToolbox and HTTPS
+Perform on Apple Silicon with macOS 14+ using the exact candidate artifact/commit; retain actual outputs and observations. CI 40-test claims and synthetic updater workflow tests do not satisfy these checks.
 
-```sh
-probe="$(mktemp -d)"
-"$ffmpeg" -hide_banner -y -f lavfi -i testsrc2=size=640x360:rate=30 \
-  -f lavfi -i sine=frequency=440 -t 12 -c:v h264_videotoolbox -q:v 65 \
-  -profile:v high -allow_sw 1 -pix_fmt yuv420p -c:a aac "$probe/vt.mp4"
-"$ffmpeg" -v error -i "$probe/vt.mp4" -f null -
-open "$probe/vt.mp4"
-"$ffmpeg" -hide_banner -v error \
-  -i https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4 \
-  -t 5 -f null -
-```
+- [ ] Record `uname -sm`, `sw_vers -productVersion`, commit and artifact checksum. Confirm signature identity/team, notarization ticket and Gatekeeper assessment on the actual app.
+- [ ] Install/open from a clean download; verify launch, helper execution and no quarantine workaround requirement.
+- [ ] Verify app-link and cold/warm URL delivery, local certificate prompt/trust behavior and login persistence over restart.
+- [ ] Verify imported/local file, retry, resume, seeking and 1×/1.5× playback; perform actual compatibility conversion and confirm audio/video, theatre toggle-back and PiP.
+- [ ] Exercise feature smoke paths relevant to the release, including library/channel/offline policy and sign-out/account switching.
+- [ ] Play a VideoToolbox-produced test clip and a real HTTPS source; record results and any failures.
+- [ ] Review final bundled notices, source assets and exact checksums; do not equate file presence or a generic inventory with legal compliance.
 
-Expected: every command exits zero; the test clip plays moving video with a tone
-in QuickTime. HTTPS reads and decodes five seconds with no TLS/protocol errors.
-If the public sample becomes unavailable, record a replacement HTTPS media URL
-and rerun; a listed `https` protocol alone is not a playback test.
+## Explicit publish authorization
 
-## App smoke test
-
-```sh
-open "$app"
-open -a "$app" 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
-open 'muninn://open?url=https%3A%2F%2Fwww.youtube.com%2Fresults%3Fsearch_query%3Dmuninn'
-```
-
-Expected: video opens in Muninn's player; the app link opens a search tab.
-Repeat both after quitting and after hiding the window: one app instance opens
-and receives each request. Use a permitted test video if the example is unavailable.
-
-- Download a video requiring compatibility conversion (AV1/WebM is suitable).
-  Play the local copy, seek, and resume: moving video and audio, no VideoToolbox
-  error. This exercises Muninn's actual fragmented-MP4 HLS path.
-- Library: Browse/Manage switch persists; search finds a title beyond the first
-  displayed page; filters and Keep still work.
-- Player: reach the watched threshold; Keep protects the playing copy; dismissal
-  leaves the cleanup policy intact. A protected copy has no reminder.
-- Channels: discover and favourite a channel, refresh its uploads, switch offline,
-  restart, browse cached uploads and play a downloaded copy. Offline must not
-  start network downloads. Reconnect and verify queued work resumes.
-- Recorded/live playback: start, seek within the recording, stop and replay the
-  saved result. Verify sign-out/account switching disables account actions.
-
-## Owner sign-off
-
-- [ ] Commit / macOS / hardware recorded; build and helper checks passed.
-- [ ] QuickTime, HTTPS and in-app compatibility playback passed.
-- [ ] Feature smoke tests passed, including cold/warm URL delivery.
-- [x] Owner approved the reviewed stack (#14 → #8 → #9 → #10 → #11); it was
-      published as the repository's initial public commit on 2026-10-23.
-
-GitHub-hosted runners only; no self-hosted runners. Do not publish a
-binary until the source, helper build recipe and bundled notices are available
-as described in [PUBLICATION.md](PUBLICATION.md).
+- [ ] Owner/reviewer `efthomsen` has reviewed owner-Mac evidence, release assets, sources/notices, checksum and manifest.
+- [ ] Only then dispatch again with `publish=true`; verify environment approval and upload to the already existing release. Record resulting release URL and asset list. Until these actions occur, do not describe the release as published or accepted.
