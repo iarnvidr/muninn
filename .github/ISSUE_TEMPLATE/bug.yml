@@ -1,24 +1,48 @@
 name: Bug report
-description: Report a reproducible problem with Muninn
+description: Report a reproducible problem with Muninn.
+title: "[Bug]: "
 body:
   - type: markdown
     attributes:
-      value: "Do not post cookies, tokens, browser profiles or full databases. Review diagnostics before sharing; they can contain video IDs and channel names. Report security issues privately using SECURITY.md."
+      value: |
+        Check existing issues first. Do not attach account cookies, tokens, browser profiles, databases or private media. Review and redact diagnostics before sharing them. Use private reporting for security issues.
   - type: input
     id: version
     attributes:
-      label: Muninn version and macOS version
+      label: App version and build
+      description: Include the version and Actions run, PR or commit you installed.
+      placeholder: "0.2.x; Actions run URL or commit"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: macOS version and Mac chip, or the development OS if applicable.
+      placeholder: "macOS 15; Apple M-series"
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Include what you expected and what happened instead.
+      description: Include relevant settings and whether this is streamed or already downloaded media. Use a public example URL only if you are comfortable sharing it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
     validations:
       required: true
   - type: textarea
     id: evidence
     attributes:
       label: Relevant diagnostics or screenshots
-      description: For playback, include file/container/codec, source type and timestamp if known. Never attach media you do not have permission to share.
+      description: For playback, include file/container/codec, source type and timestamp if known. Review and redact evidence first. Never attach media you do not have permission to share.
