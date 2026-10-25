@@ -105,8 +105,8 @@
       const currentPlayer = async expectedId => {
         for (let attempt=0; attempt<30; attempt++) {
           await settle();
-          const current=document.querySelector('video');
           await M.refreshTabs();
+          const current=document.querySelector('video');
           const tab=M.tabs.list.find(t=>t.id===tabId);
           const expectedIndex=queueIds.indexOf(expectedId);
           const request=calls.find(call=>call.path.startsWith('/api/playlist?')&&call.requestedVideo===expectedId);
