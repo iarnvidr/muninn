@@ -23,7 +23,8 @@ class ProductionReleaseContract(unittest.TestCase):
                         "test \"$INPUT_TAG\" = \"v$INPUT_VERSION\"",
                         "test \"$tag_commit\" = \"$GITHUB_SHA\"",
                         "if: github.ref == 'refs/heads/main' && inputs.publish",
-                        "needs: prepare", "gh release view \"$INPUT_TAG\""):
+                        "needs: prepare", "gh release view \"$INPUT_TAG\"",
+                        "GH_REPO: ${{ github.repository }}"):
             self.assertIn(snippet, self.workflow)
         self.assertIn("workflow_dispatch:", self.workflow)
         self.assertNotRegex(self.workflow, r"(?m)^\s+release:\s*create")

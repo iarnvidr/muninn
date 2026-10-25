@@ -171,6 +171,7 @@ jobs:
       - name: Upload assets to existing GitHub Release only
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
