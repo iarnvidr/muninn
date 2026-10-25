@@ -108,7 +108,10 @@
           const current=document.querySelector('video');
           await M.refreshTabs();
           const tab=M.tabs.list.find(t=>t.id===tabId);
-          if(current instanceof HTMLVideoElement && tab?.video_id===expectedId) return current;
+          const expectedIndex=queueIds.indexOf(expectedId);
+          const request=calls.find(call=>call.path.startsWith('/api/playlist?')&&call.requestedVideo===expectedId);
+          const currentIndex=[...document.querySelectorAll('.queue-item')].findIndex(item=>item.classList.contains('current'));
+          if(current instanceof HTMLVideoElement && tab?.video_id===expectedId && request?.activeIndex===expectedIndex && currentIndex===expectedIndex) return current;
         }
         const tab=M.tabs.list.find(t=>t.id===tabId);
         const videos=[...document.querySelectorAll('video')].map(v=>({currentSrc:v.currentSrc,src:v.src,readyState:v.readyState,paused:v.paused,connected:v.isConnected}));
@@ -116,11 +119,13 @@
       };
       const queueButton=queue?.querySelectorAll('button.queue-item')[1];
       if (queueButton) { queueButton.click(); await settle(); }
+      // Native routing and the resulting playlist request complete asynchronously.
+      // Wait for the matching request/render, rather than asserting after 120ms.
+      let activeVideo=await currentPlayer(queueIds[1]);
       let opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[1]&&x.playlist?.index===2);
       const secondQueueRequest=calls.filter(x=>x.path.startsWith('/api/playlist?')).find(x=>x.requestedVideo===queueIds[1]);
       assert('queue selection routes second valid id with playlist index 2', !!queueButton && opens.length>0, routing);
       assert('second-video queue request returns zero-based index 1', !!secondQueueRequest && secondQueueRequest.activeIndex===1, secondQueueRequest);
-      let activeVideo=await currentPlayer(queueIds[1]);
       assert('selection remounts current second player and native tab context', document.querySelector('video')===activeVideo, M.tabs.list.find(t=>t.id===tabId));
       key('N',document.body,false,{shiftKey:true}); await settle();
       activeVideo=await currentPlayer(queueIds[2]);
