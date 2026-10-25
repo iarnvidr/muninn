@@ -25,6 +25,40 @@ const INJECT_JS: &str = include_str!("../inject.js");
 #[cfg(target_os = "macos")]
 const YT_STORE: [u8; 16] = *b"muninn-yt-store1";
 
+/// Called by helper workers before each request. The blank view has the same
+/// persistent store as Browse/sign-in, without navigating or waiting for page JS.
+pub fn youtube_cookie_reader(app: AppHandle) -> muninn_core::youtube_session::CookieReader {
+    Arc::new(move || {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let result = (|| -> Result<tauri::Webview, &'static str> {
+                if let Some(view) = handle.get_webview("youtube-session") { return Ok(view); }
+                let window = handle.get_window(MAIN).ok_or("main window unavailable")?;
+                #[allow(unused_mut)]
+                let mut builder = WebviewBuilder::new("youtube-session", WebviewUrl::External("about:blank".parse().unwrap()));
+                #[cfg(target_os = "macos")]
+                { builder = builder.data_store_identifier(YT_STORE); }
+                #[cfg(target_os = "linux")]
+                {
+                    let dir = handle.path().app_data_dir().map_err(|_| "browser store unavailable")?;
+                    builder = builder.data_directory(dir.join("webdata-youtube"));
+                }
+                let view = window.add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(1.0, 1.0))
+                    .map_err(|_| "session view unavailable")?;
+                view.hide().map_err(|_| "could not hide session view")?;
+                Ok(view)
+            })();
+            let _ = sender.send(result);
+        }).map_err(|_| muninn_core::Error::other("YouTube session event loop unavailable"))?;
+        let view = receiver.recv_timeout(Duration::from_secs(10))
+            .map_err(|_| muninn_core::Error::other("YouTube session read timed out"))?
+            .map_err(muninn_core::Error::other)?;
+        // Tauri cookie reads must run off the UI thread.
+        crate::commands::read_youtube_cookies(&view).map_err(muninn_core::Error::other)
+    })
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rect {
     pub x: f64,

@@ -63,6 +63,8 @@ pub struct CoreConfig {
     pub spawn_workers: bool,
     /// Tools shipped inside the app bundle (`Contents/Resources/bin`).
     pub bundled_bin: Option<PathBuf>,
+    /// Native desktop reader; registered before restored jobs can start.
+    pub youtube_cookie_reader: Option<crate::youtube_session::CookieReader>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -81,6 +83,7 @@ pub struct RunningJob {
 }
 
 pub struct Core {
+    pub youtube_cookie_reader: RwLock<Option<crate::youtube_session::CookieReader>>,
     pub(crate) account: RwLock<crate::account::Account>,
     pub(crate) offline_paused: Mutex<HashSet<String>>,
     pub(crate) catalog_running: Mutex<HashSet<String>>,
@@ -135,6 +138,7 @@ impl Core {
         let tool_dirs = config.tool_dirs.clone().unwrap_or_else(crate::ytdlp::search_dirs);
         let tools = ToolsStatus::detect(&paths.bin_dir, &tool_dirs);
         let core = Arc::new_cyclic(|weak| Core {
+            youtube_cookie_reader: RwLock::new(config.youtube_cookie_reader),
             account: RwLock::new(Default::default()),
             offline_paused: Mutex::new(HashSet::new()),
             channel_lock: Mutex::new(()),
@@ -342,6 +346,7 @@ pub(crate) mod testutil {
             tool_dirs: Some(vec![]),
             spawn_workers: false,
             bundled_bin: None,
+            youtube_cookie_reader: None,
         })
         .unwrap();
         (dir, core)

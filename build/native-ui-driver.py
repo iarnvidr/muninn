@@ -39,7 +39,7 @@ def screenshot(name):
 
 try:
     session = send({'op':'youtube_cookie_fixture'})
-    check('native YouTube store hands HttpOnly secure cookies to downloader adapter', session.get('ok') is True, session)
+    check('native downloader reads shared cookies before page observation and follows rotation/sign-out', session.get('ok') is True, session)
     for page in ('settings','library'):
         click(f'#sidebar [data-page="{page}"]')
         state=ev("({pageOpen:document.querySelector('#app').dataset.pageOpen, selected:[...document.querySelectorAll('#sidebar [aria-current=\\\"page\\\"]')].map(x=>x.dataset.page), content:document.querySelector('#content').innerText.slice(0,120)})")
