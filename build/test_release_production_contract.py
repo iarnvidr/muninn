@@ -47,6 +47,13 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertIn("rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig", self.workflow)
         self.assertIn("stapler staple", self.signer)
 
+    def test_archive_version_check_resolves_helper_from_output_directory(self):
+        archive = self.workflow.split("Create final Tauri-compatible archive, sign and verify", 1)[1]
+        archive = archive.split("Prepare corresponding source archives", 1)[0]
+        self.assertIn('cd "$RUNNER_TEMP/muninn"', archive)
+        self.assertIn('python3 "$GITHUB_WORKSPACE/build/updater_release.py" check-version', archive)
+        self.assertNotIn('python3 build/updater_release.py', archive)
+
     def test_ad_hoc_mode_is_explicit_and_keeps_updater_verification(self):
         self.assertIn("default: developer-id", self.workflow)
         preflight = self.workflow.split("Fail-closed Apple signing credential preflight", 1)[1]
