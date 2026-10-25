@@ -9,6 +9,23 @@ use tauri::{State, Webview};
 
 type Sh<'a> = State<'a, Arc<Shell>>;
 
+/// Call off the UI thread. Credentials never pass through a page command.
+pub(crate) fn read_youtube_cookies(webview: &Webview) -> Result<Vec<muninn_core::youtube_session::YoutubeCookie>, &'static str> {
+    let cookies = webview.cookies().map_err(|_| "Could not read the YouTube session")?;
+    Ok(cookies.into_iter().filter_map(|cookie| {
+        let domain = cookie.domain()?;
+        if !muninn_core::youtube_session::youtube_domain(domain) { return None; }
+        Some(muninn_core::youtube_session::YoutubeCookie {
+            // cookie::Cookie::domain() strips the leading dot. Restore domain
+            // matching so youtube.com session cookies reach www.youtube.com.
+            domain: format!(".{domain}"), path: cookie.path().unwrap_or("/").to_owned(),
+            name: cookie.name().to_owned(), value: cookie.value().to_owned(),
+            secure: cookie.secure().unwrap_or(false), http_only: cookie.http_only().unwrap_or(false),
+            expires: cookie.expires_datetime().map(|date| date.unix_timestamp()),
+        })
+    }).collect())
+}
+
 /// Opens an http(s) URL in the default browser.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
@@ -241,6 +258,19 @@ pub async fn page_state(
                 .core
                 .observe_youtube_account(signed_in, account_key.as_deref(), changed_at)
                 .map_err(|e| e.to_string())?;
+        }
+    }
+    if youtube && account_current && signed_in == Some(true) {
+        if let (Some(key), Some(changed_at)) = (account_key.clone(), account_changed_at) {
+            // Read the native shared browser store, including HttpOnly cookies.
+            // No credential values cross the page's IPC boundary. Cookie reads
+            // must run away from the UI thread (Tauri/WebView2 requirement).
+            let core = shell.core.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let cookies = read_youtube_cookies(&webview)?;
+                core.observe_youtube_cookies(&key, changed_at, cookies);
+                Ok::<(), &'static str>(())
+            }).await.map_err(|_| "Could not read the YouTube session")??;
         }
     }
     if let Some(channels) = channels {

@@ -189,7 +189,7 @@
     }
     w.addEventListener('play', quiet, true);
 
-    var last = '', channelScan = null, authSignature=null, authSeed=null, authSignedIn=null, authKey=null, authPending=null, authChangedAt=0, authContextChanged=false, documentStartedAt=Date.now();
+    var last = '', lastReportAt=0, channelScan = null, authSignature=null, authSeed=null, authSignedIn=null, authKey=null, authPending=null, authChangedAt=0, authContextChanged=false, documentStartedAt=Date.now();
     function report(force) {
       var url = w.location.href;
       var title = w.document.title || '';
@@ -232,7 +232,10 @@
         args.channel_status=loggedOut?'needs_sign_in':authContextChanged?'error':channelScan.done?(list.length?'ready':'empty'):'loading';
         key+='|'+args.channel_status+'|'+list.map(function(c){return c.channel_id;}).join(',');
       } else {channelScan=null;}
-      if (!force && key === last) return;
+      // Refresh native credentials even on a stationary page: YouTube rotates
+      // cookies without necessarily changing the visible account or title.
+      if (!force && key === last && Date.now()-lastReportAt<30000) return;
+      lastReportAt=Date.now();
       last = key;
       send('page_state', args);
     }

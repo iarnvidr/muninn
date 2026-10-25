@@ -72,5 +72,5 @@ Unsubscribe verifies the expected account again inside the YouTube page before
 sending the request and before applying local policy changes. Failed or ambiguous
 changes preserve local settings. Subscription lists and unsubscribe markers are
 account-bound; the app does not automatically subscribe or unsubscribe channels
-when login changes. Public download workers remain independent of browser login;
-this change does not add authenticated/private-video downloading.
+when login changes. From 0.2.15, download and playback helpers also receive the
+native browser's YouTube session; see [YOUTUBE-SESSION.md](YOUTUBE-SESSION.md).

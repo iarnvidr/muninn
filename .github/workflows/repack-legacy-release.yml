@@ -1,0 +1,40 @@
+name: Repack published 0.2.14 as DMG
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  repack:
+    if: github.ref == 'refs/heads/main'
+    environment: muninn-release
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install signature verifier
+        run: brew install minisign
+      - name: Download the original published files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download v0.2.14 --dir "$RUNNER_TEMP/legacy" --pattern 'Muninn.app.tar.gz' --pattern 'latest.json' --pattern 'source-*'
+      - name: Verify and restore exact app and corresponding sources
+        run: python3 build/repack_legacy_release.py "$RUNNER_TEMP/legacy" src-tauri/tauri.conf.json
+      - name: Create and mount-verify the DMG
+        run: bash build/package-dmg.sh "$RUNNER_TEMP/legacy/Muninn.app" "$RUNNER_TEMP/legacy/corresponding-source" "$RUNNER_TEMP/legacy/Muninn_0.2.14_macos-arm64.dmg"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: legacy-0.2.14-dmg-review
+          path: ${{ runner.temp }}/legacy/Muninn_0.2.14_macos-arm64.dmg
+          if-no-files-found: error
+          retention-days: 30
+      - name: Add DMG without replacing updater files or deleting existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload v0.2.14 "$RUNNER_TEMP/legacy/Muninn_0.2.14_macos-arm64.dmg"

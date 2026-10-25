@@ -148,6 +148,13 @@ impl Core {
         let out_dir = if entry.protected { self.paths.library_dir.clone() } else { self.paths.video_dir.clone() };
         let parallel = self.running_count().max(1) as u32;
         let limit = (entry.origin != "manual" && settings.prefetch_bandwidth_kbps > 0).then(|| (settings.prefetch_bandwidth_kbps / parallel).max(1));
+        let cookies = match self.youtube_cookie_file() {
+            Ok(cookies) => cookies,
+            Err(_) => {
+                let _ = self.video.set_status(id, STATUS_FAILED, Some("Could not prepare the YouTube session. Retry the download."), self.now());
+                return;
+            }
+        };
         let spec = JobSpec {
             entry_id: entry.id.clone(),
             video_id: entry.video_id.clone(),
@@ -157,6 +164,7 @@ impl Core {
             limit_rate_kbps: limit,
             ffmpeg_dir: tools.ffmpeg_dir(),
             js_runtime: tools.js_runtime.name.clone().zip(tools.js_runtime.path.clone()),
+            cookie_file: cookies.as_ref().map(|jar| jar.path().to_owned()),
         };
         let mut done: Option<(Option<u32>, String)> = None;
         let mut last_write = Instant::now() - Duration::from_secs(1);
@@ -562,6 +570,33 @@ mod tests {
 
     fn queue(core: &Arc<Core>, id: &str, q: &str) {
         core.request_cache(CacheRequest { video_id: id.into(), quality: Some(q.into()), ..CacheRequest::default() }).unwrap();
+    }
+
+    #[test]
+    fn queued_download_receives_native_session_and_removes_jar_on_failure() {
+        struct AuthRunner(std::sync::Mutex<Option<PathBuf>>);
+        impl Runner for AuthRunner {
+            fn run(&self, spec: &JobSpec, _: &mut dyn FnMut(Event), _: &AtomicBool) -> std::result::Result<(), String> {
+                let path = spec.cookie_file.as_ref().expect("signed-in queue must receive cookies");
+                let contents = std::fs::read_to_string(path).unwrap();
+                assert!(contents.contains("#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-only"));
+                assert!(!crate::ytdlp::build_args(spec).join(" ").contains("fixture-only"));
+                *self.0.lock().unwrap() = Some(path.clone());
+                Err("fixture helper failure".into())
+            }
+        }
+        let runner = Arc::new(AuthRunner(std::sync::Mutex::new(None)));
+        let (_d, core) = test_core(Some(runner.clone()), None);
+        let key = "a".repeat(64);
+        let now = core.now();
+        core.observe_youtube_account(true, Some(&key), now).unwrap();
+        core.observe_youtube_cookies(&key, now, vec![crate::youtube_session::YoutubeCookie {
+            domain: ".youtube.com".into(), path: "/".into(), name: "SID".into(), value: "fixture-only".into(),
+            secure: true, http_only: true, expires: None,
+        }]);
+        queue(&core, "aaaaaaaaaaa", "360");
+        wait_until(&core, "authenticated helper completion", || core.video.get_entry("aaaaaaaaaaa.360").unwrap().unwrap().status == STATUS_FAILED && core.running_count() == 0);
+        assert!(!runner.0.lock().unwrap().as_ref().unwrap().exists());
     }
 
     #[test]

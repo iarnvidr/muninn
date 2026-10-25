@@ -1,5 +1,5 @@
 //! A live browser observation, never inferred from cached subscription data.
-//! Only an opaque hash of the page's account context is retained. No credentials.
+//! Account identity is separate from the native, memory-only downloader session.
 use crate::{Core, Error, Result};
 use serde_json::{json, Value};
 
@@ -8,6 +8,7 @@ pub(crate) struct Account {
     pub signed_in: Option<bool>,
     pub key: Option<String>,
     pub changed_at: i64,
+    pub cookies: Vec<crate::youtube_session::YoutubeCookie>,
 }
 impl Core {
     pub fn invalidate_youtube_account(&self) {
@@ -20,6 +21,9 @@ impl Core {
         let mut account=self.account.write().unwrap_or_else(|e|e.into_inner());
         // Older background documents must not replace a newer login observation.
         if changed_at<account.changed_at {return Ok(false);}
+        if !signed_in || account.key.as_deref() != key {
+            account.cookies.clear();
+        }
         account.signed_in=Some(signed_in);
         account.key=if signed_in {key.map(str::to_owned)} else {None};
         account.changed_at=changed_at;

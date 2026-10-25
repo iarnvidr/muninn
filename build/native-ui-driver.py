@@ -38,6 +38,8 @@ def screenshot(name):
     report['screenshots'][name]=str(path)
 
 try:
+    session = send({'op':'youtube_cookie_fixture'})
+    check('native YouTube store hands HttpOnly secure cookies to downloader adapter', session.get('ok') is True, session)
     for page in ('settings','library'):
         click(f'#sidebar [data-page="{page}"]')
         state=ev("({pageOpen:document.querySelector('#app').dataset.pageOpen, selected:[...document.querySelectorAll('#sidebar [aria-current=\\\"page\\\"]')].map(x=>x.dataset.page), content:document.querySelector('#content').innerText.slice(0,120)})")

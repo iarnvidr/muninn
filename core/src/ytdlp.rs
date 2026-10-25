@@ -339,6 +339,7 @@ pub struct JobSpec {
     pub limit_rate_kbps: Option<u32>,
     pub ffmpeg_dir: Option<PathBuf>,
     pub js_runtime: Option<(String, String)>,
+    pub cookie_file: Option<PathBuf>,
 }
 
 pub fn build_args(spec: &JobSpec) -> Vec<String> {
@@ -362,6 +363,9 @@ pub fn build_args(spec: &JobSpec) -> Vec<String> {
         "--print".into(),
         "after_move:MUNINN_DONE\t%(height)s\t%(ext)s\t%(filepath)s".into(),
     ];
+    if let Some(path) = &spec.cookie_file {
+        a.extend(["--cookies".into(), path.display().to_string()]);
+    }
     if spec.merge {
         a.push("--merge-output-format".into());
         a.push("mp4".into());
@@ -618,6 +622,7 @@ mod tests {
             limit_rate_kbps: Some(500),
             ffmpeg_dir: Some(PathBuf::from("/opt/homebrew/bin")),
             js_runtime: Some(("deno".into(), "/opt/homebrew/bin/deno".into())),
+            cookie_file: Some(PathBuf::from("/private/session/cookies.txt")),
         };
         let a = build_args(&spec);
         let joined = a.join(" ");
@@ -626,6 +631,7 @@ mod tests {
         assert!(joined.contains("--limit-rate 500K"));
         assert!(joined.contains("--ffmpeg-location /opt/homebrew/bin"));
         assert!(joined.contains("--js-runtimes deno:/opt/homebrew/bin/deno"));
+        assert!(a.windows(2).any(|pair| pair == ["--cookies", "/private/session/cookies.txt"]));
         assert!(!joined.contains("--merge-output-format"));
         assert_eq!(a[a.len() - 2], "--");
         assert_eq!(a.last().unwrap(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");

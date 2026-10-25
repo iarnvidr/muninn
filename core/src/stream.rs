@@ -681,6 +681,9 @@ impl Core {
         let bin = tools.ytdlp.path.clone().ok_or_else(|| Failure::new(FailureReason::ToolsPending, "yt-dlp is not installed"))?;
         let mut args: Vec<String> =
             ["--ignore-config", "--no-playlist", "--no-warnings", "-f", selector, "-J"].iter().map(|s| s.to_string()).collect();
+        let cookies = self.youtube_cookie_file()
+            .map_err(|_| Failure::new(FailureReason::HelperExit, "Could not prepare the YouTube session"))?;
+        if let Some(jar) = &cookies { args.extend(jar.args()); }
         if let Some(dir) = tools.ffmpeg_dir() {
             args.push("--ffmpeg-location".into());
             args.push(dir.display().to_string());
@@ -1301,6 +1304,25 @@ mod tests {
     fn ytdlp_json(url: &str, with_len: bool) -> String {
         let len = if with_len { ",\"filesize\":1000" } else { "" };
         format!("cat <<'EOF'\n{{\"duration\":10.0,\"height\":360,\"requested_formats\":[{{\"url\":\"{url}\",\"protocol\":\"http\"{len},\"vcodec\":\"avc1\",\"acodec\":\"none\"}},{{\"url\":\"{url}\",\"protocol\":\"http\"{len},\"vcodec\":\"none\",\"acodec\":\"mp4a\"}}]}}\nEOF")
+    }
+
+    #[test]
+    fn playback_resolver_receives_native_cookies_and_removes_jar_after_resolution() {
+        let body = format!("jar=''\nwhile [ $# -gt 0 ]; do if [ \"$1\" = --cookies ]; then shift; jar=\"$1\"; fi; shift; done\n[ -n \"$jar\" ] && grep -q 'fixture-session' \"$jar\" || {{ echo 'ERROR: Sign in' >&2; exit 1; }}\nprintf '%s' \"$jar\" > \"$0.jar\"\n{}", ytdlp_json("http://127.0.0.1:9/v", true));
+        let r = rig(&body, FFMPEG_OK, None);
+        let key = "a".repeat(64);
+        let now = r.core.now();
+        r.core.observe_youtube_account(true, Some(&key), now).unwrap();
+        r.core.observe_youtube_cookies(&key, now, vec![crate::youtube_session::YoutubeCookie {
+            domain: ".youtube.com".into(), path: "/".into(), name: "SID".into(), value: "fixture-session".into(),
+            secure: true, http_only: true, expires: None,
+        }]);
+        let job = r.core.start_stream(ID, false).unwrap();
+        wait_terminal(&job);
+        assert_eq!(phase(&job), "done", "{}", r.log_text());
+        let path = std::fs::read_to_string(r.bin.path().join("yt-dlp.jar")).unwrap();
+        assert!(!Path::new(&path).exists());
+        assert!(!r.log_text().contains("fixture-session"));
     }
 
     #[test]

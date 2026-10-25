@@ -182,7 +182,9 @@ impl Core {
             .ytdlp
             .path
             .ok_or_else(|| Error::other("yt-dlp is not ready"))?;
+        let cookies = self.youtube_cookie_file()?;
         let mut child = Command::new(tool)
+            .args(cookies.as_ref().map(|jar| jar.args()).into_iter().flatten())
             .args([
                 "--ignore-config",
                 "--flat-playlist",
