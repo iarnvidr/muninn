@@ -1,5 +1,15 @@
 # Owner production release gate
 
+## Download layout
+
+Going forward, attach only the DMG installer, `latest.json`, and the signed
+`Muninn.app.tar.gz` updater payload. The manifest contains its signature, so the
+detached `.sig` is a CI review artifact rather than another release download.
+Checksums and signing/review evidence also remain in CI artifacts. Corresponding
+source archives, their manifest, build recipe and notices are accessible inside
+the DMG's `Corresponding Source` folder. Verify the mounted DMG, including those
+source digests, before publication. The initial `0.2.14` release is unchanged.
+
 ## Ad-hoc distribution
 
 An Apple Developer account is optional for distributing a GitHub release. Select
@@ -27,7 +37,7 @@ This is an owner acceptance checklist for the exact protected-main commit intend
 
 ## Workflow preparation evidence
 
-Dispatch `Protected updater release` from `main` with version `0.2.14`, tag `v0.2.14`, `publish=false`. Verify exact tag commit equals workflow `github.sha` and protected main commit; version matches config and app. Review downloadable artifacts: production app signing/notarization evidence, `Muninn.app.tar.gz`, detached updater signature and successful verification against configured public key, `latest.json`, checksums, source archives/recipe and review metadata. Confirm app bundle contains `Contents/Resources/licenses`. Any missing/failed verification blocks release. The production workflow requires Developer ID signing, notarization Accepted, stapling and Gatekeeper assessment; helper-only stub tests do not establish any actual Apple signature or notarization.
+Dispatch `Protected DMG release` from `main` with the matching version/tag and `publish=false`. Verify exact tag commit equals workflow `github.sha` and protected main commit; version matches config and app. Review the CI artifacts: DMG, app signing evidence, `Muninn.app.tar.gz`, detached updater signature and successful verification against the pinned public key, `latest.json`, checksums, source archives/recipe and review metadata. Confirm the app contains `Contents/Resources/licenses` and the mounted DMG includes the corresponding sources. Any missing/failed verification blocks release. Default Developer ID mode requires notarization Accepted, stapling and Gatekeeper assessment; explicit ad-hoc mode records their absence. Helper-only stub tests do not establish an actual Apple signature or notarization.
 
 ## Owner Mac acceptance
 
