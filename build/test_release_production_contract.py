@@ -1,6 +1,7 @@
 """Static fail-closed checks for the protected production release workflow."""
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -46,6 +47,21 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertLess(archive, signer)
         self.assertIn("rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig", self.workflow)
         self.assertIn("stapler staple", self.signer)
+
+    def test_archive_version_check_resolves_helper_from_output_directory(self):
+        archive = self.workflow.split("Create final Tauri-compatible archive, sign and verify", 1)[1]
+        archive = archive.split("Prepare corresponding source archives", 1)[0]
+        command = next(line.strip() for line in archive.splitlines() if " check-version " in line)
+        env = dict(os.environ, GITHUB_WORKSPACE=str(ROOT), bundle_version="0.2.14", INPUT_VERSION="0.2.14")
+        with tempfile.TemporaryDirectory() as output:
+            completed = subprocess.run(["bash", "-c", command], cwd=output, env=env, text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            env["bundle_version"] = "0.2.13"
+            mismatch = subprocess.run(["bash", "-c", command], cwd=output, env=env, text=True, capture_output=True)
+            self.assertNotEqual(mismatch.returncode, 0, "version mismatch must still block release")
+            old_command = 'python3 build/updater_release.py check-version "$bundle_version" "$INPUT_VERSION"'
+            old = subprocess.run(["bash", "-c", old_command], cwd=output, env=env, text=True, capture_output=True)
+            self.assertNotEqual(old.returncode, 0, "the old relative path must reproduce the failure")
 
     def test_ad_hoc_mode_is_explicit_and_keeps_updater_verification(self):
         self.assertIn("default: developer-id", self.workflow)

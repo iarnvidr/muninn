@@ -75,6 +75,11 @@ jobs:
           for name in APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD APPLE_TEAM_ID APPLE_NOTARY_API_KEY_ID APPLE_NOTARY_API_ISSUER_ID APPLE_NOTARY_API_PRIVATE_KEY; do
             if [[ -z "${!name:-}" ]]; then echo "Required Apple credential is unset: $name" >&2; exit 1; fi
           done
+      - name: Restore verified helper tool cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/muninn-tools
+          key: muninn-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/tools.lock.json', 'build/ffmpeg_lgpl.py') }}
       - name: Install native build dependencies
         run: brew install meson ninja pkgconf minisign
       - name: Build, test and sign exact app bundle
@@ -112,7 +117,7 @@ jobs:
           cd "$RUNNER_TEMP/muninn"
           test -d Muninn.app/Contents/Resources/licenses
           bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Muninn.app/Contents/Info.plist)
-          python3 build/updater_release.py check-version "$bundle_version" "$INPUT_VERSION"
+          python3 "$GITHUB_WORKSPACE/build/updater_release.py" check-version "$bundle_version" "$INPUT_VERSION"
           rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig
           tar -czf Muninn.app.tar.gz Muninn.app
           ditto -c -k --sequesterRsrc --keepParent Muninn.app "Muninn_${INPUT_VERSION}_macos-arm64.zip"
