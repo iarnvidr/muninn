@@ -2,6 +2,8 @@
 use crate::{Core, Result};
 use std::{io::Write, path::{Path, PathBuf}};
 
+pub type CookieReader = std::sync::Arc<dyn Fn() -> Result<Vec<YoutubeCookie>> + Send + Sync>;
+
 // Deliberately neither Debug nor Serialize: values are credentials.
 pub struct YoutubeCookie {
     pub domain: String,
@@ -56,11 +58,25 @@ impl Core {
     }
 
     pub(crate) fn youtube_cookie_file(&self) -> Result<Option<CookieFile>> {
-        let text = {
+        // Browser credentials are authoritative. Page account IDs are only for
+        // account-bound subscription actions, and may not exist at startup.
+        let reader = self.youtube_cookie_reader.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let (text, login_cookies, source) = if let Some(reader) = reader {
+            let cookies = reader().map_err(|_| {
+                self.log_event("warn", "youtube.session", serde_json::json!({"source":"native_browser","state":"unavailable"}));
+                crate::Error::other("Could not read the YouTube browser session. Retry the download.")
+            })?;
+            let cookies: Vec<_> = cookies.into_iter().filter(|c| cookie_line(c).is_some()).collect();
+            let login = cookies.iter().any(|c| matches!(c.name.as_str(), "SID" | "SAPISID" | "__Secure-1PSID" | "__Secure-3PSID"));
+            (cookies.iter().filter_map(cookie_line).collect::<String>(), login, "native_browser")
+        } else {
             let account = self.account.read().unwrap_or_else(|e| e.into_inner());
-            if account.signed_in != Some(true) || account.cookies.is_empty() { return Ok(None); }
-            account.cookies.iter().filter_map(cookie_line).collect::<String>()
+            let text = if account.signed_in == Some(true) { account.cookies.iter().filter_map(cookie_line).collect::<String>() } else { String::new() };
+            (text, false, "observation")
         };
+        // Presence only, never names/values/identifiers or the cookie file path.
+        self.log_event("info", "youtube.session", serde_json::json!({"source":source,"jar_supplied":!text.is_empty(),"login_present":login_cookies}));
+        if text.is_empty() { return Ok(None); }
         let directory = std::env::temp_dir().join(format!("muninn-session-{}", uuid::Uuid::new_v4()));
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)] {
@@ -89,6 +105,36 @@ mod tests {
     fn cookie(domain: &str) -> YoutubeCookie {
         YoutubeCookie { domain: domain.into(), path: "/".into(), name: "SID".into(),
             value: "synthetic-secret".into(), secure: true, http_only: true, expires: None }
+    }
+    #[test]
+    fn live_reader_works_before_page_observation_and_refreshes_each_helper() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let (_d, core) = test_core(None, None);
+        assert_eq!(core.youtube_account()["state"], "unknown");
+        let generation = Arc::new(AtomicUsize::new(0));
+        let state = generation.clone();
+        *core.youtube_cookie_reader.write().unwrap() = Some(Arc::new(move || {
+            let n = state.load(Ordering::SeqCst);
+            if n == 2 { return Ok(vec![]); }
+            let mut c = cookie(".youtube.com"); c.value = format!("fixture-generation-{n}");
+            Ok(vec![c])
+        }));
+        let first = core.youtube_cookie_file().unwrap().unwrap();
+        assert!(std::fs::read_to_string(first.path()).unwrap().contains("fixture-generation-0"));
+        generation.store(1, Ordering::SeqCst);
+        let second = core.youtube_cookie_file().unwrap().unwrap();
+        assert!(std::fs::read_to_string(second.path()).unwrap().contains("fixture-generation-1"));
+        generation.store(2, Ordering::SeqCst);
+        assert!(core.youtube_cookie_file().unwrap().is_none());
+        assert!(!core.logs(100).to_string().contains("fixture-generation"));
+        let events = core.logs(100);
+        let session = events["events"].as_array().unwrap().iter().find(|e| e["event"] == "youtube.session").unwrap();
+        assert_eq!(session["data"]["source"], "native_browser");
+        assert_eq!(session["data"]["jar_supplied"], true);
+        assert_eq!(session["data"]["login_present"], true);
+        *core.youtube_cookie_reader.write().unwrap() = Some(Arc::new(|| Err(crate::Error::other("fixture-private-error"))));
+        assert!(core.youtube_cookie_file().is_err(), "a failed native read must not silently start anonymously");
+        assert!(!core.logs(100).to_string().contains("fixture-private-error"));
     }
     #[test]
     fn native_session_is_private_scoped_and_removed_after_helper_exits() {

@@ -260,19 +260,6 @@ pub async fn page_state(
                 .map_err(|e| e.to_string())?;
         }
     }
-    if youtube && account_current && signed_in == Some(true) {
-        if let (Some(key), Some(changed_at)) = (account_key.clone(), account_changed_at) {
-            // Read the native shared browser store, including HttpOnly cookies.
-            // No credential values cross the page's IPC boundary. Cookie reads
-            // must run away from the UI thread (Tauri/WebView2 requirement).
-            let core = shell.core.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let cookies = read_youtube_cookies(&webview)?;
-                core.observe_youtube_cookies(&key, changed_at, cookies);
-                Ok::<(), &'static str>(())
-            }).await.map_err(|_| "Could not read the YouTube session")??;
-        }
-    }
     if let Some(channels) = channels {
         if youtube && account_current && actual.path() == "/feed/channels" {
             shell

@@ -92,11 +92,21 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                 let cookie = tauri::webview::Cookie::build(("MUNINN_NATIVE_SESSION_TEST", "synthetic-only"))
                     .domain(".youtube.com").path("/").secure(true).http_only(true).build();
                 view.set_cookie(cookie.clone()).map_err(|_| "fixture cookie setup failed")?;
-                let cookies = crate::commands::read_youtube_cookies(view);
-                let _ = view.delete_cookie(cookie);
-                Ok(cookies?.iter().any(|cookie| cookie.name == "MUNINN_NATIVE_SESSION_TEST"
+                shell.core.invalidate_youtube_account();
+                let reader = shell.core.youtube_cookie_reader.read().unwrap().clone().ok_or("native cookie reader missing")?;
+                // No page_state, account ID or observed sign-in is supplied.
+                let cookies = reader().map_err(|_| "native reader failed")?;
+                let initial = cookies.iter().any(|cookie| cookie.name == "MUNINN_NATIVE_SESSION_TEST"
                     && cookie.value == "synthetic-only" && cookie.secure && cookie.http_only
-                    && cookie.path == "/" && cookie.domain == ".youtube.com"))
+                    && cookie.path == "/" && cookie.domain == ".youtube.com");
+                let mut rotated = cookie.clone(); rotated.set_value("synthetic-rotated");
+                view.set_cookie(rotated).map_err(|_| "fixture rotation failed")?;
+                let rotated = reader().map_err(|_| "native reread failed")?.iter().any(|cookie|
+                    cookie.name == "MUNINN_NATIVE_SESSION_TEST" && cookie.value == "synthetic-rotated");
+                let _ = view.delete_cookie(cookie);
+                let cleared = !reader().map_err(|_| "native sign-out reread failed")?.iter().any(|cookie|
+                    cookie.name == "MUNINN_NATIVE_SESSION_TEST");
+                Ok(initial && rotated && cleared)
             })();
             shell.close_tab(tab);
             respond(d, id, &match result { Ok(ok) => json!({"ok":ok}), Err(error) => json!({"ok":false,"error":error}) });

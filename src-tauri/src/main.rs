@@ -207,6 +207,7 @@ fn main() {
                 CoreConfig {
                     data_dir,
                     bundled_bin: bundled_bin(app),
+                    youtube_cookie_reader: Some(shell::youtube_cookie_reader(app.handle().clone())),
                     ..CoreConfig::default()
                 },
                 0,
