@@ -45,12 +45,31 @@
       return {row, order, score:terms.every(t => text.includes(t)) ? (title === fold(query).trim() ? 3 : title.startsWith(fold(query).trim()) ? 2 : 1) : 0};
     }).filter(x => x.score).sort((a,b) => b.score-a.score || a.order-b.order).map(x => x.row);
   }
-  function liveUrl(query, category) {
-    const filters = {videos:'EgIQAQ==', live:'EgJAAQ==', channels:'EgIQAg=='};
-    if (!filters[category] || !String(query).trim()) throw new Error('Choose a category and enter a search');
-    return 'https://www.youtube.com/results?' + new URLSearchParams({search_query:String(query).trim(),sp:filters[category]});
+  function navigationDirection(event, editable) {
+    if (editable || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
+    return {ArrowLeft:'left',h:'left',ArrowDown:'down',j:'down',ArrowUp:'up',k:'up',ArrowRight:'right',l:'right'}[event.key] || null;
   }
-  const API = {libraryIndex, savedChannels, matches, liveUrl};
+  // Each band contains category columns; each column contains a header and rows.
+  function moveCursor(bands, cursor, direction) {
+    let {band,column,row}=cursor;
+    const count=(b,c)=>bands[b]?.[c]||0;
+    if (direction==='left'||direction==='right') {
+      const step=direction==='left'?-1:1;
+      for(let c=column+step;c>=0&&c<(bands[band]?.length||0);c+=step) {
+        if(count(band,c)) return {band,column:c,row:Math.min(row,count(band,c)-1)};
+      }
+    } else {
+      const step=direction==='up'?-1:1;
+      if(row+step>=0&&row+step<count(band,column)) return {band,column,row:row+step};
+      for(let b=band+step;b>=0&&b<bands.length;b+=step) {
+        const c=count(b,column)?column:bands[b].findIndex(n=>n>0);
+        if(c>=0) return {band:b,column:c,row:step>0?0:count(b,c)-1};
+      }
+      if(direction==='up') return null;
+    }
+    return cursor;
+  }
+  const API = {libraryIndex, savedChannels, matches, navigationDirection, moveCursor};
   if (typeof module === 'object' && module.exports) module.exports = API;
   root.MuninnSearch = API;
   if (!root.document || !root.Muninn) return;
@@ -58,7 +77,7 @@
   let input, draw, timer, tabTimer, generation=0;
   const state = () => {
     const value=M.searchState ||= {};
-    for(const [key,fallback] of Object.entries({query:'',scope:'all',saved:'all',category:'videos'})) value[key] ??= fallback;
+    for(const [key,fallback] of Object.entries({query:'',scope:'all',saved:'all',onlineType:'all'})) value[key] ??= fallback;
     return value;
   };
   M.pages.search = {
@@ -70,67 +89,146 @@
     },
     mount(host) {
       const own=++generation, S=state();
-      let data={library:[],channels:[],configs:[],groups:[]}, loading=true, failures=[], limit=20;
-      const select = (label, options, key) => {
-        const control=h('select', {'aria-label':label,onchange:()=>{S[key]=control.value;limit=20;draw();}}, ...options.map(([value,text])=>h('option',{value,text})));
-        control.value=S[key] || options[0][0];
-        return h('label',null,h('span',{text:label}),control);
+      let data={library:[],channels:[],configs:[],groups:[]}, loading=true, failures=[], limit=20, onlineRevision=0;
+      const categories=[['videos','Videos'],['live','Live streams'],['channels','Channels']];
+      S.online ||= {query:'',results:{},errors:{},pending:[]};
+      if(S.online.pending?.length) {S.online.errors={...S.online.errors,...Object.fromEntries(S.online.pending.map(k=>[k,'Search interrupted. Press Enter to retry.']))};S.online.pending=[];}
+      const filters = (label, options, key) => {
+        const group=h('fieldset',{'data-filter':key},h('legend',{text:label}));
+        for(const [value,text] of options) group.append(h('button',{type:'button',text,'data-value':value,'aria-pressed':String(S[key]===value),onclick:()=>{S[key]=value;limit=20;draw();}}));
+        group.addEventListener('keydown',event=>{
+          const direction=navigationDirection(event,false);
+          if(!direction||!event.target.matches('button'))return;
+          const buttons=[...group.querySelectorAll('button')],index=buttons.indexOf(event.target),step=['up','left'].includes(direction)?-1:1;
+          event.preventDefault();buttons[(index+step+buttons.length)%buttons.length].focus();
+        });
+        return group;
       };
-      input=h('input',{type:'search',id:'universal-query',value:S.query||'',placeholder:'Search tabs, videos and saved channels',autocomplete:'off',
-        'aria-label':'Search Muninn',oninput:()=>{S.query=input.value;limit=20;clearTimeout(timer);timer=setTimeout(()=>draw(),150);}});
+      const bandNodes=[h('div',{class:'search-columns','data-band':'0'}),h('div',{class:'search-columns','data-band':'1'})];
+      const cursorOf=node=>{const cell=node?.closest('[data-search-cell]');return cell?{band:Number(cell.dataset.band),column:Number(cell.dataset.column),row:Number(cell.dataset.row)}:null;};
+      const cells=()=>bandNodes.map(band=>[0,1,2].map(column=>[...band.querySelectorAll('[data-search-cell][data-column="'+column+'"]')]));
+      const focusCursor=cursor=>{
+        if(!cursor) {input.focus();return;}
+        const node=cells()[cursor.band]?.[cursor.column]?.[cursor.row];
+        if(node) {node.focus({preventScroll:true});node.scrollIntoView({block:'nearest',inline:'nearest'});}
+      };
+      const focusFirst=(onlineOnly=false)=>{
+        const matrix=cells();
+        for(const band of onlineOnly?[0]:[0,1]) for(let column=0;column<3;column++) if(matrix[band][column].length>1) {focusCursor({band,column,row:1});return;}
+      };
+      input=h('input',{type:'search',id:'universal-query',value:S.query||'',placeholder:'Search Muninn or enter a YouTube address',autocomplete:'off',maxlength:200,
+        'aria-label':'Search Muninn','aria-describedby':'search-help',oninput:()=>{S.query=input.value;limit=20;clearTimeout(timer);timer=setTimeout(()=>draw(),120);},
+        onkeydown:event=>{if(event.key==='Enter'&&event.isComposing){event.preventDefault();return;}if(event.key==='ArrowDown'&&!event.isComposing&&!event.metaKey&&!event.ctrlKey&&!event.altKey){event.preventDefault();clearTimeout(timer);draw();focusFirst();}}});
       const status=h('p',{class:'muted',role:'status','aria-live':'polite'});
-      const results=h('div',{class:'search-results'});
-      const live= h('button',{type:'submit',id:'search-youtube',class:'primary',text:'Search YouTube'});
-      const onlineNote=h('p',{class:'muted'});
-      const liveForm=h('form',{class:'search-live',onsubmit:event=>{
-        event.preventDefault();
-        if (!S.query?.trim() || M.offline || M.settings.offline_mode) return;
-        M.newTab(liveUrl(S.query,S.category)).catch(M.flashError);
-      }},h('h2',{class:'h3',text:'Search YouTube'}),h('p',{class:'muted',text:'Search online only when you choose this action.'}),
-      select('YouTube category',[['videos','Videos'],['live','Live streams'],['channels','Channels']],'category'),live,onlineNote);
+      const live=h('button',{type:'submit',id:'search-youtube',class:'primary',text:'Search online ↵'});
+      const onlineNote=h('p',{class:'muted',role:'status','aria-live':'polite'});
       const errors=h('div',{class:'search-errors'});
       const retry=h('button',{type:'button',text:'Refresh local results',onclick:()=>load()});
-      const shell=h('div',{class:'search-page'},h('div',{class:'page-head'},h('div',null,h('h1',{class:'h1',text:'Search Muninn'}),h('p',{class:'muted',text:'Search this device first. Saved status and downloaded availability are separate.'}))),
-        h('form',{class:'search-query',onsubmit:event=>{event.preventDefault();clearTimeout(timer);draw();}},input),
-        h('div',{class:'search-filters'},select('Search in',[['all','All local'],['tabs','Open tabs'],['library','Library'],['channels','Saved channels']],'scope'),
-          select('Library saved status',[['all','Saved and not saved'],['saved','Saved'],['unsaved','Not saved']],'saved'),retry),status,errors,results,liveForm);
+      const rail=h('aside',{class:'search-filters','aria-label':'Search filters'},
+        filters('Online types',[['all','All types'],...categories],'onlineType'),
+        filters('Local sources',[['all','All local'],['tabs','Open tabs'],['library','Library'],['channels','Saved channels']],'scope'),
+        filters('Library saved status',[['all','Saved and not saved'],['saved','Saved'],['unsaved','Not saved']],'saved'),retry);
+      const shell=h('div',{class:'search-page'},h('h1',{class:'h1',text:'Search Muninn'}),
+        h('form',{class:'search-query',onsubmit:event=>{event.preventDefault();if(!event.isComposing)submitOnline();}},input,live),
+        h('p',{id:'search-help',class:'muted',text:'Enter searches online · ↓ enters results · ↑↓ or j/k move · ←→ or h/l change type · Esc returns to search'}),
+        h('div',{class:'search-workspace'},rail,h('div',{class:'search-content'},
+          h('section',{class:'search-band','aria-label':'Online results'},h('h2',{class:'h3',text:'Online · YouTube'}),onlineNote,bandNodes[0]),
+          h('section',{class:'search-band','aria-label':'Local results'},h('h2',{class:'h3',text:'On this device'}),status,errors,bandNodes[1]))));
       host.append(shell);
+      shell.addEventListener('keydown',event=>{
+        const cursor=cursorOf(event.target);
+        if(!cursor)return;
+        if(event.key==='Escape') {event.preventDefault();input.focus();input.select();return;}
+        const direction=navigationDirection(event,!!event.target.closest('input,textarea,[contenteditable="true"]'));
+        if(!direction)return;
+        event.preventDefault();focusCursor(moveCursor(cells().map(b=>b.map(c=>c.length)),cursor,direction));
+      });
       const open = row => {
-        const action=row.kind==='tabs'?()=>M.activateTab(row.id):row.kind==='library'?()=>M.openVideo(row.id):()=>M.openChannel(row.id);
+        const action=row.kind==='tabs'?()=>M.activateTab(row.id):(row.kind==='library'||row.kind==='video')?()=>M.openVideo(row.id):()=>M.openChannel(row.id);
         Promise.resolve().then(action).catch(M.flashError);
       };
       draw = () => {
         if (generation!==own) return;
+        const focused=document.activeElement, focusKey=focused?.dataset.searchKey, previous=cursorOf(focused);
+        const scrolls=bandNodes.map(band=>new Map([...band.querySelectorAll('.search-column')].map(column=>[column.dataset.column,column.querySelector('.search-column-body').scrollTop])));
         const videos=libraryIndex(data.library), byId=new Map(videos.map(v=>[v.id,v]));
         const tabs=M.tabs.list.map(tab=>({kind:'tabs',id:tab.id,title:M.L.tabTitle(tab),url:tab.url||'',channel:'',video:byId.get(tab.video_id || M.L.extractVideoId(tab.url))}));
         const library=videos.filter(v=>S.saved==='all'||!S.saved||(S.saved==='saved'?v.saved:!v.saved));
+        const column=(band,index,kind,label,rows,message)=>{
+          const node=h('section',{class:'search-column','aria-label':label,'data-column':index});
+          const props=row=>({'data-search-cell':'','data-band':band,'data-column':index,'data-row':row});
+          const header=h('button',{type:'button',class:'search-type',...props(0),'data-search-key':band+'-'+kind+'-header',text:label+' · '+rows.length,onclick:()=>focusCursor({band,column:index,row:rows.length?1:0})});
+          const body=h('div',{class:'search-column-body'});
+          for(const [index,row] of rows.slice(0,limit).entries()) {
+            const video=row.kind==='library'?row:row.video;
+            const availability=video?(video.complete?'Downloaded':video.downloading?'Incomplete download':'No downloaded copy'):'';
+            body.append(h('button',{type:'button',class:'search-result',...props(index+1),'data-search-key':band+'-'+kind+'-'+row.id,
+              'data-search-kind':kind,'data-id':row.id,'data-saved':video?String(video.saved):null,onclick:()=>open(row)},
+              icon(kind==='tabs'?'tabs':row.kind==='channel'||row.kind==='channels'?'channel':row.live?'pulse':'library'),
+              h('span',{class:'search-result-text'},h('strong',{text:row.title}),h('span',{class:'muted',text:[row.channel||row.url,row.live?'Live':availability].filter(Boolean).join(' · ')})),
+              video?h('span',{class:'badge '+(video.saved?'saved':'unsaved'),text:video.saved?'Saved':'Not saved'}):null));
+          }
+          if(!rows.length)body.append(h('p',{class:'muted search-empty',text:message||'No matches'}));
+          if(rows.length>limit)body.append(h('button',{type:'button',text:'Show more',...props(limit+1),'data-search-key':band+'-'+kind+'-more',onclick:()=>{const next=limit+1;limit+=20;draw();focusCursor({band,column:index,row:next});}}));
+          node.append(header,body);return node;
+        };
+        const sameQuery=S.online.query===S.query.trim()&&!!S.query.trim();
+        const onlineColumns=[];
+        for(const [index,[key,label]] of categories.entries()) {
+          if(S.onlineType!=='all'&&S.onlineType!==key)continue;
+          const found=sameQuery?(S.online.results[key]||[]).map(row=>({...row,video:row.kind==='video'?(byId.get(row.id)||{saved:false,complete:false}):null})):[];
+          const pending=sameQuery&&S.online.pending.includes(key);
+          onlineColumns.push(column(0,index,key,label,found,pending?'Searching…':sameQuery?S.online.errors[key]||'No online matches':'Press Enter to search online'));
+        }
+        bandNodes[0].replaceChildren(...onlineColumns);
+        bandNodes[0].dataset.columns=onlineColumns.length;
         const sections=[['tabs','Open tabs',tabs],['library','Library',library],['channels','Saved channels',savedChannels(data.channels,data.configs,data.groups)]];
         let total=0;
         const nodes=[];
-        for (const [kind,label,rows] of sections) {
+        for (const [index,[kind,label,rows]] of sections.entries()) {
           if (S.scope && S.scope!=='all' && S.scope!==kind) continue;
           const found=matches(rows,S.query); total+=found.length;
-          if (!found.length) continue;
-          const section=h('section',{'aria-label':label},h('h2',{class:'h3',text:label+' · '+found.length}));
-          for (const row of found.slice(0,limit)) {
-            const video=row.kind==='library'?row:row.video;
-            const availability=video ? (video.complete?'Downloaded':video.downloading?'Incomplete download':'No downloaded copy') : '';
-            const savedDetail=video?.savedMedia?'Saved video':video?.savedLink?'Saved link':'';
-            section.append(h('button',{type:'button',class:'search-result','data-search-kind':kind,'data-id':row.id,
-              'data-saved':video?String(video.saved):null,onclick:()=>open(row)},icon(kind==='tabs'?'tabs':kind==='library'?'library':'channel'),
-              h('span',{class:'search-result-text'},h('strong',{text:row.title}),h('span',{class:'muted',text:[row.channel||row.url,savedDetail,availability].filter(Boolean).join(' · ')})),
-              video?h('span',{class:'badge '+(video.saved?'saved':'unsaved'),text:video.saved?'Saved':'Not saved'}):null));
-          }
-          if (found.length>limit) section.append(h('button',{type:'button',text:'Show more '+label.toLowerCase(),onclick:()=>{limit+=20;draw();}}));
-          nodes.push(section);
+          nodes.push(column(1,index,kind,label,found,loading?'Loading…':'No local matches'));
         }
-        results.replaceChildren(...nodes);
+        bandNodes[1].replaceChildren(...nodes);
+        bandNodes[1].dataset.columns=nodes.length;
+        bandNodes.forEach((band,index)=>{for(const column of band.querySelectorAll('.search-column'))column.querySelector('.search-column-body').scrollTop=scrolls[index].get(column.dataset.column)||0;});
         status.textContent=loading?'Loading local results…':total+' local result'+(total===1?'':'s')+(failures.length?' · Some sources unavailable':'');
-        if (!loading && !total) results.append(h('p',{class:'empty',text:'No local matches. Try another term or choose a YouTube search below.'}));
         const offline=M.offline||M.settings.offline_mode;
         live.disabled=!!offline||!S.query?.trim();
-        onlineNote.textContent=offline?'YouTube search is unavailable while offline.':'';
+        onlineNote.textContent=offline?'Offline · local results remain available':sameQuery?(S.online.pending.length?'Searching YouTube…':'Results for “'+S.online.query+'”'):'Typing searches this device. Press Enter for YouTube results.';
+        for(const group of rail.querySelectorAll('[data-filter]'))for(const button of group.querySelectorAll('button'))button.setAttribute('aria-pressed',String(S[group.dataset.filter]===button.dataset.value));
+        if(focusKey) {
+          const replacement=[...shell.querySelectorAll('[data-search-key]')].find(n=>n.dataset.searchKey===focusKey);
+          if(replacement)replacement.focus({preventScroll:true});
+          else if(previous)focusCursor(moveCursor(cells().map(b=>b.map(c=>c.length)),{...previous,row:0},'right'));
+        }
       };
+      async function submitOnline() {
+        clearTimeout(timer);S.query=input.value;
+        const query=S.query.trim();
+        if(!query)return;
+        if(/^(https?:\/\/|(?:www\.|m\.)?youtube\.com\/|youtu\.be\/)/i.test(query)){M.go(query).catch(M.flashError);return;}
+        if(M.offline||M.settings.offline_mode){draw();return;}
+        const revision=++onlineRevision;
+        S.online={query,results:{},errors:{},pending:categories.map(([key])=>key)};draw();
+        await Promise.allSettled(categories.map(async([category])=>{
+          try {
+            const result=await M.api('POST','/api/search',{query,category});
+            if(generation!==own||revision!==onlineRevision)return;
+            if(!Array.isArray(result?.items))throw Error('Invalid search response. Press Enter to retry.');
+            S.online.results[category]=result.items;
+          } catch(error) {
+            if(generation!==own||revision!==onlineRevision)return;
+            S.online.errors[category]=M.errText(error);
+          } finally {
+            if(generation===own&&revision===onlineRevision){
+              S.online.pending=S.online.pending.filter(k=>k!==category);draw();
+              if(S.query.trim()===query&&document.activeElement===input)focusFirst(true);
+            }
+          }
+        }));
+      }
       async function load() {
         loading=true;retry.disabled=true;draw();
         const sources=[['library','/api/library'],['channels','/api/channels'],['configs','/api/subscriptions'],['groups','/api/channel-groups']];

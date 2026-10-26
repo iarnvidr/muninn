@@ -37,18 +37,21 @@ test('local matching handles multiple words, accents, URLs and channel names',()
   assert.deepEqual(S.matches(rows,'watch local').map(v=>v.id),[7]);
   assert.deepEqual(S.matches(rows,'missing'),[]);
 });
-test('online categories are explicit and preserve a safely encoded query',()=>{
-  const query='cats & sp=wrong # channel';
-  const filters={videos:'EgIQAQ==',live:'EgJAAQ==',channels:'EgIQAg=='};
-  for(const [category,sp] of Object.entries(filters)) {
-    const url=new URL(S.liveUrl(query,category));
-    assert.equal(url.origin,'https://www.youtube.com');
-    assert.equal(url.pathname,'/results');
-    assert.equal(url.searchParams.get('search_query'),query);
-    assert.deepEqual(url.searchParams.getAll('sp'),[sp]);
+test('arrows and hjkl map to navigation without stealing text, modifiers or IME input',()=>{
+  for(const [key,direction] of Object.entries({h:'left',ArrowLeft:'left',j:'down',ArrowDown:'down',k:'up',ArrowUp:'up',l:'right',ArrowRight:'right'})) {
+    assert.equal(S.navigationDirection({key},false),direction);
+    assert.equal(S.navigationDirection({key},true),null);
+    for(const modifier of ['ctrlKey','metaKey','altKey','shiftKey','isComposing'])assert.equal(S.navigationDirection({key,[modifier]:true},false),null);
   }
-  assert.throws(()=>S.liveUrl(' ', 'videos'));
-  assert.throws(()=>S.liveUrl('cats', 'unknown'));
+});
+test('result navigation crosses types and online/local bands, clamping unequal columns',()=>{
+  const bands=[[4,2,3],[3,0,2]];
+  assert.deepEqual(S.moveCursor(bands,{band:0,column:0,row:3},'right'),{band:0,column:1,row:1});
+  assert.deepEqual(S.moveCursor(bands,{band:0,column:0,row:3},'down'),{band:1,column:0,row:0});
+  assert.deepEqual(S.moveCursor(bands,{band:1,column:2,row:0},'up'),{band:0,column:2,row:2});
+  assert.deepEqual(S.moveCursor(bands,{band:1,column:0,row:1},'right'),{band:1,column:2,row:1});
+  assert.equal(S.moveCursor(bands,{band:0,column:1,row:0},'up'),null);
+  assert.deepEqual(S.moveCursor(bands,{band:1,column:2,row:1},'down'),{band:1,column:2,row:1});
 });
 test('search shortcut requires the command/control modifier',()=>{
   assert.equal(L.shortcutAction({key:'k'}),null);

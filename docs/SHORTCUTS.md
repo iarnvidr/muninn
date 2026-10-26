@@ -4,7 +4,9 @@ This table describes the web UI handlers, not operating-system/browser guarantee
 
 | Scope / keys | Implemented action | Conditions / conflict notes |
 |---|---|---|
-| Ctrl/⌘+T, W, L, R | New tab, close tab, focus address bar, reload | Window handler (`ui/lib.js` shortcutAction). Alt combinations ignored. Ctrl+[ and Ctrl+] are not handled; Meta+[ and Meta+] navigate back/forward. These are window controls, separate from tab-strip focus cycling. |
+| Ctrl/⌘+T, W, R | New tab, close tab, reload | Window handler (`ui/lib.js` shortcutAction). Alt combinations ignored. Ctrl+[ and Ctrl+] are not handled; Meta+[ and Meta+] navigate back/forward. These are window controls, separate from tab-strip focus cycling. |
+| Ctrl/⌘+L or K | Open and focus universal search/address input | Does not create a tab; macOS native menu accelerators also work with the YouTube webview focused. Enter submits a YouTube URL directly or fetches online search results. |
+| Search: arrows or h/j/k/l | Move through results and between types | Down enters results from the query. hjkl applies only outside text input. Up/Down crosses online/local bands; Left/Right changes type. Enter opens a result; Escape returns to the query. |
 | Space or K | Toggle playback | Player handler only. |
 | J/L; Left/Right arrows | Seek -10/+10 seconds; arrows -5/+5 seconds | Player handler only. |
 | Up/Down arrows | Volume +5/-5 | Player handler only. |

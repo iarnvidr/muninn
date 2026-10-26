@@ -154,6 +154,9 @@
       activeVideo=await currentPlayer(queueIds[1]);
       opens=routing.filter(x=>x.id===tabId&&x.video_id===queueIds[1]&&x.playlist?.index===2);
       assert('previous queue control routes second id and refreshes current tab/player', opens.length>=2 && document.querySelector('video')===activeVideo, {opens,routing});
+      const tabsBeforeSearch=M.tabs.list.length;window.muninnFocusAddress();await settle();
+      assert('Cmd+L hook opens focused search from Player without a new tab',M.page==='search'&&document.activeElement?.id==='universal-query'&&M.tabs.list.length===tabsBeforeSearch);
+      await M.activateTab(tabId);await settle();
       return {passed:results.every(x=>x.passed), results, calls, routing, tabId};
     } finally {
       M.api = originalApi; M.invoke=originalInvoke;
