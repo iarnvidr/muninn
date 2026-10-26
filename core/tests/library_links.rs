@@ -45,7 +45,7 @@ fn imported_links_are_persistent_collection_items_without_tabs_media_or_download
         .library_view()
         .unwrap()
         .iter()
-        .all(|v| v["state"] == "link" && v["size_bytes"] == 0));
+        .all(|v| v["state"] == "link" && v["size_bytes"] == 0 && v["saved_link"] == true));
     drop(core);
     let core = open();
     assert_eq!(core.library_view().unwrap().len(), 2);
@@ -116,7 +116,9 @@ fn large_link_collection_does_not_become_tabs_and_removing_reference_keeps_media
     entry.protected = true;
     core.video.insert_entry(&entry).unwrap();
     assert_eq!(core.library_view().unwrap().len(), 1000);
+    assert!(core.library_view().unwrap().iter().any(|v| v["video_id"] == "00000000000" && v["saved_link"] == true));
     core.remove_library_link("00000000000").unwrap();
+    assert!(core.library_view().unwrap().iter().any(|v| v["video_id"] == "00000000000" && v["saved_link"] == false));
     assert!(core.video.get_entry(&entry.id).unwrap().unwrap().protected);
     assert_eq!(core.organization().collections["Archive"].len(), 999);
 }

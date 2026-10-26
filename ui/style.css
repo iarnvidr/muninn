@@ -241,6 +241,15 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .tabrow { grid-area:tabs; display:flex; align-items:flex-end; gap:4px; padding:2px 6px 0; height:34px; background:var(--chrome); min-width:0; }
 .tabstrip { display:flex; align-items:flex-end; gap:2px; min-width:0; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; height:100%; flex:1; }
 .tabstrip::-webkit-scrollbar { display:none; }
+.tab-tools { display:flex; flex:none; align-items:center; gap:2px; }
+.app[data-tabs-layout="vertical"] { --tabs-w:clamp(144px,18vw,210px); grid-template-columns:var(--side-w) var(--tabs-w) minmax(0,1fr); grid-template-rows:38px minmax(0,1fr); grid-template-areas:"side tabs toolbar" "side tabs content"; }
+.app[data-tabs-layout="vertical"] .tabrow { height:auto; min-height:0; flex-direction:column; align-items:stretch; padding:4px; border-right:1px solid var(--border); }
+.app[data-tabs-layout="vertical"] .tabstrip { flex-direction:column; align-items:stretch; overflow-y:auto; overflow-x:hidden; height:auto; min-height:0; scrollbar-width:thin; }
+.app[data-tabs-layout="vertical"] .tab-tools { order:-1; min-height:30px; }
+.app[data-tabs-layout="vertical"] .tab { flex:none; width:100%; min-width:0; max-width:none; height:36px; border-radius:4px; }
+.app[data-tabs-layout="vertical"] .tab-zzz, .app[data-tabs-layout="vertical"] .tab-close { top:7px; }
+.app[data-tabs-layout="vertical"] .tab-group-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:28px; margin:4px 0; }
+.app[data-tabs-layout="vertical"] .tab-ungroup { overflow:hidden; font-size:10px; padding:4px; }
 .tab { position:relative; display:flex; align-items:center; flex:0 0 170px; min-width:130px; max-width:210px; height:30px; border-radius:4px 4px 0 0; color:var(--muted); }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.active { background: var(--toolbar); color: var(--text); }
@@ -364,8 +373,10 @@ img.missing { opacity: 0; }
 
 /* ------------------------------------------------------------------ Watch view */
 .view-watch { padding: 16px 22px 40px; }
-.watch-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; max-width: 1560px; margin: 0 auto; }
-@media (min-width: 1500px) { .watch-grid { grid-template-columns: minmax(0, 1fr) 300px; } }
+.view-watch { container-type:inline-size; }
+.watch-grid { display: grid; grid-template-columns: minmax(0, 1fr) clamp(190px,24%,280px); gap: 16px; max-width: 1560px; margin: 0 auto; }
+@container (max-width:560px) { .watch-grid { grid-template-columns:minmax(0,1fr); } }
+.watch-side { min-width:0; }
 .watch-main { min-width: 0; }
 .player { background: #000; border-radius: 12px; overflow: hidden; outline: none; display: flex; flex-direction: column; }
 .pv-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100vh - 230px); min-height: 200px; background: #000; }
@@ -449,6 +460,10 @@ input[type="range"].pc-vol::-moz-range-thumb { width: 12px; height: 12px; border
 .comments-more { min-width: 160px; }
 .comments-msg { width: 220px; color: var(--muted); }
 .watch-side .h3 { margin: 4px 0 10px; }
+.watch-side .rel { grid-template-columns:96px minmax(0,1fr); gap:8px; }
+.watch-side .rel-title { font-size:12px; }
+.watch-side .rel-chan { font-size:11px; }
+.watch-side .vdur { font-size:10px; }
 .related { display: flex; flex-direction: column; gap: 10px; }
 .rel { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 0; border: 0; background: none; text-align: left; border-radius: 10px; align-items: start; color: var(--text); }
 .rel:hover:not(:disabled), .rel:active:not(:disabled) { background: none; }
@@ -823,6 +838,25 @@ dialog.modal::backdrop { background: rgba(0,0,0,.45); }
   #app[data-sidebar=collapsed] .muninn-brand,
   :root[data-theme^=classified] #app[data-sidebar=collapsed] .muninn-brand { padding:6px 0; margin:0 0 6px; min-height:0; }
 }
+
+/* Universal search stays in the content view, clear of native browser views. */
+.search-page { max-width:1080px; margin:0 auto; padding:24px; }
+.search-query { margin:18px 0; }
+.search-query input { width:100%; min-height:44px; }
+.search-filters { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.search-filters label, .search-live label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+.search-filters select { min-width:160px; }
+.search-results section { margin:24px 0; }
+.search-result { display:flex; align-items:center; gap:12px; width:100%; min-height:60px; padding:10px; margin:4px 0; text-align:left; border:1px solid var(--border); }
+.search-result > .ico, .search-result > .badge { flex:none; }
+.search-result-text { display:flex; flex:1; min-width:0; flex-direction:column; gap:4px; }
+.search-result-text strong, .search-result-text > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.search-result-text > span { font-size:12px; }
+.search-result .unsaved { color:var(--muted); }
+.search-live { margin-top:28px; padding:18px; border:1px solid var(--border); border-radius:10px; }
+.search-live label { max-width:300px; margin:12px 0; }
+.search-live .h3 { margin:0; }
+@media (max-width:700px) { .search-page { padding:16px; } .search-filters > label { flex:1; min-width:0; } .search-filters select { min-width:0; width:100%; } }
 
 /* Playlist queue is intentionally bounded to the API's returned window. */
 .playlist-queue{display:flex;gap:.4rem;align-items:center;overflow:auto;padding:.45rem .6rem;margin:0 0 .5rem;border:1px solid var(--line,#333);border-radius:8px}.queue-head{display:flex;flex-direction:column;flex:0 0 auto;font-size:.8rem}.queue-item{flex:0 0 auto;max-width:15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-item.current{outline:2px solid var(--accent,#58a6ff)}

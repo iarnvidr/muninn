@@ -21,7 +21,17 @@
     const theme=M.settings.theme || 'system', accent=M.settings.accent || 'blue';
     document.documentElement.dataset.theme=theme;
     document.documentElement.dataset.accent=accent;
-    try { localStorage.setItem('muninn.appearance',JSON.stringify({theme,accent})); } catch(e) { /* private storage may be disabled */ }
+    const tab_layout=M.settings.tab_layout === 'vertical' ? 'vertical' : 'horizontal';
+    const app=document.getElementById('app'), strip=document.getElementById('tabstrip'), toggle=document.getElementById('tab-layout');
+    if(app) app.dataset.tabsLayout=tab_layout;
+    strip?.setAttribute('aria-orientation',tab_layout==='vertical'?'vertical':'horizontal');
+    if(toggle) {
+      const label=tab_layout==='vertical'?'Use horizontal tabs':'Use vertical tabs';
+      toggle.setAttribute('aria-pressed',String(tab_layout==='vertical'));
+      toggle.setAttribute('aria-label',label); toggle.title=label;
+    }
+    M.scheduleLayout?.();
+    try { localStorage.setItem('muninn.appearance',JSON.stringify({theme,accent,tab_layout})); } catch(e) { /* private storage may be disabled */ }
   };
   try { const saved=JSON.parse(localStorage.getItem('muninn.appearance')||'null'); if(saved){M.settings={...M.settings,...saved};M.applyAppearance();} } catch(e) { /* ignore stale preferences */ }
 
@@ -87,6 +97,7 @@
     skipBack: SVG('<path d="M5 8a8 8 0 1 1-1 8M5 3v5h5"/><text x="8" y="16" font-size="8" stroke="none" fill="currentColor">10</text>'),
     skipForward: SVG('<path d="M19 8a8 8 0 1 0 1 8M19 3v5h-5"/><text x="8" y="16" font-size="8" stroke="none" fill="currentColor">10</text>'),
     search: SVG('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
+    tabs: SVG('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 9h6M3 14h6"/>'),
     dot: SVG('<circle cx="12" cy="12" r="4"/>', true),
     channel: SVG('<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/>'),
   };
@@ -448,6 +459,13 @@
     next.focus(); M.activateTab(Number(next.parentNode.dataset.id));
   });
   $('#tab-new').addEventListener('click', () => M.newTab());
+  M.setTabLayout = async function (layout) {
+    const button=$('#tab-layout'); button.disabled=true;
+    try { M.settings=await M.api('PUT','/api/settings',{tab_layout:layout}); M.applyAppearance(); }
+    finally { button.disabled=false; }
+  };
+  $('#tab-layout').addEventListener('click', () => M.setTabLayout(M.settings.tab_layout==='vertical'?'horizontal':'vertical').catch(M.flashError));
+  $('#search-open').addEventListener('click', () => M.openSearch());
   $('#empty-new').addEventListener('click', () => M.newTab());
 
   /* ------------------------------------------------------------------ toolbar and address bar */
@@ -477,7 +495,8 @@
     if (!v) return;
     addrDirty = false;
     addr.blur();
-    M.go(v);
+    if (/^(https?:\/\/|(?:www\.|m\.)?youtube\.com\/|youtu\.be\/)/i.test(v)) M.go(v);
+    else M.openSearch(v);
   });
 
   function navAction(name) {
@@ -817,6 +836,12 @@
   /** Called by the native menu (Cmd+L). */
   window.muninnFocusAddress = function () { addr.focus(); addr.select(); };
   window.muninnOpenSettings = function () { M.page = 'settings'; render(); content.focus(); };
+  M.openSearch = function (query) {
+    if (query !== undefined) { M.searchState ||= {}; M.searchState.query=query; }
+    M.page='search'; render();
+    M.pages.search?.focus(query);
+  };
+  window.muninnOpenSearch = () => M.openSearch();
   window.addEventListener('keydown', (ev) => {
     const act = L.shortcutAction(ev);
     if (!act) return;
@@ -828,6 +853,7 @@
     shortcutLast = { act, t: nowMs };
     switch (act) {
       case 'settings': window.muninnOpenSettings(); break;
+      case 'search': M.openSearch(); break;
       case 'new-tab': M.newTab(); break;
       case 'close-tab': if (tab) M.closeTab(tab.id); break;
       case 'focus-address': if(M.page||tab?.face==='watch')M.newTab();else {addr.focus();addr.select();} break;

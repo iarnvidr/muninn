@@ -153,6 +153,18 @@ try:
             if str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected): break
             time.sleep(.05)
         check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected),{'before':before,'after':after,'expected':expected})
+    native_search=send({'op':'search_menu','tab_id':tabs[0]})
+    check('native Cmd+K binding and action',native_search.get('ok') is True,native_search)
+    time.sleep(.3)
+    check('native search menu opens search from Browse',ev("window.Muninn.page")=='search')
+    fixture=pathlib.Path(__file__).with_name('native-search-interactions.js').read_text()
+    install=ev('(()=>{'+fixture+';return typeof window.__muninnNativeSearchInteractions})()')
+    check('search fixture installed',install=='function',install)
+    search=send({'op':'eval','target':'chrome','js':'return await window.__muninnNativeSearchInteractions('+json.dumps(tabs)+');'},timeout=60)
+    report['search']=search
+    for row in search.get('results',[]): check('search '+row['name'],row.get('passed') is True,row.get('detail'))
+    check('search fixture complete',search.get('passed') is True,search)
+    screenshot('search')
     media=os.environ.get('NATIVE_SMOKE_MEDIA_FILE')
     if not media or not pathlib.Path(media).is_file(): raise RuntimeError('NATIVE_SMOKE_MEDIA_FILE missing; workflow must generate a synthetic playable media file')
     payload=base64.b64encode(pathlib.Path(media).read_bytes()).decode('ascii')

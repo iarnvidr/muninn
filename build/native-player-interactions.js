@@ -25,6 +25,7 @@
       set(value) { sourceProperty.set.call(this, String(value).startsWith(fixtureMediaPrefix) ? mediaUrl : value); },
     });
     const originalApi = M.api;
+    const originalTabLayout=M.settings.tab_layout||'horizontal';
     const calls = [], routing = [];
     const originalInvoke = M.invoke;
     const queueIds = [videoId, 'Sm0keVid002', 'Sm0keVid003'];
@@ -38,7 +39,7 @@
       }
       if (path === '/api/video/' + activeId && method === 'GET') {
         calls.push({method,path});
-        return {meta:{video_id:activeId,title:'Synthetic native player fixture',duration_seconds:30},entries:[],comments:[],related:[]};
+        return {meta:{video_id:activeId,title:'Synthetic native player fixture',duration_seconds:30},entries:[],comments:[],related:[{video_id:'Sm0keRel001',title:'Compact recommendation fixture',channel:'Fixture channel',duration_seconds:30}]};
       }
       if (path.startsWith('/api/playlist?') && method === 'GET') {
         const requestUrl = new URL(path, M.origin);
@@ -90,8 +91,20 @@
       video.pause();
       const theatre=document.querySelector('#view-watch');
       assert('theatre selector matches the production watch view root', !!theatre && theatre.id==='view-watch', theatre?.outerHTML?.slice(0,200));
+      if(theatre.classList.contains('theatre')) { key('T');await settle(); }
+      const originalWatchWidth=theatre.style.width;
+      theatre.style.width='720px';theatre.style.maxWidth='100%';
+      for(const layout of ['horizontal','vertical']) {
+        await M.setTabLayout(layout);await settle();
+        const main=document.querySelector('.watch-main').getBoundingClientRect(), side=document.querySelector('.watch-side').getBoundingClientRect(), thumb=document.querySelector('.watch-side .rel-thumb').getBoundingClientRect();
+        assert(layout+' compact recommendations stay right of player at ordinary pane width',side.left>=main.right && side.width<=281 && side.width>=189,{main:main.toJSON(),side:side.toJSON()});
+        assert(layout+' recommendation thumbnail stays small',thumb.width<=97&&thumb.width>0,thumb.width);
+      }
+      theatre.style.width=originalWatchWidth;theatre.style.maxWidth='';
+      await M.setTabLayout(originalTabLayout);await settle();
       const theaterBefore=theatre.classList.contains('theatre'); key('T'); await settle();
       assert('T toggles theatre mode', theatre.classList.contains('theatre') !== theaterBefore, theatre.className);
+      assert('theatre hides recommendation column',getComputedStyle(document.querySelector('.watch-side')).display==='none');
       const guardedAt=video.currentTime, input=document.createElement('input'); document.body.append(input); input.focus();
       key('J', input); key('J',document.body,true); await settle();
       assert('focused editable and IME key events do not seek', Math.abs(video.currentTime-guardedAt)<0.2, video.currentTime);
