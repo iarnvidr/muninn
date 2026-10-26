@@ -101,8 +101,11 @@ The first launch may show a macOS dialog asking you to allow Muninn's local cert
   channel downloads, importing media and tabs, and persistent logs. These changes
   require a build containing the CLI; the earlier 0.2.0 test artifact does not have it.
 
-* **Tabs**: new tab, close, back/forward/reload, an address/search box (a URL opens it; words
-  search YouTube). Cmd+T / Cmd+W / Cmd+L / Cmd+R.
+* **Tabs and search**: new tab, close, back/forward/reload. Cmd+L or Cmd+K focuses
+  universal search: local results update while typing; Enter fetches online
+  Videos, Live streams and Channels above them. Filters are side buttons; arrows
+  or hjkl walk results and types. An explicit URL opens directly. See
+  [Search and tabs](docs/SEARCH-AND-TABS.md).
 * **Sidebar**: Browse, Player, Library, Feeds, Rules and Settings are pages of the
   same window. Detailed diagnostics are available from Settings with Developer mode on.
   Browse returns to a YouTube tab; Player returns to the current video. Library Play creates a new
@@ -127,6 +130,9 @@ The first launch may show a macOS dialog asking you to allow Muninn's local cert
   loads the live page when you click it.
 
 ## Architecture
+
+See the [architecture overview](docs/ARCHITECTURE.md) for the component map,
+proxy routing and TLS trust, capture flow, media pipeline and login handoff.
 
 ```
  Muninn.app  (one process tree; the Rust core runs inside the app)

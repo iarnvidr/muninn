@@ -2,11 +2,12 @@
 (function(root) {
   root.__muninnNativeSearchInteractions=async function(tabs) {
     const M=root.Muninn, original={api:M.api,newTab:M.newTab,openVideo:M.openVideo,openChannel:M.openChannel,settings:{...M.settings},state:M.searchState,offline:M.offline};
-    const results=[], calls=[], actions=[];
+    const results=[], calls=[], actions=[], onlineCalls=[], delayed=[];
     const check=(name,ok,detail)=>{results.push({name,passed:!!ok,detail:detail??null});if(!ok)throw Error(name+': '+JSON.stringify(detail));};
     const settle=()=>new Promise(resolve=>setTimeout(resolve,220));
-    const rows=()=>[...document.querySelectorAll('.search-result')];
-    const choose=(label,value)=>{const el=document.querySelector('select[aria-label="'+label+'"]');el.value=value;el.dispatchEvent(new Event('change'));};
+    const rows=(band=1)=>[...document.querySelectorAll('[data-band="'+band+'"].search-columns .search-result')];
+    const choose=(key,value)=>document.querySelector('[data-filter="'+key+'"] [data-value="'+value+'"]').click();
+    const key=value=>{const event=new KeyboardEvent('keydown',{key:value,bubbles:true,cancelable:true});document.activeElement.dispatchEvent(event);return event;};
     const query=async text=>{const el=document.querySelector('#universal-query');el.value=text;el.dispatchEvent(new Event('input'));await settle();};
     const sources={
       '/api/library':[
@@ -20,6 +21,14 @@
     };
     M.api=async function(method,path,body,opts) {
       if(method==='GET' && Object.hasOwn(sources,path)) {calls.push(path);return sources[path];}
+      if(method==='POST'&&path==='/api/search') {
+        onlineCalls.push({...body});
+        const items=body.category==='channels'?[{id:'UCabcdefghijklmnopqrstuv',kind:'channel',title:body.query+' channel',channel:'Online'}]:
+          [{id:body.category==='live'?'SrchLive001':'SrchSaved01',kind:'video',title:body.query+' '+body.category,channel:'Online',live:body.category==='live'},
+            {id:'SrchCache01',kind:'video',title:body.query+' second',channel:'Online'}];
+        if(body.query==='slow')return new Promise(resolve=>delayed.push(()=>resolve({items:items.map(row=>({...row,title:'STALE'}))})));
+        return {items};
+      }
       return original.api(method,path,body,opts);
     };
     M.newTab=async url=>{actions.push(['live',url]);return 0;};
@@ -43,28 +52,55 @@
       }
       window.muninnOpenSettings();
       M.settings.offline_mode=false;M.offline=false;
-      M.searchState={query:'Fixture',scope:'all',saved:'all',category:'videos'};
+      M.searchState={query:'Fixture',scope:'all',saved:'all',onlineType:'all'};
       M.openSearch();await settle();
       check('search focuses input',document.activeElement?.id==='universal-query');
       check('local search reads all local sources',calls.length===4,calls);
-      check('local typing never launches remote search',actions.length===0,actions);
+      check('local typing never launches remote search',actions.length===0&&onlineCalls.length===0,{actions,onlineCalls});
+      check('filters are visible side buttons without dropdowns',!document.querySelector('.search-page select')&&document.querySelectorAll('.search-filters [aria-pressed]').length===11);
+      const online=document.querySelector('[aria-label="Online results"]'),local=document.querySelector('[aria-label="Local results"]'),rail=document.querySelector('.search-filters');
+      check('online above local and filters to the side',online.getBoundingClientRect().bottom<=local.getBoundingClientRect().top&&rail.getBoundingClientRect().right<=online.getBoundingClientRect().left,{online:online.getBoundingClientRect().toJSON(),local:local.getBoundingClientRect().toJSON()});
       check('saved and unsaved are both explicit',rows().filter(n=>n.dataset.searchKind==='library').map(n=>n.querySelector('.badge')?.textContent).join('|')==='Saved|Not saved|Saved');
       check('incidental channels are excluded',rows().filter(n=>n.dataset.searchKind==='channels').length===1);
-      choose('Search in','library');choose('Library saved status','unsaved');
+      const typing=key('j');check('hjkl stays normal text in query input',!typing.defaultPrevented&&document.activeElement.id==='universal-query');
+      key('ArrowDown');check('Down from query enters local results before online submission',document.activeElement.dataset.band==='1');
+      key('j');check('j moves to next local result',document.activeElement.dataset.id==='SrchCache01');
+      key('l');check('l moves to the next local type',document.activeElement.dataset.searchKind==='channels');
+      key('h');check('h returns to previous local type',document.activeElement.dataset.searchKind==='library');
+      key('Escape');check('Escape returns to query',document.activeElement.id==='universal-query');
+      choose('scope','library');choose('saved','unsaved');
       check('not-saved filter selects disposable cache',rows().length===1&&rows()[0].dataset.id==='SrchCache01');
       rows()[0].click();await settle();check('library result opens the selected video',actions.at(-1)?.[1]==='SrchCache01',actions);
-      choose('Library saved status','saved');check('saved filter includes protected media and saved links',rows().length===2);
-      await query('no-local-result');check('no-results explanation is actionable',document.querySelector('.search-results').textContent.includes('No local matches'));
+      choose('saved','saved');check('saved filter includes protected media and saved links',rows().length===2);
+      await query('no-local-result');check('no-results explanation is actionable',local.textContent.includes('No local matches'));
       check('no-results does not launch online search',actions.length===1);
-      for(const category of ['channels','videos','live']) {
-        choose('YouTube category',category);document.querySelector('#search-youtube').click();await settle();
-        const url=new URL(actions.at(-1)[1]);
-        check('explicit online '+category+' filter',url.searchParams.get('sp')==={channels:'EgIQAg==',videos:'EgIQAQ==',live:'EgJAAQ=='}[category],url.href);
-      }
+      choose('scope','all');choose('saved','all');await query('Fixture');
+      document.querySelector('#universal-query').focus();document.querySelector('.search-query').requestSubmit();await settle();
+      check('Enter fetches all three online categories inside search',onlineCalls.length===3&&['videos','live','channels'].every(k=>onlineCalls.some(c=>c.category===k)),onlineCalls);
+      check('online results rendered without opening a browser tab',rows(0).length===5&&actions.length===1,actions);
+      check('first online result receives focus after Enter',document.activeElement.dataset.band==='0'&&document.activeElement.dataset.column==='0'&&document.activeElement.dataset.row==='1');
+      key('ArrowRight');check('Right moves to live results',document.activeElement.dataset.column==='1');
+      key('ArrowDown');check('Down moves inside the live type',document.activeElement.dataset.row==='2');
+      key('l');check('l moves to channels and clamps short columns',document.activeElement.dataset.column==='2'&&document.activeElement.dataset.row==='1');
+      key('k');key('j');check('k and j move through headers and results',document.activeElement.dataset.column==='2'&&document.activeElement.dataset.row==='1');
+      choose('onlineType','channels');check('side type filter selects a visible online column without fetching',rows(0).length===1&&onlineCalls.length===3);
+      rows(0)[0].click();await settle();check('online channel result opens channel',actions.at(-1)?.[0]==='channel'&&actions.at(-1)?.[1]==='UCabcdefghijklmnopqrstuv',actions);
+      choose('onlineType','all');rows(0)[0].focus();key('ArrowDown');key('ArrowDown');
+      check('Down walks from online results to local band',document.activeElement.dataset.band==='1');
+      key('ArrowUp');check('Up returns to online results',document.activeElement.dataset.band==='0');
+      key('Escape');await query('slow');document.querySelector('.search-query').requestSubmit();await settle();
+      await query('fast');document.querySelector('.search-query').requestSubmit();await settle();
+      for(const resolve of delayed)resolve();await settle();
+      check('stale online responses never replace a newer submitted search',rows(0).length===5&&rows(0).every(n=>!n.textContent.includes('STALE')&&n.textContent.includes('fast')));
+      await query('typed but not submitted');check('editing hides stale online results without fetching',rows(0).length===0&&onlineCalls.length===9);
       M.settings.offline_mode=true;await query('offline');check('offline search blocks live request',document.querySelector('#search-youtube').disabled);
-      M.settings.offline_mode=false;choose('Search in','tabs');await query('');
+      document.querySelector('.search-query').requestSubmit();await settle();check('offline Enter does not fetch',onlineCalls.length===9);
+      M.settings.offline_mode=false;choose('scope','tabs');await query('');
       const tabRow=rows().find(n=>Number(n.dataset.id)===tabs[0]);check('open tab is searchable',!!tabRow);
       tabRow.click();await settle();check('tab result activates existing native tab',M.tabs.active===tabs[0],M.tabs.active);
+      window.muninnOpenSettings();const count=M.tabs.list.length;window.muninnFocusAddress();await settle();
+      check('Cmd+L hook opens search from Settings without a new tab',M.page==='search'&&document.activeElement.id==='universal-query'&&M.tabs.list.length===count);
+      choose('scope','all');await query('Fixture');document.querySelector('.search-query').requestSubmit();await settle();
       return {passed:true,results};
     } finally {
       M.api=original.api;M.newTab=original.newTab;M.openVideo=original.openVideo;M.openChannel=original.openChannel;

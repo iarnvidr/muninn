@@ -176,6 +176,7 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/tools/ytdlp/update", post(ytdlp_update))
         .route("/api/watch/{id}", get(watch_status).post(watch_open))
         .route("/api/playlist", get(playlist_metadata))
+        .route("/api/search", post(online_search))
         .route("/api/video/{id}/comments/more", post(comments_more))
         .route("/api/video/{id}/comments/{comment}/replies", post(comment_replies))
         .route("/api/proxy", get(proxy_info))
@@ -218,6 +219,10 @@ async fn playlist_metadata(State(core): S, Query(q): Query<HashMap<String,String
     let raw = String::from_utf8_lossy(&output.stdout);
     let playlist = crate::playlist::parse_flat_json(&raw, list_id, current, index).map_err(Error::bad)?;
     Ok(Json(serde_json::to_value(playlist).unwrap_or_else(|_| json!({}))) )
+}
+
+async fn online_search(State(core): S, body: Bytes) -> ApiResult {
+    Ok(Json(crate::search::online(core,parse(&body)?).await?))
 }
 
 async fn health() -> Json<Value> {

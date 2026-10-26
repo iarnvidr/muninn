@@ -71,7 +71,7 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
     let view = SubmenuBuilder::new(app, "View")
         .item(&item("search", "Search Muninn…", "CmdOrCtrl+K")?)
         .item(&item("reload", "Reload", "CmdOrCtrl+R")?)
-        .item(&item("focus_address", "Focus Address Bar", "CmdOrCtrl+L")?)
+        .item(&item("focus_address", "Search or Open Address…", "CmdOrCtrl+L")?)
         .build()?;
     let history = SubmenuBuilder::new(app, "History")
         .item(&item("back", "Back", "CmdOrCtrl+[")?)

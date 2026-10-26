@@ -153,10 +153,14 @@ try:
             if str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected): break
             time.sleep(.05)
         check('Ctrl'+('Shift+' if shift else '+')+'Tab activates adjacent tab',str(after['active'])==str(expected) and str(after['focusedTab'])==str(expected),{'before':before,'after':after,'expected':expected})
-    native_search=send({'op':'search_menu','tab_id':tabs[0]})
-    check('native Cmd+K binding and action',native_search.get('ok') is True,native_search)
-    time.sleep(.3)
-    check('native search menu opens search from Browse',ev("window.Muninn.page")=='search')
+    for op,key in [('search_menu','K'),('address_menu','L')]:
+        send({'op':'eval','target':'chrome','js':'return await window.Muninn.activateTab('+str(tabs[0])+');'})
+        before=ev('window.Muninn.tabs.list.length')
+        native_search=send({'op':op,'tab_id':tabs[0]})
+        check('native Cmd+'+key+' binding and action',native_search.get('ok') is True,native_search)
+        time.sleep(.3)
+        focus=ev("({page:window.Muninn.page,focused:document.activeElement?.id,count:window.Muninn.tabs.list.length})")
+        check('native Cmd+'+key+' opens and focuses search without adding tabs',focus['page']=='search' and focus['focused']=='universal-query' and focus['count']==before,focus)
     fixture=pathlib.Path(__file__).with_name('native-search-interactions.js').read_text()
     install=ev('(()=>{'+fixture+';return typeof window.__muninnNativeSearchInteractions})()')
     check('search fixture installed',install=='function',install)

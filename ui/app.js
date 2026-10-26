@@ -834,7 +834,7 @@
 
   let shortcutLast = { act: '', t: 0 };
   /** Called by the native menu (Cmd+L). */
-  window.muninnFocusAddress = function () { addr.focus(); addr.select(); };
+  window.muninnFocusAddress = function () { M.openSearch(); };
   window.muninnOpenSettings = function () { M.page = 'settings'; render(); content.focus(); };
   M.openSearch = function (query) {
     if (query !== undefined) { M.searchState ||= {}; M.searchState.query=query; }
@@ -856,7 +856,7 @@
       case 'search': M.openSearch(); break;
       case 'new-tab': M.newTab(); break;
       case 'close-tab': if (tab) M.closeTab(tab.id); break;
-      case 'focus-address': if(M.page||tab?.face==='watch')M.newTab();else {addr.focus();addr.select();} break;
+      case 'focus-address': window.muninnFocusAddress(); break;
       case 'reload': navAction('tab_reload'); break;
       case 'back': if (tab && (M.page||tab.face==='watch'||tab.can_back)) navAction('tab_back'); break;
       case 'forward': if (tab && tab.can_forward) navAction('tab_forward'); break;

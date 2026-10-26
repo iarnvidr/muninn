@@ -78,8 +78,9 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
     let str_of = |k: &str| cmd["args"][k].as_str().unwrap_or("").to_string();
     match cmd["op"].as_str().unwrap_or("") {
         #[cfg(all(debug_assertions, target_os = "macos"))]
-        "settings_menu" | "search_menu" => {
+        "settings_menu" | "search_menu" | "address_menu" => {
             let search = cmd["op"] == "search_menu";
+            let address = cmd["op"] == "address_menu";
             let tab = cmd["tab_id"].as_u64().unwrap_or(0);
             let app = shell.app.clone();
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -93,10 +94,10 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                     unsafe {
                         let native: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
                         let menu: *mut AnyObject = msg_send![native, mainMenu];
-                        let root_index = if search { 3isize } else { 0isize };
+                        let root_index = if search || address { 3isize } else { 0isize };
                         let root: *mut AnyObject = msg_send![menu, itemAtIndex: root_index];
                         let submenu: *mut AnyObject = msg_send![root, submenu];
-                        let item_title = if search { c"Search Muninn…" } else { c"Settings…" };
+                        let item_title = if address { c"Search or Open Address…" } else if search { c"Search Muninn…" } else { c"Settings…" };
                         let title: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: item_title.as_ptr()];
                         let item: *mut AnyObject = msg_send![submenu, itemWithTitle: title];
                         if item.is_null() { return Err("Settings menu item missing"); }
@@ -104,7 +105,7 @@ fn run(shell: &Arc<Shell>, d: &std::path::Path, id: &str, cmd: &Value) {
                         let chars: *const std::ffi::c_char = msg_send![key, UTF8String];
                         if chars.is_null() { return Err("Settings accelerator missing"); }
                         let comma = std::ffi::CStr::from_ptr(chars).to_bytes() == b",";
-                        let expected = std::ffi::CStr::from_ptr(chars).to_bytes() == if search { b"k" } else { b"," };
+                        let expected = std::ffi::CStr::from_ptr(chars).to_bytes() == if address { b"l" } else if search { b"k" } else { b"," };
                         let modifiers: usize = msg_send![item, keyEquivalentModifierMask];
                         let command = modifiers & (1 << 20) != 0;
                         let index: isize = msg_send![submenu, indexOfItem: item];
