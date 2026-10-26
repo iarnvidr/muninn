@@ -9,6 +9,7 @@ pub const PAGES_JS: &str = include_str!("../../ui/pages.js");
 pub const UPDATES_JS: &str = include_str!("../../ui/updates.js");
 pub const ORGANIZE_JS: &str = include_str!("../../ui/organize.js");
 pub const CHANNELS_JS: &str = include_str!("../../ui/channels.js");
+pub const SEARCH_JS: &str = include_str!("../../ui/search.js");
 pub const BOOT_JS: &str = include_str!("../../ui/boot.js");
 /// Development mock of the Tauri side. Only ever loaded by `?mock=1` outside the app.
 pub const MOCK_JS: &str = include_str!("../../ui/mock.js");
@@ -39,6 +40,7 @@ pub fn asset(name: &str) -> Option<(&'static str, &'static str)> {
         "updates.js" => Some((JS, UPDATES_JS)),
         "organize.js" => Some((JS, ORGANIZE_JS)),
         "channels.js" => Some((JS, CHANNELS_JS)),
+        "search.js" => Some((JS, SEARCH_JS)),
         "boot.js" => Some((JS, BOOT_JS)),
         "mock.js" => Some((JS, MOCK_JS)),
         "hls.min.js" => Some((JS, HLS_JS)),

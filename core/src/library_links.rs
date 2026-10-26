@@ -120,17 +120,23 @@ impl Core {
 
     pub fn library_view(&self) -> Result<Vec<Value>> {
         let mut entries = self.entries_view(None)?;
+        let links = self.library_links()?;
+        // A saved reference remains saved when a disposable media copy appears.
+        for entry in &mut entries {
+            let saved = entry["video_id"].as_str().is_some_and(|id| links.contains_key(id));
+            entry["saved_link"] = json!(saved);
+        }
         let cached: HashSet<String> = entries
             .iter()
             .filter_map(|v| v["video_id"].as_str().map(str::to_owned))
             .collect();
-        for (id, link) in self.library_links()? {
+        for (id, link) in links {
             if cached.contains(&id) {
                 continue;
             }
             let facts = self.facts_for(&id);
             entries.push(json!({"id":format!("link:{id}"),"video_id":id,"title":facts.title.or(link.title),"channel":facts.channel,"duration_seconds":facts.duration_seconds,
-                "state":"link","status":"link","origin":"link","protected":false,"size_bytes":0,"progress":0,"variant":null,
+                "state":"link","status":"link","origin":"link","protected":false,"saved_link":true,"size_bytes":0,"progress":0,"variant":null,
                 "created_at":link.added_at,"last_access_at":link.added_at,"thumb_url":format!("/thumb/{id}")}));
         }
         Ok(entries)

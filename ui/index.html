@@ -16,7 +16,10 @@
   <header id="topbar" class="topbar">
     <div class="tabrow">
       <div id="tabstrip" class="tabstrip" role="tablist" aria-label="Tabs"></div>
-      <button type="button" id="tab-new" class="icon-btn" data-icon="plus" title="New tab (Cmd/Ctrl+T)" aria-label="New tab"></button>
+      <div class="tab-tools">
+        <button type="button" id="tab-new" class="icon-btn" data-icon="plus" title="New tab (Cmd/Ctrl+T)" aria-label="New tab"></button>
+        <button type="button" id="tab-layout" class="icon-btn" data-icon="tabs" title="Use vertical tabs" aria-label="Use vertical tabs" aria-pressed="false"></button>
+      </div>
       <button type="button" id="tab-ungroup" class="tab-ungroup">Drop to ungroup</button>
     </div>
     <div class="toolbar" role="toolbar" aria-label="Navigation">
@@ -24,9 +27,10 @@
       <button type="button" id="nav-forward" class="icon-btn" data-icon="forward" title="Forward (Cmd+])" aria-label="Forward" disabled></button>
       <button type="button" id="nav-reload" class="icon-btn" data-icon="reload" title="Reload (Cmd/Ctrl+R)" aria-label="Reload" disabled></button>
       <form id="address-form" class="address-form" autocomplete="off">
-        <input type="text" id="address" class="address" placeholder="Search YouTube or enter an address" aria-label="Address or search" spellcheck="false" autocapitalize="off" autocorrect="off">
+        <input type="text" id="address" class="address" placeholder="Search Muninn or enter an address" aria-label="Address or search" spellcheck="false" autocapitalize="off" autocorrect="off">
       </form>
       <span id="view-context" class="view-context" hidden></span>
+      <button type="button" id="search-open" class="icon-btn" data-icon="search" title="Search Muninn (Cmd/Ctrl+K)" aria-label="Search Muninn"></button>
       <div id="status" class="status" data-kind="none" role="status" aria-live="polite">
         <span id="status-text" class="status-text"></span>
         <button type="button" id="status-action" class="small" hidden></button>
@@ -88,6 +92,7 @@
 <script src="/ui/pages.js"></script>
 <script src="/ui/organize.js"></script>
 <script src="/ui/channels.js"></script>
+<script src="/ui/search.js"></script>
 <script src="/ui/boot.js"></script>
 </body>
 </html>

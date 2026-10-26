@@ -14,6 +14,9 @@ pub enum Theme { #[default] System, Classified, ClassifiedLight }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all="snake_case")]
 pub enum Accent { #[default] Blue, Red, Amber, Teal }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum TabLayout { #[default] Horizontal, Vertical }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -27,6 +30,7 @@ pub struct Settings {
     pub favourite_hide_started: bool,
     pub theme: Theme,
     pub accent: Accent,
+    pub tab_layout: TabLayout,
     pub pip_mode: PipMode,
     pub background_playback: bool,
     pub pip_return_to_inline: bool,
@@ -67,6 +71,7 @@ impl Default for Settings {
             favourite_hide_started: true,
             theme: Theme::System,
             accent: Accent::Blue,
+            tab_layout: TabLayout::Horizontal,
             pip_mode: PipMode::Manual,
             background_playback: false,
             pip_return_to_inline: true,
@@ -154,6 +159,10 @@ mod tests {
         assert_eq!(s.download_concurrency, 4);
         assert_eq!(s.search_ttl_hours, 2);
         assert_eq!(s.pip_mode,PipMode::Manual);
+        assert_eq!(s.tab_layout, TabLayout::Horizontal);
+        let vertical: Settings = serde_json::from_str(r#"{"tab_layout":"vertical"}"#).unwrap();
+        assert_eq!(vertical.tab_layout, TabLayout::Vertical);
+        assert_eq!(serde_json::from_value::<Settings>(serde_json::to_value(vertical.clone()).unwrap()).unwrap(), vertical);
         let configured:Settings=serde_json::from_value(serde_json::json!({"pip_mode":"automatic","background_playback":true})).unwrap();
         assert_eq!(configured.pip_mode,PipMode::Automatic);
         assert!(configured.background_playback);

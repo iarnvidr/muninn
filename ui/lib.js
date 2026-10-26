@@ -108,6 +108,7 @@
     if (e.shiftKey && k !== '[' && k !== ']') return null;
     switch (k) {
       case ',': return 'settings';
+      case 'k': return 'search';
       case 't': return 'new-tab';
       case 'w': return 'close-tab';
       case 'l': return 'focus-address';
@@ -659,6 +660,7 @@
     { group: 'Favourites', key: 'favourite_carousel_days', label: 'Featured upload lifetime', unit: 'days', kind: 'int', min: 1, max: 30, hint: 'Measured from first appearance in the carousel. Does not change media retention.' },
     { group: 'Appearance', key: 'theme', label: 'Theme', kind: 'choice', options: [['system', 'Muninn · system light/dark'], ['classified', 'Classified Terminal · dark'], ['classified_light', 'Classified Terminal · light']], hint: 'The movement / esbenthomsen.com visual style is optional' },
     { group: 'Appearance', key: 'accent', label: 'Accent color', kind: 'choice', options: [['blue', 'Blue'], ['red', 'Red'], ['amber', 'Amber · original Movement'], ['teal', 'Teal']] },
+    { group: 'Appearance', key: 'tab_layout', label: 'Tab layout', kind: 'choice', options: [['horizontal', 'Horizontal'], ['vertical', 'Vertical']] },
     { group: 'Playback', key: 'pip_mode', label: 'Picture in picture', kind: 'choice', options: [['manual', 'Click to open'], ['automatic', 'Automatic when leaving the player'], ['disabled', 'Disabled']], hint: 'Automatic PiP depends on web-engine permission; navigation gestures give it the best chance' },
     { group: 'Playback', key: 'background_playback', label: 'Continue playback without PiP', kind: 'bool', hint: 'Keep audio playing while browsing, including when automatic PiP is unavailable' },
     { group: 'Playback', key: 'pip_return_to_inline', label: 'Return PiP to the player when its tab is opened', kind: 'bool' },

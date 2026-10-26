@@ -69,6 +69,7 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         .select_all()
         .build()?;
     let view = SubmenuBuilder::new(app, "View")
+        .item(&item("search", "Search Muninn…", "CmdOrCtrl+K")?)
         .item(&item("reload", "Reload", "CmdOrCtrl+R")?)
         .item(&item("focus_address", "Focus Address Bar", "CmdOrCtrl+L")?)
         .build()?;
@@ -92,6 +93,13 @@ fn install_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         let active = shell.tabs_state()["active"].as_u64();
         match (event.id().as_ref(), active) {
             ("settings", _) => open_settings(app),
+            ("search", _) => {
+                show_main(app);
+                if let Some(view) = app.get_webview(shell::CHROME) {
+                    let _ = view.eval("window.muninnOpenSearch && window.muninnOpenSearch()");
+                    let _ = view.set_focus();
+                }
+            }
             ("new_tab", _) => {
                 shell.new_tab(None);
             }
