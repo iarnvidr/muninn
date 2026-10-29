@@ -78,7 +78,8 @@
   let input, draw, timer, tabTimer, generation=0;
   const state = () => {
     const value=M.searchState ||= {};
-    for(const [key,fallback] of Object.entries({query:'',scope:'all',saved:'all',onlineType:'all'})) value[key] ??= fallback;
+    for(const [key,fallback] of Object.entries({query:'',scope:'all',saved:'all',onlineType:'videos'})) value[key] ??= fallback;
+    if(!['videos','live','channels'].includes(value.onlineType)) value.onlineType='videos';
     return value;
   };
   M.pages.search = {
@@ -91,7 +92,7 @@
     mount(host) {
       const own=++generation, S=state();
       let data={library:[],channels:[],configs:[],groups:[]}, loading=true, failures=[], limit=20, onlineRevision=0;
-      const categories=[['videos','Videos'],['live','Live streams'],['channels','Channels']];
+      const categories=[['videos','Videos'],['live','Live'],['channels','Channels']];
       S.online ||= {query:'',results:{},errors:{},pending:[]};
       if(S.online.pending?.length) {S.online.errors={...S.online.errors,...Object.fromEntries(S.online.pending.map(k=>[k,'Search interrupted. Press Enter to retry.']))};S.online.pending=[];}
       const filters = (label, options, key) => {
@@ -126,7 +127,7 @@
       const errors=h('div',{class:'search-errors'});
       const retry=h('button',{type:'button',text:'Refresh local results',onclick:()=>load()});
       const rail=h('aside',{class:'search-filters','aria-label':'Search filters'},
-        filters('Online types',[['all','All types'],...categories],'onlineType'),
+        filters('Online type',categories,'onlineType'),
         filters('Local sources',[['all','All local'],['tabs','Open tabs'],['library','Library'],['channels','Saved channels']],'scope'),
         filters('Library saved status',[['all','Saved and not saved'],['saved','Saved'],['unsaved','Not saved']],'saved'),retry);
       const shell=h('div',{class:'search-page'},h('h1',{class:'h1',text:'Search Muninn'}),
@@ -143,7 +144,13 @@
         if(event.key==='Escape') {event.preventDefault();input.focus();input.select();return;}
         const direction=navigationDirection(event,!!event.target.closest('input,textarea,[contenteditable="true"]'));
         if(!direction)return;
-        event.preventDefault();focusCursor(moveCursor(cells().map(b=>b.map(c=>c.length)),cursor,direction));
+        event.preventDefault();
+        if(cursor.band===0&&['left','right'].includes(direction)) {
+          const index=categories.findIndex(([key])=>key===S.onlineType),step=direction==='left'?-1:1;
+          S.onlineType=categories[(index+step+categories.length)%categories.length][0];
+          draw();focusCursor({band:0,column:0,row:0});return;
+        }
+        focusCursor(moveCursor(cells().map(b=>b.map(c=>c.length)),cursor,direction));
       });
       const open = row => {
         const action=row.kind==='tabs'?()=>M.activateTab(row.id):(row.kind==='library'||row.kind==='video')?()=>M.openVideo(row.id):()=>M.openChannel(row.id);
@@ -160,7 +167,10 @@
         const column=(band,index,kind,label,rows,message)=>{
           const node=h('section',{class:'search-column','aria-label':label,'data-column':index});
           const props=row=>({'data-search-cell':'','data-band':band,'data-column':index,'data-row':row});
-          const header=h('button',{type:'button',class:'search-type',...props(0),'data-search-key':band+'-'+kind+'-header',text:label+' · '+rows.length,onclick:()=>focusCursor({band,column:index,row:rows.length?1:0})});
+          const header=h('button',{type:'button',class:'search-type',...props(0),'data-search-key':band+'-'+kind+'-header',text:label+' · '+rows.length,onclick:()=>{
+            if(band===0&&!rows.length) {submitOnline();return;}
+            focusCursor({band,column:index,row:rows.length?1:0});
+          }});
           const body=h('div',{class:'search-column-body'});
           for(const [index,row] of rows.slice(0,limit).entries()) {
             const video=row.kind==='library'?row:row.video;
@@ -192,11 +202,11 @@
         };
         const sameQuery=S.online.query===S.query.trim()&&!!S.query.trim();
         const onlineColumns=[];
-        for(const [index,[key,label]] of categories.entries()) {
-          if(S.onlineType!=='all'&&S.onlineType!==key)continue;
+        for(const [key,label] of categories) {
+          if(S.onlineType!==key)continue;
           const found=sameQuery?(S.online.results[key]||[]).map(row=>({...row,video:row.kind==='video'?(byId.get(row.id)||{saved:false,complete:false}):null})):[];
           const pending=sameQuery&&S.online.pending.includes(key);
-          onlineColumns.push(column(0,index,key,label,found,pending?'Searching…':sameQuery?S.online.errors[key]||'No online matches':'Press Enter to search online'));
+          onlineColumns.push(column(0,0,key,label,found,pending?'Searching…':sameQuery&&S.online.errors[key]?S.online.errors[key]:sameQuery&&Object.hasOwn(S.online.results,key)?'No online matches':'Press Enter to search '+label.toLowerCase()));
         }
         bandNodes[0].replaceChildren(...onlineColumns);
         bandNodes[0].dataset.columns=onlineColumns.length;
@@ -214,7 +224,7 @@
         status.textContent=loading?'Loading local results…':total+' local result'+(total===1?'':'s')+(failures.length?' · Some sources unavailable':'');
         const offline=M.offline||M.settings.offline_mode;
         live.disabled=!!offline||!S.query?.trim();
-        onlineNote.textContent=offline?'Offline · local results remain available':sameQuery?(S.online.pending.length?'Searching YouTube…':'Results for “'+S.online.query+'”'):'Typing searches this device. Press Enter for YouTube results.';
+        onlineNote.textContent=offline?'Offline · local results remain available':sameQuery&&S.online.pending.includes(S.onlineType)?'Searching YouTube…':sameQuery&&Object.hasOwn(S.online.results,S.onlineType)?'Results for “'+S.online.query+'”':'Typing searches this device. Press Enter for the selected online type.';
         for(const group of rail.querySelectorAll('[data-filter]'))for(const button of group.querySelectorAll('button'))button.setAttribute('aria-pressed',String(S[group.dataset.filter]===button.dataset.value));
         if(focusKey) {
           const replacement=[...shell.querySelectorAll('[data-search-key]')].find(n=>n.dataset.searchKey===focusKey);
@@ -229,23 +239,25 @@
         if(/^(https?:\/\/|(?:www\.|m\.)?youtube\.com\/|youtu\.be\/)/i.test(query)){M.go(query).catch(M.flashError);return;}
         if(M.offline||M.settings.offline_mode){draw();return;}
         const revision=++onlineRevision;
-        S.online={query,results:{},errors:{},pending:categories.map(([key])=>key)};draw();
-        await Promise.allSettled(categories.map(async([category])=>{
-          try {
-            const result=await M.api('POST','/api/search',{query,category});
-            if(generation!==own||revision!==onlineRevision)return;
-            if(!Array.isArray(result?.items))throw Error('Invalid search response. Press Enter to retry.');
-            S.online.results[category]=result.items;
-          } catch(error) {
-            if(generation!==own||revision!==onlineRevision)return;
-            S.online.errors[category]=M.errText(error);
-          } finally {
-            if(generation===own&&revision===onlineRevision){
-              S.online.pending=S.online.pending.filter(k=>k!==category);draw();
-              if(S.query.trim()===query&&document.activeElement===input)focusFirst([0]);
-            }
+        const category=S.onlineType;
+        if(S.online.query!==query) S.online={query,results:{},errors:{},pending:[]};
+        delete S.online.results[category];delete S.online.errors[category];
+        S.online.pending=[category];draw();
+        try {
+          const result=await M.api('POST','/api/search',{query,category});
+          if(generation!==own||revision!==onlineRevision)return;
+          if(!Array.isArray(result?.items))throw Error('Invalid search response. Press Enter to retry.');
+          S.online.results[category]=result.items;
+        } catch(error) {
+          if(generation!==own||revision!==onlineRevision)return;
+          S.online.errors[category]=M.errText(error);
+        } finally {
+          if(generation===own&&revision===onlineRevision){
+            S.online.pending=S.online.pending.filter(k=>k!==category);draw();
+            const cursor=cursorOf(document.activeElement);
+            if(S.query.trim()===query&&S.onlineType===category&&(document.activeElement===input||cursor?.band===0&&cursor.row===0))focusFirst([0]);
           }
-        }));
+        }
       }
       async function load() {
         loading=true;retry.disabled=true;draw();
