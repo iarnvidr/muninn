@@ -1,6 +1,6 @@
 # Muninn architecture
 
-This overview describes the desktop implementation at version **0.2.21**. Muninn
+This overview describes the desktop implementation at version **0.2.22**. Muninn
 combines a native YouTube browser, a local content library and its own video
 player. The Rust service runs **inside the desktop app**. WebKit and the bundled
 media helpers can run in separate processes; a separate Muninn server deployment
