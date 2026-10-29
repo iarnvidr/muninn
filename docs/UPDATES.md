@@ -1,6 +1,8 @@
 # Updater release preparation
 
-The checked-in version is `0.2.20`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
+Search places online results above the query field and local results below it. Both use media cards with thumbnails, creators and explicit Saved/Not saved labels; the side filters remain visible. Up from the field enters online results and Down enters local results. Typing stays local; Enter fetches online results.
+
+The checked-in version is `0.2.21`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
 
 Settings defaults to **Stable only**. With no stable release, it explains that no stable update has been published. Choose **Stable and previews** to check published GitHub prereleases as well. This preference is local to the installation. Discovery selects the highest numeric version among the latest 100 published releases with a matching repository-owned `latest.json` asset; drafts and malformed tags are excluded. Preview manifests use their fixed release tag. The pinned verification key and signature checks apply to both channels; older and equal versions cannot be installed. A successful check with no newer version reports up to date. Preview builds may be unfinished and non-notarized; this option does not promote a build to stable.
 

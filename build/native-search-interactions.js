@@ -11,7 +11,7 @@
     const query=async text=>{const el=document.querySelector('#universal-query');el.value=text;el.dispatchEvent(new Event('input'));await settle();};
     const sources={
       '/api/library':[
-        {video_id:'SrchSaved01',title:'Fixture protected',state:'protected',status:'complete',protected:true},
+        {video_id:'SrchSaved01',title:'Fixture protected',channel:'Fixture creator',duration_seconds:123,state:'protected',status:'complete',protected:true},
         {video_id:'SrchCache01',title:'Fixture cache',state:'complete',status:'complete',protected:false},
         {video_id:'SrchLinks01',title:'Fixture link',state:'link',saved_link:true},
       ],
@@ -24,7 +24,7 @@
       if(method==='POST'&&path==='/api/search') {
         onlineCalls.push({...body});
         const items=body.category==='channels'?[{id:'UCabcdefghijklmnopqrstuv',kind:'channel',title:body.query+' channel',channel:'Online'}]:
-          [{id:body.category==='live'?'SrchLive001':'SrchSaved01',kind:'video',title:body.query+' '+body.category,channel:'Online',live:body.category==='live'},
+          [{id:body.category==='live'?'SrchLive001':'SrchSaved01',kind:'video',title:body.query+' '+body.category,channel:'Online',duration_seconds:321,live:body.category==='live'},
             {id:'SrchCache01',kind:'video',title:body.query+' second',channel:'Online'}];
         if(body.query==='slow')return new Promise(resolve=>delayed.push(()=>resolve({items:items.map(row=>({...row,title:'STALE'}))})));
         return {items};
@@ -59,7 +59,12 @@
       check('local typing never launches remote search',actions.length===0&&onlineCalls.length===0,{actions,onlineCalls});
       check('filters are visible side buttons without dropdowns',!document.querySelector('.search-page select')&&document.querySelectorAll('.search-filters [aria-pressed]').length===11);
       const online=document.querySelector('[aria-label="Online results"]'),local=document.querySelector('[aria-label="Local results"]'),rail=document.querySelector('.search-filters');
-      check('online above local and filters to the side',online.getBoundingClientRect().bottom<=local.getBoundingClientRect().top&&rail.getBoundingClientRect().right<=online.getBoundingClientRect().left,{online:online.getBoundingClientRect().toJSON(),local:local.getBoundingClientRect().toJSON()});
+      const assertLayout=label=>{
+        const a=online.getBoundingClientRect(), b=local.getBoundingClientRect(), field=document.querySelector('#universal-query').getBoundingClientRect();
+        check(label+' online above query and local below query',a.bottom<=field.top&&b.top>=field.bottom&&rail.getBoundingClientRect().right<=a.left,{online:a.toJSON(),field:field.toJSON(),local:b.toJSON()});
+        check(label+' cards stay inside their columns',[...document.querySelectorAll('.search-result')].every(n=>{const r=n.getBoundingClientRect(),c=n.closest('.search-column').getBoundingClientRect();return r.left>=c.left&&r.right<=c.right+1&&!!n.querySelector('.search-media')&&!!n.querySelector('.search-creator');}));
+      };
+      assertLayout('initial');
       check('saved and unsaved are both explicit',rows().filter(n=>n.dataset.searchKind==='library').map(n=>n.querySelector('.badge')?.textContent).join('|')==='Saved|Not saved|Saved');
       check('incidental channels are excluded',rows().filter(n=>n.dataset.searchKind==='channels').length===1);
       const typing=key('j');check('hjkl stays normal text in query input',!typing.defaultPrevented&&document.activeElement.id==='universal-query');
@@ -78,6 +83,12 @@
       document.querySelector('#universal-query').focus();document.querySelector('.search-query').requestSubmit();await settle();
       check('Enter fetches all three online categories inside search',onlineCalls.length===3&&['videos','live','channels'].every(k=>onlineCalls.some(c=>c.category===k)),onlineCalls);
       check('online results rendered without opening a browser tab',rows(0).length===5&&actions.length===1,actions);
+      assertLayout('populated');
+      check('video cards show duration metadata',rows(0)[0].querySelector('.search-media-label')?.textContent==='5:21');
+      check('media-first results show video artwork and channel avatars',!!rows(0)[0].querySelector('.search-media img')&&!!rows(0).at(-1).querySelector('.search-avatar'));
+      key('Escape');key('ArrowUp');check('Up from query enters online results',document.activeElement.dataset.band==='0');
+      key('Escape');key('ArrowDown');check('Down from query enters local results even with online matches',document.activeElement.dataset.band==='1');
+      key('Escape');key('ArrowUp');
       check('first online result receives focus after Enter',document.activeElement.dataset.band==='0'&&document.activeElement.dataset.column==='0'&&document.activeElement.dataset.row==='1');
       key('ArrowRight');check('Right moves to live results',document.activeElement.dataset.column==='1');
       key('ArrowDown');check('Down moves inside the live type',document.activeElement.dataset.row==='2');
@@ -88,6 +99,10 @@
       choose('onlineType','all');rows(0)[0].focus();key('ArrowDown');key('ArrowDown');
       check('Down walks from online results to local band',document.activeElement.dataset.band==='1');
       key('ArrowUp');check('Up returns to online results',document.activeElement.dataset.band==='0');
+      const shell=document.querySelector('.search-page'),oldWidth=shell.style.maxWidth;
+      shell.style.maxWidth='560px';await settle();assertLayout('narrow');
+      rows(0)[0].focus();key('l');check('narrow keyboard focus stays on a media result',!!document.activeElement.closest('.search-result'));
+      shell.style.maxWidth=oldWidth;await settle();
       key('Escape');await query('slow');document.querySelector('.search-query').requestSubmit();await settle();
       await query('fast');document.querySelector('.search-query').requestSubmit();await settle();
       for(const resolve of delayed)resolve();await settle();
