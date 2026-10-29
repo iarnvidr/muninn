@@ -11,9 +11,10 @@
       const savedMedia = !!entry.protected || entry.state === 'protected';
       const savedLink = !!entry.saved_link || entry.state === 'link';
       const complete = ['complete', 'ready'].includes(entry.status) || (!entry.status && ['cached', 'ready', 'complete'].includes(entry.state));
-      const next = old || {id, title:id, channel:'', savedMedia:false, savedLink:false, complete:false, downloading:false};
+      const next = old || {id, title:id, channel:'',  savedMedia:false, savedLink:false, complete:false, downloading:false};
       if (entry.title && next.title === id) next.title = entry.title;
       if (entry.channel && !next.channel) next.channel = entry.channel;
+      next.duration_seconds ||= entry.duration_seconds;
       next.savedMedia ||= savedMedia;
       next.savedLink ||= savedLink;
       next.complete ||= complete;
@@ -112,13 +113,13 @@
         const node=cells()[cursor.band]?.[cursor.column]?.[cursor.row];
         if(node) {node.focus({preventScroll:true});node.scrollIntoView({block:'nearest',inline:'nearest'});}
       };
-      const focusFirst=(onlineOnly=false)=>{
+      const focusFirst=(bands=[1,0])=>{
         const matrix=cells();
-        for(const band of onlineOnly?[0]:[0,1]) for(let column=0;column<3;column++) if(matrix[band][column].length>1) {focusCursor({band,column,row:1});return;}
+        for(const band of bands) for(let column=0;column<3;column++) if(matrix[band][column].length>1) {focusCursor({band,column,row:1});return;}
       };
       input=h('input',{type:'search',id:'universal-query',value:S.query||'',placeholder:'Search Muninn or enter a YouTube address',autocomplete:'off',maxlength:200,
         'aria-label':'Search Muninn','aria-describedby':'search-help',oninput:()=>{S.query=input.value;limit=20;clearTimeout(timer);timer=setTimeout(()=>draw(),120);},
-        onkeydown:event=>{if(event.key==='Enter'&&event.isComposing){event.preventDefault();return;}if(event.key==='ArrowDown'&&!event.isComposing&&!event.metaKey&&!event.ctrlKey&&!event.altKey){event.preventDefault();clearTimeout(timer);draw();focusFirst();}}});
+        onkeydown:event=>{if(event.key==='Enter'&&event.isComposing){event.preventDefault();return;}if(['ArrowDown','ArrowUp'].includes(event.key)&&!event.isComposing&&!event.metaKey&&!event.ctrlKey&&!event.altKey){event.preventDefault();clearTimeout(timer);draw();focusFirst(event.key==='ArrowUp'?[0]:[1]);}}});
       const status=h('p',{class:'muted',role:'status','aria-live':'polite'});
       const live=h('button',{type:'submit',id:'search-youtube',class:'primary',text:'Search online ↵'});
       const onlineNote=h('p',{class:'muted',role:'status','aria-live':'polite'});
@@ -129,10 +130,11 @@
         filters('Local sources',[['all','All local'],['tabs','Open tabs'],['library','Library'],['channels','Saved channels']],'scope'),
         filters('Library saved status',[['all','Saved and not saved'],['saved','Saved'],['unsaved','Not saved']],'saved'),retry);
       const shell=h('div',{class:'search-page'},h('h1',{class:'h1',text:'Search Muninn'}),
-        h('form',{class:'search-query',onsubmit:event=>{event.preventDefault();if(!event.isComposing)submitOnline();}},input,live),
-        h('p',{id:'search-help',class:'muted',text:'Enter searches online · ↓ enters results · ↑↓ or j/k move · ←→ or h/l change type · Esc returns to search'}),
         h('div',{class:'search-workspace'},rail,h('div',{class:'search-content'},
           h('section',{class:'search-band','aria-label':'Online results'},h('h2',{class:'h3',text:'Online · YouTube'}),onlineNote,bandNodes[0]),
+          h('div',{class:'search-query-divider'},
+            h('form',{class:'search-query',role:'search',onsubmit:event=>{event.preventDefault();if(!event.isComposing)submitOnline();}},input,live),
+            h('p',{id:'search-help',class:'muted',text:'Enter searches online · ↑ online / ↓ local · arrows or h/j/k/l navigate results · Esc returns here'})),
           h('section',{class:'search-band','aria-label':'Local results'},h('h2',{class:'h3',text:'On this device'}),status,errors,bandNodes[1]))));
       host.append(shell);
       shell.addEventListener('keydown',event=>{
@@ -152,7 +154,8 @@
         const focused=document.activeElement, focusKey=focused?.dataset.searchKey, previous=cursorOf(focused);
         const scrolls=bandNodes.map(band=>new Map([...band.querySelectorAll('.search-column')].map(column=>[column.dataset.column,column.querySelector('.search-column-body').scrollTop])));
         const videos=libraryIndex(data.library), byId=new Map(videos.map(v=>[v.id,v]));
-        const tabs=M.tabs.list.map(tab=>({kind:'tabs',id:tab.id,title:M.L.tabTitle(tab),url:tab.url||'',channel:'',video:byId.get(tab.video_id || M.L.extractVideoId(tab.url))}));
+        const tabs=M.tabs.list.map(tab=>{const videoId=tab.video_id||M.L.extractVideoId(tab.url);return {kind:'tabs',id:tab.id,title:M.L.tabTitle(tab),url:tab.url||'',channel:'',videoId,video:byId.get(videoId)};});
+        const channelRows=savedChannels(data.channels,data.configs,data.groups), savedIds=new Set(channelRows.map(c=>c.id));
         const library=videos.filter(v=>S.saved==='all'||!S.saved||(S.saved==='saved'?v.saved:!v.saved));
         const column=(band,index,kind,label,rows,message)=>{
           const node=h('section',{class:'search-column','aria-label':label,'data-column':index});
@@ -162,11 +165,26 @@
           for(const [index,row] of rows.slice(0,limit).entries()) {
             const video=row.kind==='library'?row:row.video;
             const availability=video?(video.complete?'Downloaded':video.downloading?'Incomplete download':'No downloaded copy'):'';
-            body.append(h('button',{type:'button',class:'search-result',...props(index+1),'data-search-key':band+'-'+kind+'-'+row.id,
-              'data-search-kind':kind,'data-id':row.id,'data-saved':video?String(video.saved):null,onclick:()=>open(row)},
-              icon(kind==='tabs'?'tabs':row.kind==='channel'||row.kind==='channels'?'channel':row.live?'pulse':'library'),
-              h('span',{class:'search-result-text'},h('strong',{text:row.title}),h('span',{class:'muted',text:[row.channel||row.url,row.live?'Live':availability].filter(Boolean).join(' · ')})),
-              video?h('span',{class:'badge '+(video.saved?'saved':'unsaved'),text:video.saved?'Saved':'Not saved'}):null));
+            const channel=row.kind==='channel'||row.kind==='channels';
+            const videoId=row.kind==='tabs'?row.videoId:row.id;
+            const hasImage=!channel&&/^[A-Za-z0-9_-]{11}$/.test(videoId||'');
+            const saved=channel?savedIds.has(row.id):!!video?.saved;
+            const image=hasImage?M.thumbImg('/thumb/'+videoId):null;
+            if(image) {
+              image.loading='lazy';
+              let retries=0;
+              image.addEventListener('error',()=>{if(retries++<3)setTimeout(()=>{if(image.isConnected)image.src=M.url('/thumb/'+videoId);},retries*1500);});
+            }
+            const duration=M.L.fmtDuration(row.duration_seconds||video?.duration_seconds);
+            body.append(h('button',{type:'button',class:'search-result'+(channel?' search-channel':''),...props(index+1),'data-search-key':band+'-'+kind+'-'+row.id,
+              'data-search-kind':kind,'data-id':row.id,'data-saved':String(saved),onclick:()=>open(row)},
+              h('span',{class:'search-media'+(!hasImage?' search-media-fallback':''),'aria-hidden':'true'},
+                image||h('span',{class:'search-avatar',text:channel?Array.from(row.title||'?')[0]:''},channel?null:icon(kind==='tabs'?'tabs':'library')),
+                row.live?h('span',{class:'search-media-label live',text:'LIVE'}):duration?h('span',{class:'search-media-label',text:duration}):null),
+              h('span',{class:'search-result-text'},h('strong',{text:row.title}),
+                h('span',{class:'search-creator muted',text:row.channel||video?.channel||(channel?'YouTube channel':row.kind==='tabs'?'Open tab':'YouTube video')}),
+                h('span',{class:'search-result-meta'},h('span',{class:'badge '+(saved?'saved':'unsaved'),text:saved?'Saved':'Not saved'}),
+                  availability?h('span',{class:'muted',text:availability}):null))));
           }
           if(!rows.length)body.append(h('p',{class:'muted search-empty',text:message||'No matches'}));
           if(rows.length>limit)body.append(h('button',{type:'button',text:'Show more',...props(limit+1),'data-search-key':band+'-'+kind+'-more',onclick:()=>{const next=limit+1;limit+=20;draw();focusCursor({band,column:index,row:next});}}));
@@ -182,7 +200,7 @@
         }
         bandNodes[0].replaceChildren(...onlineColumns);
         bandNodes[0].dataset.columns=onlineColumns.length;
-        const sections=[['tabs','Open tabs',tabs],['library','Library',library],['channels','Saved channels',savedChannels(data.channels,data.configs,data.groups)]];
+        const sections=[['tabs','Open tabs',tabs],['library','Library',library],['channels','Saved channels',channelRows]];
         let total=0;
         const nodes=[];
         for (const [index,[kind,label,rows]] of sections.entries()) {
@@ -224,7 +242,7 @@
           } finally {
             if(generation===own&&revision===onlineRevision){
               S.online.pending=S.online.pending.filter(k=>k!==category);draw();
-              if(S.query.trim()===query&&document.activeElement===input)focusFirst(true);
+              if(S.query.trim()===query&&document.activeElement===input)focusFirst([0]);
             }
           }
         }));

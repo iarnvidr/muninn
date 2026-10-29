@@ -8,7 +8,7 @@ test('search distinguishes saved from disposable cached copies across all qualit
   const rows=S.libraryIndex([
     {video_id:'cache',title:'Cache only',state:'cached',status:'complete',protected:false},
     {video_id:'mixed',title:'Saved version',state:'partial',protected:true},
-    {video_id:'mixed',state:'cached',status:'complete',protected:false},
+    {video_id:'mixed',state:'cached',status:'complete',protected:false,duration_seconds:123},
     {video_id:'link',title:'Bookmark',state:'link',saved_link:true,protected:false},
     {video_id:'downloaded-link',state:'cached',saved_link:true,status:'complete',protected:false},
     {video_id:'saved-pending',state:'protected',status:'queued',protected:true},
@@ -18,6 +18,7 @@ test('search distinguishes saved from disposable cached copies across all qualit
     ['cache',false,true],['mixed',true,true],['link',true,false],['downloaded-link',true,true],['saved-pending',true,false],
   ]);
   assert.equal(rows[1].savedMedia,true);
+  assert.equal(rows[1].duration_seconds,123);
   assert.equal(rows[2].savedMedia,false);
   assert.equal(rows[2].savedLink,true);
 });

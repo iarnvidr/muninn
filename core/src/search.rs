@@ -47,6 +47,7 @@ fn parse_results(data: &Value, category: Category) -> Result<Vec<Value>> {
         } || !seen.insert(id.to_string()) { return None; }
         Some(json!({"id":id,"title":crate::extract::clip(entry["title"].as_str().unwrap_or(id),500),
             "channel":crate::extract::clip(entry["channel"].as_str().or_else(||entry["uploader"].as_str()).unwrap_or(""),200),
+            "duration_seconds":entry["duration"].as_f64().filter(|n|n.is_finite() && *n > 0.0),
             "live":live,"kind":if is_channel {"channel"} else {"video"}}))
     }).take(LIMIT).collect())
 }
@@ -95,7 +96,7 @@ mod tests {
     #[test]
     fn results_are_typed_deduplicated_bounded_and_do_not_trust_external_urls() {
         let data=json!({"entries":[
-            {"id":"aaaaaaaaaaa","title":"Video","url":"javascript:bad"},
+            {"id":"aaaaaaaaaaa","title":"Video","duration":123,"url":"javascript:bad"},
             {"id":"aaaaaaaaaaa","title":"Duplicate"},
             {"id":"bbbbbbbbbbb","title":"Live","live_status":"is_live"},
             {"id":"UCabcdefghijklmnopqrstuv","title":"Channel"},
@@ -103,6 +104,7 @@ mod tests {
         ]});
         assert_eq!(parse_results(&data,Category::Videos).unwrap().len(),1);
         assert!(parse_results(&data,Category::Videos).unwrap()[0].get("url").is_none());
+        assert_eq!(parse_results(&data,Category::Videos).unwrap()[0]["duration_seconds"],123.0);
         assert_eq!(parse_results(&data,Category::Live).unwrap()[0]["id"],"bbbbbbbbbbb");
         assert_eq!(parse_results(&data,Category::Channels).unwrap()[0]["kind"],"channel");
         let large=json!({"entries":(0..30).map(|i|json!({"id":format!("{i:011}")})).collect::<Vec<_>>()});
