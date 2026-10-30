@@ -15,6 +15,7 @@ class ProductionReleaseContract(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = (ROOT / ".github/workflows/release.yml").read_text()
         cls.checks = (ROOT / ".github/workflows/check.yml").read_text()
+        cls.dagger_checks = (ROOT / "ci/dagger/check/main.go").read_text()
         cls.signer = (ROOT / "build/sign-notarize-macos.sh").read_text()
 
     def test_protected_main_version_tag_and_publish_gates_remain(self):
@@ -123,7 +124,8 @@ class ProductionReleaseContract(unittest.TestCase):
                                  for line in calls.read_text().splitlines()))
 
     def test_hosted_checks_run_contract_test(self):
-        self.assertIn("python3 -m unittest discover -s build -p 'test_release_production_contract.py' -v", self.checks)
+        self.assertIn("args: checks --source .", self.checks)
+        self.assertIn("python3 -m unittest discover -s build -p 'test_*.py' -v", self.dagger_checks)
 
 
 if __name__ == "__main__":
