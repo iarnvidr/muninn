@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"dagger/check/internal/dagger"
+	"dagger/muninn-ci/internal/dagger"
 )
 
 type MuninnCi struct{}
