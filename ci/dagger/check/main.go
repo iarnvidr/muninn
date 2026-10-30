@@ -8,7 +8,7 @@ import (
 	"dagger/check/internal/dagger"
 )
 
-type Muninn struct{}
+type MuninnCi struct{}
 
 const (
 	rustImage   = "rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b"
@@ -17,7 +17,7 @@ const (
 )
 
 // Checks runs Muninn's Linux Rust, JavaScript, packaging, and publication tests.
-func (m *Muninn) Checks(ctx context.Context, source *dagger.Directory) (string, error) {
+func (m *MuninnCi) Checks(ctx context.Context, source *dagger.Directory) (string, error) {
 	var out strings.Builder
 	base := dag.Container().From(rustImage).
 		WithExec([]string{"sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg && rm -rf /var/lib/apt/lists/*"}).
