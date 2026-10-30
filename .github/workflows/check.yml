@@ -29,5 +29,16 @@ jobs:
           verb: call
           module: ./ci/dagger/check
           args: checks --source .
+      - name: Record Dagger check receipt
+        if: github.event_name == 'pull_request'
+        run: python3 build/release_candidate.py create-check --root "$GITHUB_WORKSPACE"
+      - name: Upload Dagger check receipt
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-check-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: check-candidate.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Publication boundary checks (Git metadata required)
         run: python3 build/check_publication.py

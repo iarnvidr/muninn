@@ -29,14 +29,14 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertIn("workflow_dispatch:", self.workflow)
         self.assertNotRegex(self.workflow, r"(?m)^\s+release:\s*create")
 
-    def test_credential_preflight_precedes_expensive_build(self):
+    def test_credential_preflight_precedes_signing(self):
         preflight = self.workflow.index("Fail-closed Apple signing credential preflight")
-        build = self.workflow.index("Build, test and sign exact app bundle")
-        self.assertLess(preflight, build)
+        signing = self.workflow.index("Sign, notarize, staple and assess production app")
+        self.assertLess(preflight, signing)
         names = re.findall(r"APPLE_[A-Z0-9_]+", self.signer.split("for n in ", 1)[1].split("; do", 1)[0])
         self.assertEqual(len(names), 6)
         for name in names:
-            self.assertIn(name, self.workflow[preflight:build])
+            self.assertIn(name, self.workflow[preflight:signing])
 
     def test_notarization_precedes_archive_and_updater_signing(self):
         notarize = self.workflow.index("build/sign-notarize-macos.sh")
@@ -125,6 +125,8 @@ class ProductionReleaseContract(unittest.TestCase):
 
     def test_hosted_checks_run_contract_test(self):
         self.assertIn("args: checks --source .", self.checks)
+        self.assertIn("create-check --root", self.checks)
+        self.assertIn("muninn-check-candidate-${{ github.run_id }}-${{ github.run_attempt }}", self.checks)
         self.assertIn("python3 -m unittest discover -s build -p 'test_*.py' -v", self.dagger_checks)
 
 
