@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install signature verifier
@@ -27,7 +27,7 @@ jobs:
         run: python3 build/repack_legacy_release.py "$RUNNER_TEMP/legacy" src-tauri/tauri.conf.json
       - name: Create and mount-verify the DMG
         run: bash build/package-dmg.sh "$RUNNER_TEMP/legacy/Muninn.app" "$RUNNER_TEMP/legacy/corresponding-source" "$RUNNER_TEMP/legacy/Muninn_0.2.14_macos-arm64.dmg"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: legacy-0.2.14-dmg-review
           path: ${{ runner.temp }}/legacy/Muninn_0.2.14_macos-arm64.dmg
