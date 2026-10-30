@@ -1,13 +1,11 @@
 name: Checks
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: checks-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
@@ -24,30 +22,12 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - name: Rust, JavaScript, packaging, and publication checks
+        uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
         with:
-          node-version: '22.23.3'
-      - name: Install native dependencies
-        run: |
-          # The image's Azure mirror can stall package downloads for minutes.
-          # Newer runner images point ubuntu.sources at file-based mirror lists.
-          for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors*.txt; do
-            if [ -f "$source" ]; then
-              sudo sed -i 's|https\?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev ffmpeg
-      - name: Select the pinned Rust toolchain
-        run: rustup show active-toolchain
-      - name: Rust tests
-        run: cargo test --locked --workspace
-      - name: JavaScript tests
-        run: node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js
-      - name: Packaging tests
-        run: |
-          python3 -m unittest discover -s build -p 'test_*.py' -v
-          python3 -m unittest discover -s build -p 'test_release_production_contract.py' -v
-          python3 build/updater-smoke/test_protocol.py
-      - name: Publication boundary checks
+          version: 0.21.11
+          verb: call
+          module: ./ci/dagger/check
+          args: checks --source .
+      - name: Publication boundary checks (Git metadata required)
         run: python3 build/check_publication.py
