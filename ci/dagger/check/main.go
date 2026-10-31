@@ -41,7 +41,7 @@ func (m *MuninnCi) Checks(ctx context.Context, source *dagger.Directory) (string
 	rustTools := dag.Container().From(rustImage)
 	nodeTools := dag.Container().From(nodeImage)
 	python := dag.Container().From(pythonImage).
-		WithExec([]string{"sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends bash git && rm -rf /var/lib/apt/lists/*"}).
+		WithExec([]string{"sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends bash git && ln -s /usr/local/bin/python3 /usr/bin/python3 && rm -rf /var/lib/apt/lists/*"}).
 		WithDirectory("/usr/local/cargo", rustTools.Directory("/usr/local/cargo")).
 		WithDirectory("/usr/local/rustup", rustTools.Directory("/usr/local/rustup")).
 		WithFile("/usr/local/bin/node", nodeTools.File("/usr/local/bin/node")).
