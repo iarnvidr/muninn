@@ -1,0 +1,31 @@
+name: Map accepted Muninn native artifact
+on:
+  push:
+    branches: [main]
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+concurrency:
+  group: muninn-native-acceptance-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Map the exact accepted merge to its native PR artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 build/release_candidate.py promote --root "$GITHUB_WORKSPACE" --merge-sha "$GITHUB_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-accepted-native-${{ github.sha }}
+          path: accepted-native.json
+          if-no-files-found: error
+          retention-days: 90

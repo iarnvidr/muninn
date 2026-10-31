@@ -10,6 +10,10 @@ on:
         description: Existing tag (for example v1.2.3); never created by this workflow
         required: true
         type: string
+      mapping_run_id:
+        description: Successful main acceptance-mapping run for this exact merged tree
+        required: true
+        type: string
       apple_signing:
         description: Apple signing mode (ad-hoc releases are not notarized)
         required: true
@@ -33,7 +37,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     permissions:
+      actions: read
+      checks: read
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -61,6 +68,11 @@ jobs:
           test "$version" = "$INPUT_VERSION"
           test "$INPUT_TAG" = "v$INPUT_VERSION"
           python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"build"); from updater_release import stable; assert stable(sys.argv[1])' "$version"
+      - name: Retrieve accepted native artifact by exact mapping
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAPPING_RUN_ID: ${{ inputs.mapping_run_id }}
+        run: python3 build/release_candidate.py retrieve --root "$GITHUB_WORKSPACE" --mapping-run-id "$MAPPING_RUN_ID" --expected-commit "$GITHUB_SHA" --target "$RUNNER_TEMP/muninn"
       - name: Fail-closed Apple signing credential preflight
         if: inputs.apple_signing == 'developer-id'
         env:
@@ -75,17 +87,8 @@ jobs:
           for name in APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD APPLE_TEAM_ID APPLE_NOTARY_API_KEY_ID APPLE_NOTARY_API_ISSUER_ID APPLE_NOTARY_API_PRIVATE_KEY; do
             if [[ -z "${!name:-}" ]]; then echo "Required Apple credential is unset: $name" >&2; exit 1; fi
           done
-      - name: Restore verified helper tool cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/muninn-tools
-          key: muninn-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/tools.lock.json', 'build/ffmpeg_lgpl.py') }}
-      - name: Install native build dependencies
-        run: brew install meson ninja pkgconf minisign
-      - name: Build, test and sign exact app bundle
-        run: bash build/build-native-macos.sh "$RUNNER_TEMP/muninn"
-      - name: App launch and localhost health smoke
-        run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn/Muninn.app"
+      - name: Install final package verifier
+        run: brew install minisign
       - name: Sign, notarize, staple and assess production app
         if: inputs.apple_signing == 'developer-id'
         env:
@@ -110,6 +113,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_TAG: ${{ inputs.tag }}
+          MAPPING_RUN_ID: ${{ inputs.mapping_run_id }}
         run: |
           set -euo pipefail
           command -v npm >/dev/null
@@ -131,7 +135,7 @@ jobs:
           open('Muninn.app.tar.gz.sig.minisig','wb').write(sig)
           PY
           minisign -Vm Muninn.app.tar.gz -p updater.pub -x Muninn.app.tar.gz.sig.minisig
-          echo "version=$INPUT_VERSION tag=$INPUT_TAG commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" > release-review.txt
+          echo "version=$INPUT_VERSION tag=$INPUT_TAG commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD) mapping_run=$MAPPING_RUN_ID" > release-review.txt
           shasum -a 256 Muninn.app.tar.gz Muninn.app.tar.gz.sig "Muninn_${INPUT_VERSION}_macos-arm64.zip" > SHA256SUMS
 
       - name: Prepare corresponding source archives, manifest and recipe
@@ -162,6 +166,7 @@ jobs:
             ${{ runner.temp }}/muninn/latest.json
             ${{ runner.temp }}/muninn/SHA256SUMS
             ${{ runner.temp }}/muninn/release-review.txt
+            ${{ runner.temp }}/muninn/accepted-native.json
             ${{ runner.temp }}/muninn/verify-macos.txt
             ${{ runner.temp }}/muninn/signing-notarization-evidence.txt
             ${{ runner.temp }}/muninn/corresponding-source/**
