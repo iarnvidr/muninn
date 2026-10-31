@@ -185,8 +185,6 @@ def verify_candidate(data, metadata, run, pr, merge_sha, merge_tree, root, api_f
             or run.get("path") != NATIVE_WORKFLOW
             or run.get("conclusion") != "success"
             or run.get("event") != "pull_request"
-            or len(run.get("pull_requests", [])) != 1
-            or run["pull_requests"][0].get("number") != pr["number"]
             or run["head_sha"] != pr["head"]["sha"]):
         raise ValueError("native producer is not the successful same-repository PR run")
     if (not pr.get("merged") or pr.get("base", {}).get("ref") != "main"
@@ -202,7 +200,7 @@ def verify_candidate(data, metadata, run, pr, merge_sha, merge_tree, root, api_f
         "schema": 1, "repository": REPOSITORY, "workflow_path": NATIVE_WORKFLOW,
         "run_id": run["id"], "run_attempt": run["run_attempt"],
         "event": "pull_request", "head_sha": run["head_sha"],
-        "base_sha": run["pull_requests"][0].get("base", {}).get("sha"),
+        "base_sha": pr.get("base", {}).get("sha"),
         "pr_number": pr["number"], "tested_tree": merge_tree,
         "version": version(root), "platform": "darwin-arm64",
         "files": {"Muninn.app.tar.gz": sha(members["Muninn.app.tar.gz"])},
@@ -327,11 +325,17 @@ def verify_check_receipt(accepted, merge_sha, api_fn=api, artifact_bytes_fn=arti
     if any(run.get(key) != value for key, value in expected_run.items()):
         raise ValueError("Dagger receipt is not from the successful accepted PR check run")
     if (run.get("repository", {}).get("full_name") != REPOSITORY
-            or run.get("head_repository", {}).get("full_name") != REPOSITORY
-            or len(run.get("pull_requests", [])) != 1
-            or run["pull_requests"][0].get("number") != accepted["pr_number"]
-            or run["pull_requests"][0].get("base", {}).get("sha") != accepted["source_base_sha"]):
-        raise ValueError("Dagger receipt run is not bound to the accepted same-repository PR and base")
+            or run.get("head_repository", {}).get("full_name") != REPOSITORY):
+        raise ValueError("Dagger receipt run is not from the accepted same-repository PR")
+    pr = api_fn(f"repos/{REPOSITORY}/pulls/{accepted['pr_number']}")
+    if (pr.get("number") != accepted["pr_number"] or not pr.get("merged")
+            or pr.get("merge_commit_sha") != merge_sha
+            or pr.get("head", {}).get("sha") != accepted["pr_head_sha"]
+            or pr.get("base", {}).get("sha") != accepted["source_base_sha"]
+            or pr.get("base", {}).get("ref") != "main"
+            or pr.get("head", {}).get("repo", {}).get("full_name") != REPOSITORY
+            or pr.get("base", {}).get("repo", {}).get("full_name") != REPOSITORY):
+        raise ValueError("Dagger receipt is not bound to the exact merged same-repository PR and base")
     artifacts = api_fn(f"repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100")["artifacts"]
     name = f"{CHECK_ARTIFACT_PREFIX}-{run_id}-{attempt}"
     found = [a for a in artifacts if a.get("id") == reference.get("artifact_id")
@@ -389,8 +393,7 @@ def promote(root, merge_sha):
         batch = api(f"repos/{REPOSITORY}/actions/workflows/macos.yml/runs?{query}")["workflow_runs"]
         runs.extend(x for x in batch if x.get("path") == NATIVE_WORKFLOW
                     and x.get("head_sha") == pr["head"]["sha"]
-                    and x.get("conclusion") == "success"
-                    and x.get("pull_requests", [{}])[0].get("number") == pr["number"])
+                    and x.get("conclusion") == "success")
         if len(batch) < 100:
             break
     if not runs:

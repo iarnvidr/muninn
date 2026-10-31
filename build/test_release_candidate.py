@@ -58,14 +58,15 @@ class NativeCandidateTests(unittest.TestCase):
             "conclusion": "success",
             "event": "pull_request",
             "head_sha": "b" * 40,
-            "pull_requests": [{"number": 44, "base": {"sha": "f" * 40}}],
+            "pull_requests": [],
         }
         pr = {
             "number": 44,
             "merged": True,
             "merge_commit_sha": "c" * 40,
             "head": {"sha": "b" * 40, "repo": {"full_name": candidate.REPOSITORY}},
-            "base": {"ref": "main", "repo": {"full_name": candidate.REPOSITORY}},
+            "base": {"ref": "main", "sha": "f" * 40,
+                     "repo": {"full_name": candidate.REPOSITORY}},
         }
         artifact = {
             "id": 555,
@@ -176,7 +177,7 @@ class NativeCandidateTests(unittest.TestCase):
             "head_sha": "b" * 40,
             "repository": {"full_name": candidate.REPOSITORY},
             "head_repository": {"full_name": candidate.REPOSITORY},
-            "pull_requests": [{"number": 44, "base": {"sha": "f" * 40}}],
+            "pull_requests": [],
         }
         accepted = {
             "pr_number": 44,
@@ -196,6 +197,15 @@ class NativeCandidateTests(unittest.TestCase):
         }
 
         def api_fn(path, binary=False):
+            if path.endswith("/pulls/44"):
+                return {
+                    "number": 44,
+                    "merged": True,
+                    "merge_commit_sha": "d" * 40,
+                    "head": {"sha": "b" * 40, "repo": {"full_name": candidate.REPOSITORY}},
+                    "base": {"ref": "main", "sha": "f" * 40,
+                             "repo": {"full_name": candidate.REPOSITORY}},
+                }
             if path.endswith("/actions/runs/124"):
                 return run
             if path.endswith("/actions/runs/124/artifacts?per_page=100"):
