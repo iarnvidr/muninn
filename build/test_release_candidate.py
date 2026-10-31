@@ -32,6 +32,11 @@ class RedirectSecurityTests(unittest.TestCase):
                 candidate.api("repos/example/repo")
         self.assertNotIn("secret", str(raised.exception))
 
+    def test_initial_request_is_limited_to_github_api_https_get(self):
+        request = candidate.urllib.request.Request("https://objects.example.net/archive")
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            candidate.open_github_request(request, timeout=1)
+
 
 class NativeCandidateTests(unittest.TestCase):
     def fixture(self):
