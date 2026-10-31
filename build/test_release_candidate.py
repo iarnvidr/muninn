@@ -4,10 +4,33 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 import zipfile
 
 import release_candidate as candidate
+
+
+class RedirectSecurityTests(unittest.TestCase):
+    def test_cross_host_artifact_redirect_drops_github_token(self):
+        handler = candidate.GitHubRedirectHandler()
+        request = candidate.urllib.request.Request(
+            "https://api.github.com/repos/example/repo",
+            headers={"Authorization": "Bearer secret", "Proxy-Authorization": "Basic secret"})
+        redirected = handler.redirect_request(
+            request, None, 302, "Found", {}, "https://blob.example.net/artifact?sig=secret")
+        self.assertIsNotNone(redirected)
+        self.assertIsNone(redirected.get_header("Authorization"))
+        self.assertIsNone(redirected.get_header("Proxy-Authorization"))
+
+    def test_api_http_error_reports_redirect_host_without_query(self):
+        failure = urllib.error.HTTPError(
+            "https://blob.example.net/artifact?sig=secret", 401, "unauthorized", {}, io.BytesIO())
+        with mock.patch.dict("os.environ", {"GH_TOKEN": "secret"}), \
+                mock.patch.object(candidate.urllib.request, "build_opener", side_effect=failure):
+            with self.assertRaisesRegex(ValueError, r"HTTP 401 for blob.example.net/artifact") as raised:
+                candidate.api("repos/example/repo")
+        self.assertNotIn("secret", str(raised.exception))
 
 
 class NativeCandidateTests(unittest.TestCase):

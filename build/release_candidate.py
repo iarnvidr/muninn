@@ -10,6 +10,7 @@ import re
 import subprocess
 import tarfile
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -123,6 +124,35 @@ def create_check(root):
     (root / "check-candidate.json").write_text(json.dumps(record, sort_keys=True) + "\n")
 
 
+class GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep GitHub API credentials on GitHub when downloading signed artifacts."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        source = urllib.parse.urlsplit(req.full_url)
+        target = urllib.parse.urlsplit(newurl)
+        if req.get_method() != "GET" or target.scheme != "https" or target.username or target.password:
+            raise ValueError("refusing unsafe GitHub artifact redirect")
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and source.netloc != target.netloc:
+            for header_set in (redirected.headers, redirected.unredirected_hdrs):
+                for name in list(header_set):
+                    if name.lower() in {"authorization", "proxy-authorization"}:
+                        del header_set[name]
+        return redirected
+
+
+def open_github_request(request, timeout):
+    parsed = urllib.parse.urlsplit(request.full_url)
+    if request.get_method() != "GET" or parsed.scheme != "https" or parsed.username or parsed.password:
+        raise ValueError("refusing unsafe GitHub request")
+    try:
+        return urllib.request.build_opener(GitHubRedirectHandler()).open(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        failed = urllib.parse.urlsplit(exc.url or request.full_url)
+        safe_location = failed.netloc + failed.path
+        raise ValueError(f"GitHub request returned HTTP {exc.code} for {safe_location}") from exc
+
+
 def api(path, binary=False):
     if not os.environ.get("GH_TOKEN"):
         raise ValueError("GH_TOKEN is required for trusted artifact lookup")
@@ -132,7 +162,7 @@ def api(path, binary=False):
         "Authorization": "Bearer " + os.environ["GH_TOKEN"],
         "X-GitHub-Api-Version": "2022-11-28",
     })
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with open_github_request(request, timeout=60) as response:
         data = response.read(MAX_ARCHIVE_BYTES + 1)
     if len(data) > MAX_ARCHIVE_BYTES:
         raise ValueError("GitHub response exceeded the bounded artifact size")
