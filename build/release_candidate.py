@@ -71,7 +71,8 @@ def inventory(app):
     return rows
 
 
-def create(root):
+def create(root, source_root=None):
+    source_root = source_root or root
     app = root / "Muninn.app"
     if not app.is_dir():
         raise ValueError("native producer did not create Muninn.app")
@@ -93,8 +94,8 @@ def create(root):
         "head_sha": pr.get("head", {}).get("sha", os.environ["GITHUB_SHA"]),
         "pr_number": pr.get("number"),
         "base_sha": pr.get("base", {}).get("sha"),
-        "tested_tree": git(root, "rev-parse", "HEAD^{tree}"),
-        "version": version(root),
+        "tested_tree": git(source_root, "rev-parse", "HEAD^{tree}"),
+        "version": version(source_root),
         "platform": "darwin-arm64",
         "files": {archive.name: sha(archive.read_bytes())},
         "app_files": inventory(app),
@@ -495,6 +496,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     create_parser = sub.add_parser("create")
     create_parser.add_argument("--root", type=Path, default=Path.cwd())
+    create_parser.add_argument("--source-root", type=Path, default=Path.cwd())
     check_parser = sub.add_parser("create-check")
     check_parser.add_argument("--root", type=Path, default=Path.cwd())
     promote_parser = sub.add_parser("promote")
@@ -507,7 +509,7 @@ def main():
     retrieve_parser.add_argument("--target", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "create":
-        create(args.root)
+        create(args.root, args.source_root)
     elif args.command == "create-check":
         create_check(args.root)
     elif args.command == "promote":

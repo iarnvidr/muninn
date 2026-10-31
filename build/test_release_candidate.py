@@ -38,6 +38,35 @@ class RedirectSecurityTests(unittest.TestCase):
             candidate.open_github_request(request, timeout=1)
 
 
+class NativeReceiptCreationTests(unittest.TestCase):
+    def test_receipt_uses_source_checkout_separate_from_artifact_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            output = temp / "output"
+            source = temp / "checkout"
+            source.mkdir()
+            app_binary = output / "Muninn.app" / "Contents" / "MacOS" / "Muninn"
+            app_binary.parent.mkdir(parents=True)
+            app_binary.write_bytes(b"app")
+            event_path = temp / "event.json"
+            event_path.write_text(json.dumps({"pull_request": {
+                "number": 9, "head": {"sha": "b" * 40}, "base": {"sha": "a" * 40}}}))
+            env = {
+                "GITHUB_EVENT_PATH": str(event_path), "GITHUB_REPOSITORY": candidate.REPOSITORY,
+                "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_WORKFLOW_SHA": "c" * 40, "GITHUB_SHA": "d" * 40,
+            }
+            with mock.patch.dict("os.environ", env), \
+                    mock.patch.object(candidate, "git", return_value="e" * 40) as git_call, \
+                    mock.patch.object(candidate, "version", return_value="0.2.14") as version_call:
+                candidate.create(output, source)
+            git_call.assert_called_once_with(source, "rev-parse", "HEAD^{tree}")
+            version_call.assert_called_once_with(source)
+            receipt = json.loads((output / "native-candidate" / "native-receipt.json").read_text())
+            self.assertEqual(receipt["tested_tree"], "e" * 40)
+            self.assertEqual(receipt["version"], "0.2.14")
+
+
 class NativeCandidateTests(unittest.TestCase):
     def fixture(self):
         temp = tempfile.TemporaryDirectory()

@@ -69,7 +69,7 @@ jobs:
           NATIVE_UI_EVIDENCE_DIR: ${{ runner.temp }}/muninn-debug-ui-evidence
         run: bash build/native-ui-smoke.sh "$RUNNER_TEMP/muninn-debug-smoke/Muninn.app" "$RUNNER_TEMP/muninn-debug-ui-evidence"
       - name: Record exact native release candidate
-        run: python3 build/release_candidate.py create --root "$RUNNER_TEMP/muninn"
+        run: python3 build/release_candidate.py create --root "$RUNNER_TEMP/muninn" --source-root "$GITHUB_WORKSPACE"
       - id: upload
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
