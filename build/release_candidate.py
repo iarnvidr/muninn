@@ -301,9 +301,8 @@ def check_candidate(root, pr, accepted, merge_sha, merge_tree):
         runs.extend(x for x in batch if x.get("path") == CHECK_WORKFLOW
                     and x.get("head_sha") == pr["head"]["sha"]
                     and x.get("conclusion") == "success"
-                    and len(x.get("pull_requests", [])) == 1
-                    and x["pull_requests"][0].get("number") == pr["number"]
-                    and x["pull_requests"][0].get("base", {}).get("sha") == accepted["source_base_sha"])
+                    and x.get("repository", {}).get("full_name") == REPOSITORY
+                    and x.get("head_repository", {}).get("full_name") == REPOSITORY)
         if len(batch) < 100:
             break
     if not runs:

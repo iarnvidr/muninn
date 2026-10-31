@@ -281,6 +281,52 @@ class NativeCandidateTests(unittest.TestCase):
             result = candidate.verify_check_receipt(accepted, "d" * 40, api_fn=api_fn)
         self.assertEqual(result["tested_tree"], accepted["accepted_tree"])
 
+    def test_main_mapping_uses_receipt_when_successful_run_has_no_pr_association(self):
+        accepted, _ = self.check_receipt_fixture()
+        receipt = {
+            "schema": 1, "repository": candidate.REPOSITORY,
+            "workflow_path": candidate.CHECK_WORKFLOW, "run_id": 124, "run_attempt": 2,
+            "event": "pull_request", "workflow_sha": "a" * 40, "head_sha": "b" * 40,
+            "base_sha": "f" * 40, "pr_number": 44, "tested_tree": "c" * 40, "check": "test",
+        }
+        bundle = io.BytesIO()
+        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("check-candidate.json", json.dumps(receipt))
+        artifact_data = bundle.getvalue()
+        artifact = {"id": 777, "name": "muninn-check-candidate-124-2",
+                    "digest": "sha256:" + candidate.sha(artifact_data), "expired": False}
+        run = {
+            "id": 124, "run_attempt": 2, "path": candidate.CHECK_WORKFLOW,
+            "event": "pull_request", "conclusion": "success", "head_sha": "b" * 40,
+            "repository": {"full_name": candidate.REPOSITORY},
+            "head_repository": {"full_name": candidate.REPOSITORY}, "pull_requests": [],
+        }
+        pr = {"number": 44, "head": {"sha": "b" * 40}}
+
+        def api_fn(path, binary=False):
+            if "/actions/workflows/check.yml/runs?" in path:
+                return {"workflow_runs": [run]}
+            if path.endswith("/actions/runs/124/artifacts?per_page=100"):
+                return {"artifacts": [artifact]}
+            if "/contents/" in path:
+                return {"sha": "e" * 40}
+            raise AssertionError(path)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(candidate, "api", side_effect=api_fn), \
+                mock.patch.object(candidate, "artifact_bytes", return_value=artifact_data), \
+                mock.patch.object(candidate, "version", return_value="0.2.14"):
+            mapped = candidate.check_candidate(
+                Path(directory), pr, accepted, "d" * 40, "c" * 40)
+        self.assertEqual(mapped["run_id"], 124)
+        self.assertEqual(mapped["artifact_id"], 777)
+        self.assertEqual(mapped["tested_tree"], "c" * 40)
+        run["head_repository"]["full_name"] = "attacker/muninn"
+        with mock.patch.object(candidate, "api", side_effect=api_fn):
+            with self.assertRaisesRegex(ValueError, "no successful Dagger check run"):
+                candidate.check_candidate(
+                    Path(directory), pr, accepted, "d" * 40, "c" * 40)
+
     def test_release_rejects_expired_or_changed_check_artifact(self):
         accepted, api_fn = self.check_receipt_fixture()
         def expired(path, binary=False):
