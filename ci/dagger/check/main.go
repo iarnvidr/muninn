@@ -20,6 +20,7 @@ const (
 func (m *MuninnCi) Checks(ctx context.Context, source *dagger.Directory) (string, error) {
 	var out strings.Builder
 	base := dag.Container().From(rustImage).
+		WithExec([]string{"rustup", "component", "add", "rustfmt", "--toolchain", "1.99.1"}).
 		WithExec([]string{"sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg && rm -rf /var/lib/apt/lists/*"}).
 		WithDirectory("/src", source).WithWorkdir("/src").
 		WithExec([]string{"cargo", "fmt", "--all", "--", "--check"}).
