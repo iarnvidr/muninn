@@ -107,7 +107,15 @@ class DaggerContract(unittest.TestCase):
                     expected_paths.add("ui")
                 if name == "desktop":
                     expected_paths.add("src-tauri")
+                    expected_paths.add("shell")
                 self.assertEqual(paths_found, expected_paths)
+
+    def test_desktop_tauri_build_time_references_are_in_source_scope(self):
+        config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text())
+        self.assertEqual(config["build"]["frontendDist"], "../shell")
+        desktop = self.source.split("let desktopSource:", 1)[1].split("pub domainTests:", 1)[0]
+        self.assertIn('withDirectory("/shell", ws.directory("/shell"))', desktop)
+        self.assertIn('withFile("/LICENSE", ws.file("/LICENSE"))', desktop)
 
     def test_cache_transport_is_explicit_and_not_a_result_receipt(self):
         self.assertIn("path: ci/cache/linux-cargo", self.linux)

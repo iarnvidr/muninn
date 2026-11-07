@@ -129,6 +129,10 @@ type MuninnCi {
       .withDirectory("/crates/client", ws.directory("/crates/client"))
       .withDirectory("/crates/navigation", ws.directory("/crates/navigation"))
       .withDirectory("/src-tauri", ws.directory("/src-tauri", exclude: ["gen", "**/target"]))
+      # Tauri generate_context! reads frontendDist relative to src-tauri.
+      # This is a build-time source input, not a runtime network dependency.
+      .withDirectory("/shell", ws.directory("/shell"))
+      .withFile("/LICENSE", ws.file("/LICENSE"))
   }
 
   # First-class per-crate checks. Dagger reports each independently, and Cargo

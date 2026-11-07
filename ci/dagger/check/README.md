@@ -30,7 +30,7 @@ packaging. Each Rust check invokes `cargo test --locked -p` for one package;
 | `domain-tests`, `policy-tests`, `capture-tests`, `storage-tests`, `media-tests` | Each headless crate with its transitive Rust source inputs, not the entire workspace. |
 | `navigation-tests`, `protocol-tests`, `client-tests`, `core-tests` | Additional crate-level tests; UI changes cannot invalidate these source scopes. |
 | `ui-assets-tests`, `server-tests`, `cli-tests` | UI resource crate, embedded HTTP adapter, and CLI including its integration-test server dependency. |
-| `desktop-tests` | Tauri composition crate with the client/server/UI/native shell closure. Mac-specific validation still runs on Apple Silicon. |
+| `desktop-tests` | Tauri composition crate with the client/server/UI/native shell closure, including `shell/` referenced by `tauri.conf.json`'s `frontendDist` and the root license. Mac-specific validation still runs on Apple Silicon. |
 | `javascript` | The existing injected-page, UI and native-player JavaScript tests. Rust-only edits do not invalidate this container. |
 | `packaging` | Python packaging, architecture and release/provenance tests, plus updater protocol tests. Workflow and build-script inputs are intentional; those tests inspect them. |
 
@@ -50,6 +50,11 @@ crate's transitive path dependencies; changing `capture` doesn't invalidate
 `policy-tests`, and changing UI doesn't invalidate the headless crates.
 `build/test_architecture_contract.py` protects the crate graph;
 `test_contract.py` protects the Dagger checks and source scopes.
+
+The initial hosted desktop check failed because the source-scoped Dagger input
+omitted the build-time Tauri `frontendDist: ../shell` path, although the full
+checkout and native Mac build both had it. Always account for files read by
+build scripts, proc macros and configuration outside a crate's Rust imports.
 
 ## Caching on a fresh hosted runner
 
