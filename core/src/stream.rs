@@ -472,7 +472,7 @@ impl Core {
                     self.stream_event("info", "stream.joined", &job, json!({"explicit":true}));
                     return Ok(job);
                 }
-                Admit::Fresh => return self.start_fresh(video_id, audio_only),
+                Admit::Fresh => return self.start_fresh(video_id, audio_only, true),
                 Admit::Stopping => {
                     drop(guard);
                     if Instant::now() >= deadline {
@@ -482,6 +482,40 @@ impl Core {
                 }
             }
         }
+    }
+
+    /// Admit a durable background intent without borrowing foreground priority.
+    /// Capacity is checked under the same lock used by foreground admission.
+    /// Busy/offline/missing-tool work stays queued for a later scheduler pass.
+    pub(crate) fn start_background_stream(self: &Arc<Self>, queued: &EntryRow) -> Result<()> {
+        let _guard = self.streams.start_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if self.is_offline() { return Ok(()); }
+        let Some(entry) = self.video.get_entry(&queued.id)? else { return Ok(()); };
+        if entry.status != crate::videodb::STATUS_QUEUED || entry.origin != "background-tab" {
+            return Ok(());
+        }
+        if self.best_complete_entry(&entry.video_id).is_some() {
+            // A foreground acquisition satisfied this intent; do not download
+            // a second copy. Keep the row visible as canceled, not deleted.
+            self.video.set_status(&entry.id, STATUS_CANCELED, None, self.now())?;
+            return Ok(());
+        }
+        if self.stream_job(&entry.video_id).is_some_and(|job| {
+            let state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+            !matches!(state.phase.as_str(), "failed" | "canceled") || self.is_running(&state.entry_id)
+        }) || self.video.entries_for_video(&entry.video_id)?.iter().any(|e| self.is_running(&e.id)) {
+            return Ok(());
+        }
+        let active = self.streams.jobs.lock().unwrap_or_else(|e| e.into_inner()).values()
+            .filter(|job| matches!(job.state.lock().unwrap_or_else(|e| e.into_inner()).phase.as_str(),
+                "resolving" | "starting" | "caching")).count();
+        let tools = self.tools();
+        if self.running_count() >= self.video.settings().download_concurrency as usize
+            || active >= MAX_STREAMS || !tools.ytdlp.installed || tools.ffmpeg.path.is_none() {
+            return Ok(());
+        }
+        self.start_fresh(&entry.video_id, entry.variant == "audio", false)?;
+        Ok(())
     }
 
     /// Explicit playback outranks speculative background downloads: when the concurrency budget is
@@ -513,7 +547,7 @@ impl Core {
         stopped
     }
 
-    fn start_fresh(self: &Arc<Self>, video_id: &str, audio_only: bool) -> Result<Arc<StreamJob>> {
+    fn start_fresh(self: &Arc<Self>, video_id: &str, audio_only: bool, allow_preemption: bool) -> Result<Arc<StreamJob>> {
         let active = self
             .streams
             .jobs
@@ -533,7 +567,16 @@ impl Core {
             return Err(Error::other("ffmpeg is missing from this build, so Muninn cannot play and cache at the same time"));
         };
         let settings = self.video.settings();
-        let quality = if audio_only { Quality::Audio } else { variant_for_height(settings.watch_height) };
+        // A queued background tab already owns a quality choice. Foreground
+        // selection adopts that same intent rather than leaving a second row
+        // behind when the global preference changed while it was queued.
+        let queued = self.video.entries_for_video(video_id)?.into_iter().find(|entry| {
+            entry.origin == "background-tab" && entry.status == crate::videodb::STATUS_QUEUED
+                && (entry.variant == "audio") == audio_only
+        });
+        let quality = queued.as_ref().and_then(|entry| Quality::parse(&entry.variant))
+            .unwrap_or_else(|| if audio_only { Quality::Audio } else { variant_for_height(settings.watch_height) });
+        let watch_height = if queued.is_some() { quality.height() } else { settings.watch_height };
         let variant = quality.as_str().to_string();
         let id = entry_id(video_id, &variant);
         let old = self.video.get_entry(&id)?;
@@ -567,7 +610,7 @@ impl Core {
                 return Ok(job);
             }
         }
-        let preempted = self.preempt_speculative();
+        let preempted = if allow_preemption { self.preempt_speculative() } else { 0 };
         let _ = std::fs::remove_dir_all(&hls_dir);
         std::fs::create_dir_all(&hls_dir)?;
         let running_jobs = self.running_count();
@@ -575,7 +618,8 @@ impl Core {
         self.stream_event("info", "stream.start", &job, json!({"origin":"explicit","variant":variant,"audio_only":audio_only,"active_streams":active,"queue_position":active,"running_jobs":running_jobs,"concurrency":settings.download_concurrency,"preempted_background":preempted}));
         // Make the entry visible right away (status downloading) so the UI, the disk caps and the rules see it.
         let decision = retention_for_request(&self.video.rules(), &facts);
-        let mut row = EntryRow::new(video_id, &variant, &variant, "play", self.now());
+        let origin = if old.as_ref().is_some_and(|entry| entry.origin == "background-tab") { "background-tab" } else { "play" };
+        let mut row = EntryRow::new(video_id, &variant, &variant, origin, self.now());
         row.title = facts.title.clone();
         row.channel = facts.channel.clone();
         row.duration_seconds = facts.duration_seconds;
@@ -601,7 +645,7 @@ impl Core {
         let job2 = job.clone();
         let running2 = running.clone();
         let spawned = std::thread::Builder::new().name(format!("muninn-stream-{video_id}")).spawn(move || {
-            core.run_stream(&job2, &running2, &ffmpeg, settings.watch_height, audio_only);
+            core.run_stream(&job2, &running2, &ffmpeg, watch_height, audio_only);
             let entry = job2.state.lock().unwrap_or_else(|e| e.into_inner()).entry_id.clone();
             {
                 // A newer job may already own this entry id; only remove our own registration.
@@ -1300,6 +1344,62 @@ mod tests {
     /// ffmpeg stand-in that behaves: progress, a two-segment playlist, the output file.
     const FFMPEG_OK: &str = "for a; do last=\"$a\"; case \"$a\" in *index.m3u8) idx=\"$a\";; esac; done\necho out_time_us=1000000\nprintf '#EXTM3U\\n#EXTINF:3.0,\\nseg_00000.m4s\\n#EXTINF:3.0,\\nseg_00001.m4s\\n#EXT-X-ENDLIST\\n' > \"$idx\"\necho data > \"$last\"\nexit 0";
     const FFMPEG_HANG: &str = "exec sleep 30";
+
+    #[test]
+    fn background_queue_uses_bounded_hls_slots_and_foreground_joins_without_preemption() {
+        let r = rig(&ytdlp_json("http://127.0.0.1:9/v", true), FFMPEG_HANG, None);
+        r.core.streams.tuning.lock().unwrap().no_first_bytes_timeout = Duration::from_secs(60);
+        let mut settings = r.core.video.settings();
+        settings.download_concurrency = 2;
+        settings.auto_prefetch = false;
+        settings.min_free_bytes = 0;
+        r.core.video.put_settings(&settings).unwrap();
+        let ids = [ID, "bbbbbbbbbbb", "ccccccccccc", "ddddddddddd", "eeeeeeeeeee", "fffffffffff"];
+        for id in ids { r.core.prepare_background_watch(id, false).unwrap(); }
+        assert_eq!(r.core.video.entries_with_status(STATUS_QUEUED).unwrap().len(), 6);
+        r.core.start_queued();
+        wait_for("two queued HLS jobs", || r.core.running_count() == 2 && r.ytdlp_calls() == 2);
+        let first = r.core.stream_job(ID).unwrap();
+        wait_for("first background HLS caching", || phase(&first) == "caching");
+        assert_eq!(r.core.video.entries_with_status(STATUS_QUEUED).unwrap().len(), 4);
+        assert!(r.events("download.preempted").is_empty());
+        let now = r.core.now();
+        r.core.content.put_json(crate::content::KIND_META, ID, &json!({"title":"Synthetic"}), Some(60_000), now).unwrap();
+        r.core.content.put_json(crate::content::KIND_COMMENTS, ID, &json!({"comments":[]}), Some(60_000), now).unwrap();
+        r.core.watch_open(ID, false).unwrap();
+        assert!(Arc::ptr_eq(&first, &r.core.stream_job(ID).unwrap()));
+        assert_eq!(r.ytdlp_calls(), 2, "selecting the tab must reuse its acquisition");
+        assert!(r.core.content.get_progress(ID).unwrap().is_none());
+        settings.download_concurrency = 8;
+        r.core.video.put_settings(&settings).unwrap();
+        r.core.start_queued();
+        wait_for("four queued HLS jobs", || r.core.running_count() == MAX_STREAMS && r.ytdlp_calls() == MAX_STREAMS);
+        assert_eq!(r.core.video.entries_with_status(STATUS_QUEUED).unwrap().len(), 2, "overflow remains durable, not a hidden Busy failure");
+        assert!(r.core.video.list_entries().unwrap().iter().all(|entry| entry.origin == "background-tab"));
+        assert!(r.events("download.preempted").is_empty());
+        r.core.shutdown();
+        wait_for("background workers stopped", || r.core.running_count() == 0);
+    }
+
+    #[test]
+    fn foreground_adopts_queued_background_quality_instead_of_duplicating_the_intent() {
+        let r = rig(&ytdlp_json("http://127.0.0.1:9/v", true), FFMPEG_HANG, None);
+        r.core.streams.tuning.lock().unwrap().no_first_bytes_timeout = Duration::from_secs(60);
+        r.core.prepare_background_watch(ID, false).unwrap();
+        let mut settings = r.core.video.settings();
+        settings.watch_height = 1080;
+        settings.min_free_bytes = 0;
+        r.core.video.put_settings(&settings).unwrap();
+        let job = r.core.start_stream(ID, false).unwrap();
+        assert_eq!(job.state.lock().unwrap().variant, "720");
+        wait_for("adopted background HLS caching", || phase(&job) == "caching");
+        let entries = r.core.video.entries_for_video(ID).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].origin, "background-tab");
+        assert_eq!(r.ytdlp_calls(), 1);
+        r.core.shutdown();
+        wait_for("adopted worker stopped", || r.core.running_count() == 0);
+    }
 
     fn ytdlp_json(url: &str, with_len: bool) -> String {
         let len = if with_len { ",\"filesize\":1000" } else { "" };

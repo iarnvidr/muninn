@@ -22,13 +22,24 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner
+      # A hosted job has a fresh engine. Named Dagger volumes alone do not persist
+      # across jobs: restore a seed, then export the updated volume after checks.
+      - name: Restore Linux Cargo cache seed
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci/cache/linux-cargo
+          key: muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-${{ hashFiles('core/**', 'crates/**', 'src-tauri/**', 'ui/**') }}
+          restore-keys: |
+            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-
+            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-
       - name: Rust, JavaScript, packaging, and publication checks
         uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
         with:
-          version: 0.21.11
-          verb: call
-          module: ./ci/dagger/check
-          args: checks --source .
+          version: 1.0.0-beta.25
+          verb: check
+      - name: Export Linux Cargo cache for the next hosted run
+        run: |
+          dagger api call muninn-ci export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" export --path ci/cache/linux-cargo
       - name: Record Dagger check receipt
         if: github.event_name == 'pull_request'
         run: python3 build/release_candidate.py create-check --root "$GITHUB_WORKSPACE"

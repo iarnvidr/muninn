@@ -4,8 +4,11 @@ import os
 import re
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
+
+import release_candidate as candidate
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,7 +18,7 @@ class ProductionReleaseContract(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = (ROOT / ".github/workflows/release.yml").read_text()
         cls.checks = (ROOT / ".github/workflows/check.yml").read_text()
-        cls.dagger_checks = (ROOT / "ci/dagger/check/main.go").read_text()
+        cls.dagger_checks = (ROOT / "ci/dagger/check/main.dang").read_text()
         cls.signer = (ROOT / "build/sign-notarize-macos.sh").read_text()
 
     def test_protected_main_version_tag_and_publish_gates_remain(self):
@@ -124,10 +127,36 @@ class ProductionReleaseContract(unittest.TestCase):
                                  for line in calls.read_text().splitlines()))
 
     def test_hosted_checks_run_contract_test(self):
-        self.assertIn("args: checks --source .", self.checks)
+        self.assertIn("version: 1.0.0-beta.25", self.checks)
+        self.assertIn("verb: check", self.checks)
+        self.assertNotIn("args: checks --source .", self.checks)
+        self.assertNotIn("module: ./ci/dagger/check", self.checks)
+        for check in ("coreTests", "desktopTests", "javascript", "packaging"):
+            self.assertRegex(self.dagger_checks, rf"pub {check}: Void @check")
         self.assertIn("create-check --root", self.checks)
         self.assertIn("muninn-check-candidate-${{ github.run_id }}-${{ github.run_attempt }}", self.checks)
         self.assertIn("python3 -m unittest discover -s build -p 'test_*.py' -v", self.dagger_checks)
+
+    def test_cache_export_cannot_create_a_success_receipt(self):
+        export = self.dagger_checks.split("pub exportCargoCache", 1)[1]
+        self.assertNotIn("@check", export)
+        self.assertNotIn("create-check", export)
+        self.assertIn('"MUNINN_CACHE_EXPORT_NONCE", nonce', export)
+        self.assertNotIn("GITHUB_RUN_ID", self.dagger_checks.split("pub exportCargoCache", 1)[0])
+        self.assertLess(self.checks.index("verb: check"), self.checks.index("create-check --root"))
+        self.assertNotRegex(self.checks, r"(?m)^\s+continue-on-error:\s*true")
+
+    def test_receipt_pipeline_identity_matches_committed_dagger_configuration(self):
+        pipeline = candidate.DAGGER_CHECK_PIPELINE
+        workspace = tomllib.loads((ROOT / pipeline["workspace"]).read_text())
+        module = tomllib.loads((ROOT / pipeline["module"] / "dagger-module.toml").read_text())
+        self.assertEqual(workspace["modules"]["muninn-ci"]["source"], "./" + pipeline["module"])
+        self.assertEqual(module["engineVersion"], "v" + pipeline["version"])
+        self.assertEqual(module["runtime"]["source"], "dang")
+        self.assertEqual(pipeline["command"], "dagger check")
+        self.assertIn("version: " + pipeline["version"], self.checks)
+        for policy_path in candidate.CHECK_POLICY_PATHS:
+            self.assertTrue((ROOT / policy_path).is_file(), policy_path)
 
 
 if __name__ == "__main__":

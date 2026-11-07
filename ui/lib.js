@@ -223,11 +223,25 @@
     }
   }
 
-  /** The playable URL for a watch status's playback, or null while it is not ready. */
+  /** Only disk-backed routes on this device are player sources. A remote
+   * acquisition backend must materialize media locally before it is playable. */
   function mediaUrl(playback, origin, token) {
     if (!playback || !playback.ready || !playback.url_path) return null;
-    if (playback.kind === 'hls') return origin + playback.url_path;   // the token is part of the path
-    return origin + playback.url_path + (playback.url_path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token || '');
+    try {
+      const local = new URL(origin);
+      if (local.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(local.hostname)
+          || local.username || local.password || local.origin !== origin) return null;
+    } catch (_) { return null; }
+    if (typeof playback.url_path !== 'string') return null;
+    const parts = playback.url_path.split('/');
+    const component = s => !!s && s !== '.' && s !== '..' && /^[a-zA-Z0-9_.-]+$/.test(s);
+    if (playback.kind === 'hls' && parts.length === 5 && parts[0] === '' && parts[1] === 'h'
+        && component(parts[2]) && component(parts[3]) && parts[4] === 'index.m3u8') {
+      return origin + playback.url_path; // the token is part of the local path
+    }
+    if (playback.kind === 'file' && parts.length === 3 && parts[0] === '' && parts[1] === 'media'
+        && component(parts[2])) return origin + playback.url_path + '?token=' + encodeURIComponent(token || '');
+    return null;
   }
 
   function withToken(path, token) {

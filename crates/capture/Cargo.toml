@@ -1,0 +1,13 @@
+[package]
+name = "muninn-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded Muninn metadata extraction and merge logic"
+
+[dependencies]
+muninn-domain = { path = "../domain" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

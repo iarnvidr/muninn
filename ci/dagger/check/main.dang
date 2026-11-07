@@ -1,0 +1,159 @@
+"""
+Muninn's source-scoped Linux checks. macOS app packaging stays on a native Mac.
+"""
+type MuninnCi {
+  let ws: Workspace!
+
+  new(ws: Workspace!) {
+    self.ws = ws
+    self
+  }
+
+  # Keep the image, target, Rust flags and cache ABI together. Cargo validates
+  # dependency fingerprints; changing Cargo.lock does not discard this volume.
+  let rustTools: Container! = container(platform: "linux/amd64")
+    .from("rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b")
+
+  let nodeTools: Container! = container(platform: "linux/amd64")
+    .from("node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9")
+
+  # This tracked-empty directory is populated by actions/cache on hosted CI.
+  # The seed initializes a new volume; the same seed reuses an existing volume.
+  # It is deliberately outside the module directory and every source filter.
+  let cargoSeed: Directory! {
+    ws.directory("/ci/cache/linux-cargo", exclude: [".gitignore"])
+  }
+
+  # Dagger v1 includes source and sharing in the cache identity. All readers and
+  # writers must use this same seeded object, including the export function.
+  let cargoCache: CacheVolume! {
+    cacheVolume("muninn-cargo-linux-amd64-rust-1.99.1-bookworm-v1",
+      source: cargoSeed, sharing: CacheSharingMode.LOCKED)
+  }
+
+  let rustSystem: Container! {
+    rustTools
+      .withExec(["sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends build-essential rsync pkg-config patchelf libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg && rm -rf /var/lib/apt/lists/*"])
+  }
+
+  # Debian package versions can advance even while the starting image is pinned.
+  # Do not reuse native build-script/linker output across different system ABIs.
+  let rustSystemABI: String! {
+    rustSystem
+      .withExec(["bash", "-euc", "set -o pipefail; dpkg-query -W | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1 | tr -d '\\n'"])
+      .stdout
+  }
+
+  let rustBase: Container! {
+    rustSystem
+      .withMountedCache("/cache", cargoCache)
+      .withEnvVariable("CARGO_HOME", "/cache/cargo")
+      .withEnvVariable("CARGO_TARGET_DIR", `/cache/target/${rustSystemABI}`)
+      .withEnvVariable("CARGO_INCREMENTAL", "0")
+      .withEnvVariable("CARGO_BUILD_JOBS", "2")
+      .withFile("/run-rust.sh", ws.file("/ci/dagger/check/run-rust.sh"))
+      .withWorkdir("/")
+  }
+
+  let coreSource: Directory! {
+    ws.directory("/", include: [
+      "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
+      "core/**", "crates/domain/**", "crates/policy/**", "crates/capture/**",
+      "crates/storage/**", "crates/media/**", "crates/client/**", "crates/protocol/**",
+      "crates/navigation/**",
+      # Cargo discovers every workspace member even when selecting packages.
+      # Use the real manifests and entrypoints, not dummy packages or a new lock.
+      "crates/*/Cargo.toml", "crates/*/src/lib.rs", "crates/*/src/main.rs", "crates/*/src/bin/**",
+      "src-tauri/Cargo.toml", "src-tauri/build.rs", "src-tauri/src/main.rs",
+      "src-tauri/tauri.conf.json",
+    ], exclude: ["**/target", "**/__pycache__", "**/node_modules"])
+  }
+
+  let desktopSource: Directory! {
+    ws.directory("/", include: [
+      "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
+      "core/**", "crates/**", "src-tauri/**", "ui/**",
+    ], exclude: ["**/target", "**/__pycache__", "**/node_modules", "src-tauri/gen"])
+  }
+
+  """
+  Headless domain, policy, capture, storage, media, client and runtime tests.
+  UI assets do not invalidate this check. Test domain without SQLite separately.
+  """
+  pub coreTests: Void @check {
+    rustBase
+      .withMountedDirectory("/input", coreSource)
+      # Synchronize and run both Cargo commands in one exec: the cache lock must
+      # not be released between changing the worktree and reading it.
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "bash", "-euc", "cargo test --locked -p muninn-domain --no-default-features && cargo test --locked -p muninn-domain -p muninn-policy -p muninn-capture -p muninn-storage -p muninn-media -p muninn-navigation -p muninn-protocol -p muninn-client -p muninn-core"])
+      .sync
+    null
+  }
+
+  """
+  HTTP/UI asset adapter and Tauri composition tests, with their full input closure.
+  """
+  pub desktopTests: Void @check {
+    rustBase
+      .withMountedDirectory("/input", desktopSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-server", "-p", "muninn-ui-assets", "-p", "muninn-cli", "-p", "muninn"])
+      .sync
+    null
+  }
+
+  """
+  Existing injected-page, UI and native-player JavaScript regression tests.
+  """
+  pub javascript: Void @check {
+    nodeTools
+      .withMountedDirectory("/src", ws.directory("/", include: [
+        "ui/**", "src-tauri/*.js", "src-tauri/test/**",
+        "build/native-player-interactions.js", "build/test_native_player_interactions.js",
+      ], exclude: ["**/node_modules"]))
+      .withWorkdir("/src")
+      .withExec(["sh", "-ec", "node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js"])
+      .sync
+    null
+  }
+
+  """
+  Packaging, release/provenance, native-smoke wiring and updater-protocol tests.
+  Git-history/publication boundary checks run on the host checkout afterwards.
+  """
+  pub packaging: Void @check {
+    container(platform: "linux/amd64")
+      .from("python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337")
+      .withExec(["sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends bash build-essential git rsync && ln -s /usr/local/bin/python3 /usr/bin/python3 && rm -rf /var/lib/apt/lists/*"])
+      .withDirectory("/usr/local/cargo", rustTools.directory("/usr/local/cargo"))
+      .withDirectory("/usr/local/rustup", rustTools.directory("/usr/local/rustup"))
+      .withFile("/usr/local/bin/node", nodeTools.file("/usr/local/bin/node"))
+      .withEnvVariable("CARGO_HOME", "/usr/local/cargo")
+      .withEnvVariable("RUSTUP_HOME", "/usr/local/rustup")
+      .withEnvVariable("PATH", "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin")
+      .withMountedDirectory("/src", ws.directory("/", include: [
+        "build/**", ".github/**", "ci/dagger/**", "dagger.toml",
+        "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
+        "core/**", "crates/**", "src-tauri/**", "ui/**",
+        "licenses/**", "LICENSE", "THIRD_PARTY_NOTICES.md",
+      ], exclude: ["**/target", "**/__pycache__", "**/node_modules", "src-tauri/gen"]))
+      .withWorkdir("/src")
+      .withExec(["sh", "-ec", "python3 -m unittest discover -s build -p 'test_*.py' -v && python3 -m unittest discover -s ci/dagger/check -p 'test_*.py' -v && python3 build/updater-smoke/test_protocol.py"])
+      .sync
+    null
+  }
+
+  """
+  Snapshot Cargo's downloads, source mirror and compiled output for a hosted runner.
+  Pass a fresh nonce only here; never add a run ID or commit to the build cache key.
+  This does not rerun tests, grant a check success, or produce release evidence.
+  """
+  pub exportCargoCache(nonce: String!): Directory! {
+    rustTools
+      .withMountedCache("/cache", cargoCache)
+      # Mutable volume contents are not an exec cache key. A nonce on the copying
+      # exec prevents an old snapshot being exported after a later Cargo build.
+      .withEnvVariable("MUNINN_CACHE_EXPORT_NONCE", nonce)
+      .withExec(["sh", "-ec", "mkdir -p /snapshot/cargo /snapshot/target; for part in registry git; do if test -d /cache/cargo/$part; then cp -a /cache/cargo/$part /snapshot/cargo/; fi; done; if test -d /cache/target; then cp -a /cache/target/. /snapshot/target/; fi; if test -d /cache/worktree; then cp -a /cache/worktree /snapshot/; fi"])
+      .directory("/snapshot")
+  }
+}

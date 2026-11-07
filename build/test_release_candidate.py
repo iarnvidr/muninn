@@ -39,6 +39,26 @@ class RedirectSecurityTests(unittest.TestCase):
 
 
 class NativeReceiptCreationTests(unittest.TestCase):
+    def test_check_receipt_identifies_exact_tree_and_pinned_dagger_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event_path = root / "event.json"
+            event_path.write_text(json.dumps({"pull_request": {
+                "number": 9, "head": {"sha": "b" * 40}, "base": {"sha": "a" * 40}}}))
+            env = {
+                "GITHUB_EVENT_PATH": str(event_path), "GITHUB_REPOSITORY": candidate.REPOSITORY,
+                "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_WORKFLOW_SHA": "c" * 40,
+            }
+            with mock.patch.dict("os.environ", env), \
+                    mock.patch.object(candidate, "git", return_value="e" * 40) as git_call:
+                candidate.create_check(root)
+            git_call.assert_called_once_with(root, "rev-parse", "HEAD^{tree}")
+            receipt = json.loads((root / "check-candidate.json").read_text())
+            self.assertEqual(receipt["tested_tree"], "e" * 40)
+            self.assertEqual(receipt["pipeline"], candidate.DAGGER_CHECK_PIPELINE)
+            self.assertNotIn("cache", receipt)
+
     def test_receipt_uses_source_checkout_separate_from_artifact_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             temp = Path(directory)
@@ -214,6 +234,7 @@ class NativeCandidateTests(unittest.TestCase):
             "pr_number": 44,
             "tested_tree": "c" * 40,
             "check": "test",
+            "pipeline": candidate.DAGGER_CHECK_PIPELINE,
         }
         bundle = io.BytesIO()
         with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -250,6 +271,7 @@ class NativeCandidateTests(unittest.TestCase):
                 "workflow_path": candidate.CHECK_WORKFLOW,
                 "tested_tree": "c" * 40,
                 "base_sha": "f" * 40,
+                "pipeline": candidate.DAGGER_CHECK_PIPELINE,
             },
         }
 
@@ -288,6 +310,7 @@ class NativeCandidateTests(unittest.TestCase):
             "workflow_path": candidate.CHECK_WORKFLOW, "run_id": 124, "run_attempt": 2,
             "event": "pull_request", "workflow_sha": "a" * 40, "head_sha": "b" * 40,
             "base_sha": "f" * 40, "pr_number": 44, "tested_tree": "c" * 40, "check": "test",
+            "pipeline": candidate.DAGGER_CHECK_PIPELINE,
         }
         bundle = io.BytesIO()
         with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -347,6 +370,27 @@ class NativeCandidateTests(unittest.TestCase):
         with mock.patch.object(candidate, "api", side_effect=changed_helper):
             with self.assertRaisesRegex(ValueError, "build/release_candidate.py"):
                 candidate.verify_check_receipt(accepted, "d" * 40, api_fn=changed_helper)
+
+    def test_release_rejects_changed_dagger_definition_or_toolchain_policy(self):
+        for policy_path in candidate.CHECK_POLICY_PATHS:
+            with self.subTest(policy=policy_path):
+                accepted, api_fn = self.check_receipt_fixture()
+                def changed_policy(path, binary=False):
+                    if "/contents/" + policy_path + "?ref=" + "a" * 40 in path:
+                        return {"sha": "f" * 40}
+                    return api_fn(path, binary)
+                with mock.patch.object(candidate, "api", side_effect=changed_policy):
+                    with self.assertRaisesRegex(ValueError, "Dagger policy file differs"):
+                        candidate.verify_check_receipt(accepted, "d" * 40, api_fn=changed_policy)
+
+    def test_release_rejects_unidentified_or_different_pipeline_reference(self):
+        for pipeline in (None, {"engine": "dagger", "version": "0.21.11"}):
+            with self.subTest(pipeline=pipeline):
+                accepted, api_fn = self.check_receipt_fixture()
+                accepted["check_receipt"]["pipeline"] = pipeline
+                with mock.patch.object(candidate, "api", side_effect=api_fn):
+                    with self.assertRaisesRegex(ValueError, "reference does not match"):
+                        candidate.verify_check_receipt(accepted, "d" * 40, api_fn=api_fn)
 
 
 if __name__ == "__main__":

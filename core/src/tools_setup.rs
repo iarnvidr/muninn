@@ -28,6 +28,17 @@ pub struct ToolsSetup {
 }
 
 impl Core {
+    /// Install the official helper using the service-owned fetcher.
+    /// The HTTP adapter need not access downloader state or credentials.
+    pub fn install_ytdlp(&self) -> Result<String> {
+        ytdlp::install_ytdlp(
+            self.fetcher.as_ref(),
+            &self.paths.bin_dir,
+            ytdlp::ytdlp_asset_name(),
+            ytdlp::RELEASE_BASE,
+        )
+    }
+
     pub fn setup_state(&self) -> ToolsSetup {
         self.setup.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }

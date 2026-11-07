@@ -25,6 +25,18 @@ CHECK_ARTIFACT_PREFIX = "muninn-check-candidate"
 MAPPING_ARTIFACT_PREFIX = "muninn-accepted-native"
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 REQUIRED_CHECKS = ("test", "package")
+DAGGER_CHECK_PIPELINE = {
+    "engine": "dagger", "version": "1.0.0-beta.25", "command": "dagger check",
+    "workspace": "dagger.toml", "module": "ci/dagger/check",
+}
+# A cache volume/snapshot is an optimization, not accepted check evidence. The
+# immutable receipt identifies the tested tree AND the pipeline that checked it.
+CHECK_POLICY_PATHS = (
+    CHECK_WORKFLOW, HELPER_PATH, "dagger.toml",
+    "ci/dagger/check/dagger-module.toml", "ci/dagger/check/main.dang",
+    "ci/dagger/check/run-rust.sh",
+    "rust-toolchain.toml",
+)
 
 
 def sha(data):
@@ -121,6 +133,7 @@ def create_check(root):
         "pr_number": pr.get("number"),
         "tested_tree": git(root, "rev-parse", "HEAD^{tree}"),
         "check": "test",
+        "pipeline": DAGGER_CHECK_PIPELINE,
     }
     (root / "check-candidate.json").write_text(json.dumps(record, sort_keys=True) + "\n")
 
@@ -321,13 +334,14 @@ def check_candidate(root, pr, accepted, merge_sha, merge_tree):
         "run_id": run["id"], "run_attempt": run["run_attempt"], "event": "pull_request",
         "head_sha": pr["head"]["sha"], "base_sha": accepted["source_base_sha"],
         "pr_number": pr["number"], "tested_tree": merge_tree, "check": "test",
+        "pipeline": DAGGER_CHECK_PIPELINE,
     }
     if any(record.get(key) != value for key, value in expected.items()):
         raise ValueError("Dagger receipt does not identify the accepted merge tree")
     workflow_sha = record.get("workflow_sha", "")
     if not re.fullmatch(r"[0-9a-f]{40}", workflow_sha):
         raise ValueError("Dagger receipt has no valid workflow revision")
-    for policy_path in (CHECK_WORKFLOW, HELPER_PATH):
+    for policy_path in CHECK_POLICY_PATHS:
         path = urllib.parse.quote(policy_path, safe="/")
         approved = api(f"repos/{REPOSITORY}/contents/{path}?ref={merge_sha}")["sha"]
         producing = api(f"repos/{REPOSITORY}/contents/{path}?ref={workflow_sha}")["sha"]
@@ -336,7 +350,8 @@ def check_candidate(root, pr, accepted, merge_sha, merge_tree):
     return {"run_id": run["id"], "run_attempt": run["run_attempt"],
             "artifact_id": artifact["id"], "artifact_digest": artifact["digest"],
             "workflow_sha": workflow_sha, "workflow_path": CHECK_WORKFLOW,
-            "tested_tree": merge_tree, "base_sha": accepted["source_base_sha"]}
+            "tested_tree": merge_tree, "base_sha": accepted["source_base_sha"],
+            "pipeline": DAGGER_CHECK_PIPELINE}
 
 
 def verify_check_receipt(accepted, merge_sha, api_fn=api, artifact_bytes_fn=artifact_bytes):
@@ -382,17 +397,19 @@ def verify_check_receipt(accepted, merge_sha, api_fn=api, artifact_bytes_fn=arti
         "head_sha": accepted["pr_head_sha"], "base_sha": accepted["source_base_sha"],
         "pr_number": accepted["pr_number"], "tested_tree": accepted["accepted_tree"],
         "check": "test", "workflow_sha": reference.get("workflow_sha"),
+        "pipeline": DAGGER_CHECK_PIPELINE,
     }
     if any(record.get(key) != value for key, value in expected_record.items()):
         raise ValueError("Dagger receipt contents do not match the accepted PR tree and run")
     workflow_sha = record.get("workflow_sha", "")
     if (reference.get("workflow_path") != CHECK_WORKFLOW
             or reference.get("tested_tree") != accepted["accepted_tree"]
-            or reference.get("base_sha") != accepted["source_base_sha"]):
-        raise ValueError("Dagger receipt reference does not match the accepted tree, base, or workflow")
+            or reference.get("base_sha") != accepted["source_base_sha"]
+            or reference.get("pipeline") != DAGGER_CHECK_PIPELINE):
+        raise ValueError("Dagger receipt reference does not match the accepted tree, base, workflow, or pipeline")
     if not re.fullmatch(r"[0-9a-f]{40}", workflow_sha):
         raise ValueError("Dagger receipt has no valid workflow revision")
-    for policy_path in (CHECK_WORKFLOW, HELPER_PATH):
+    for policy_path in CHECK_POLICY_PATHS:
         path = urllib.parse.quote(policy_path, safe="/")
         approved = api_fn(f"repos/{REPOSITORY}/contents/{path}?ref={merge_sha}")["sha"]
         producing = api_fn(f"repos/{REPOSITORY}/contents/{path}?ref={workflow_sha}")["sha"]

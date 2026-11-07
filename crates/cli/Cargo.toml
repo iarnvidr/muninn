@@ -1,0 +1,30 @@
+[package]
+name = "muninn-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Muninn's command-line client for the running local app"
+
+[lib]
+name = "muninn_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "muninn-cli"
+path = "src/main.rs"
+
+[dependencies]
+# Offline diagnostic export reuses the existing read-only core implementation.
+# Ordinary commands only communicate with the already-running local API.
+muninn-core = { path = "../../core" }
+serde_json = { version = "1", features = ["preserve_order"] }
+ureq = "2"
+
+[dev-dependencies]
+muninn-server = { path = "../server" }
+axum = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }
