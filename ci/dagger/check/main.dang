@@ -208,6 +208,7 @@ type MuninnCi {
   }
   pub desktopTests: Void @check {
     rustBase.withMountedDirectory("/input", desktopSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/desktop-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn"])
       .sync
     null
@@ -265,7 +266,7 @@ type MuninnCi {
       # Mutable volume contents are not an exec cache key. A nonce on the copying
       # exec prevents an old snapshot being exported after a later Cargo build.
       .withEnvVariable("MUNINN_CACHE_EXPORT_NONCE", nonce)
-      .withExec(["sh", "-ec", "mkdir -p /snapshot/cargo /snapshot/target; for part in registry git; do if test -d /cache/cargo/$part; then cp -a /cache/cargo/$part /snapshot/cargo/; fi; done; if test -d /cache/target; then cp -a /cache/target/. /snapshot/target/; fi; if test -d /cache/worktree; then cp -a /cache/worktree /snapshot/; fi"])
+      .withExec(["sh", "-ec", "mkdir -p /snapshot/cargo /snapshot/target; for part in registry git; do if test -d /cache/cargo/$part; then cp -a /cache/cargo/$part /snapshot/cargo/; fi; done; if test -d /cache/target; then cp -a /cache/target/. /snapshot/target/; fi; if test -d /cache/worktree; then cp -a /cache/worktree /snapshot/; fi; if test -d /cache/check-logs; then cp -a /cache/check-logs /snapshot/; fi"])
       .directory("/snapshot")
   }
 }

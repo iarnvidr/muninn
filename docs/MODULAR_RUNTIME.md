@@ -116,12 +116,14 @@ zero-recompilation guarantee is implied by the package layout.
 ## Dagger and native CI
 
 [The native Dang module](../ci/dagger/check/main.dang), registered by
-[`dagger.toml`](../dagger.toml), provides four first-class checks:
+[`dagger.toml`](../dagger.toml), provides **15 first-class checks**:
 
-1. `core-tests`: headless libraries, client and application core; no UI asset bytes.
-2. `desktop-tests`: HTTP/UI adapters, CLI integration tests and Tauri composition.
-3. `javascript`: the existing browser/UI/player tests plus cache-only/Keep regressions.
-4. `packaging`: packaging, architecture and release/provenance contracts.
+1. One check per each of the 13 Cargo workspace packages, including independent
+   `core-tests`, `server-tests`, `client-tests` and `desktop-tests`. The native
+   desktop check includes Tauri composition, and its full Cargo error log is
+   retained if it fails on Linux.
+2. `javascript`: existing browser/UI/player tests plus cache-only/Keep regressions.
+3. `packaging`: packaging, architecture and release/provenance contracts.
 
 Checks have separate source inputs; splitting functions alone would not stop an
 entire-workspace mount from invalidating each one. Cargo still needs real
@@ -153,7 +155,7 @@ passed**. The PR must include its actual command results and hosted evidence.
 
 ### Automated and native evidence
 
-- [ ] Run `dagger check -l` using the pinned beta and verify all four checks are
+- [ ] Run `dagger check -l` using the pinned beta and verify all 15 checks are
   discovered; then run `dagger check`. Static checks of the module are not proof
   that the Dagger engine executed it.
 - [ ] Run the crate and source ownership guards in

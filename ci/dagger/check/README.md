@@ -86,7 +86,26 @@ to GitHub Actions' normal cache and GitHub Packages' OCI container registry:
    PR checkout) copies the snapshot as inert data into GHCR. It does not run
    code from the artifact or turn a failed test into a passing check. Fork PR
    runs are excluded.
-6. Successful jobs can additionally save their updated `actions/cache` entries.
+6. The workflow uses the explicit `actions/cache/restore` and
+   `actions/cache/save` pair. The save step runs after a successful export even
+   if a crate check failed, provided the primary key was not already present.
+   The combined cache action would skip its post-save after failure. The saved
+   PR-scoped seed makes compilation reusable while a failing crate is diagnosed,
+   without changing check outcomes.
+
+The Linux Tauri check also writes full Cargo stdout/stderr to
+`/cache/check-logs/desktop-tests.log` under the locked cache mount. The exporter
+includes that file, then the host moves it out of the **reusable compilation
+cache** before archive/save, to avoid presenting a previous run's error as
+current evidence. A failure-only workflow step prints its last 200 lines and
+uploads the small log as its own artifact. The diagnostic preserves Cargo's
+failure status and gives an error report even when the Dagger Actions summary
+shows only `desktop-tests: exit code 101`. The log is not a passing receipt.
+
+Cache transfer cost is real: hosted run #191 exported approximately 4.8 GB and
+uploaded a 1.21 GB compressed snapshot. Compare subsequent warm-run compilation
+savings with download, extraction, compression and upload time before changing
+retention or cache granularity.
 
 The registry packages are:
 

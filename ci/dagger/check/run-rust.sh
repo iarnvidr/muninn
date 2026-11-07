@@ -59,4 +59,18 @@ rm -f -- "$anchor"
 trap - EXIT
 export CARGO_TARGET_DIR="$target"
 cd "$worktree"
-exec "$@"
+# An individual Dagger check can request a diagnostic copy of Cargo's complete
+# stdout/stderr. Dagger's hosted summary sometimes exposes only exit code 101;
+# the log is exported from the same locked volume even when the check fails.
+# Restrict the destination to this cache so the diagnostic cannot write to a
+# source tree or an arbitrary host-mounted path.
+if [[ -n "${MUNINN_CARGO_LOG:-}" ]]; then
+  case "$MUNINN_CARGO_LOG" in
+    "$cache_root"/check-logs/*.log) ;;
+    *) printf '%s\n' 'MUNINN_CARGO_LOG must be under CACHE_ROOT/check-logs/.' >&2; exit 2 ;;
+  esac
+  mkdir -p "$cache_root/check-logs"
+  "$@" 2>&1 | tee -- "$MUNINN_CARGO_LOG"
+else
+  exec "$@"
+fi

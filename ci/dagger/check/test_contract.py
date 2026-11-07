@@ -49,7 +49,7 @@ class DaggerContract(unittest.TestCase):
                 manifest = tomllib.loads((directory / "Cargo.toml").read_text())
                 packages.add(manifest["package"]["name"])
         rust_checks = re.findall(
-            r'pub (\w+Tests): Void @check \{\s*rustBase\.withMountedDirectory\("/input", (\w+Source)\)\s*\.withExec\((\[[^\n]+\])\)',
+            r'pub (\w+Tests): Void @check \{\s*rustBase\.withMountedDirectory\("/input", (\w+Source)\)\s*(?:\.withEnvVariable\("MUNINN_CARGO_LOG", "[^"]+"\)\s*)?\.withExec\((\[[^\n]+\])\)',
             self.source)
         self.assertEqual(len(rust_checks), len(packages))
         chosen = {}
@@ -112,6 +112,7 @@ class DaggerContract(unittest.TestCase):
     def test_cache_transport_is_explicit_and_not_a_result_receipt(self):
         self.assertIn("path: ci/cache/linux-cargo", self.linux)
         self.assertIn("restore-keys:", self.linux)
+        self.assertIn("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", self.linux)
         self.assertIn("restore-ghcr-cache.sh", self.linux)
         self.assertIn("muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)
         self.assertIn("muninn-linux-cargo-snapshot.tar.zst", self.linux)
@@ -129,6 +130,14 @@ class DaggerContract(unittest.TestCase):
         self.assertIn("dagger-flags: --progress logs", self.linux)
         self.assertNotIn("--wipe", self.linux)
         self.assertIn('withEnvVariable("MUNINN_CACHE_EXPORT_NONCE", nonce)', self.source)
+        self.assertIn('withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/desktop-tests.log")', self.source)
+        self.assertIn('cp -a /cache/check-logs /snapshot/', self.source)
+        self.assertIn("Report failing desktop crate diagnostics", self.linux)
+        self.assertIn("Separate diagnostic logs from reusable compilation cache", self.linux)
+        self.assertIn("muninn-desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)
+        self.assertIn("steps.cargo-export.outcome == 'success'", self.linux)
+        self.assertIn("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", self.linux)
+        self.assertIn("steps.restore-cargo.outputs.cache-primary-key", self.linux)
         self.assertNotIn("MUNINN_CACHE_EXPORT_NONCE", self.source.split("pub exportCargoCache", 1)[0])
         self.assertIn("create-check --root", self.linux)
         self.assertIn("path: check-candidate.json", self.linux)

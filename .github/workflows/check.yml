@@ -29,7 +29,7 @@ jobs:
       # across jobs: restore a seed, then export the updated volume after checks.
       - name: Restore Linux Cargo cache seed
         id: restore-cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ci/cache/linux-cargo
           key: muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-${{ hashFiles('core/**', 'crates/**', 'src-tauri/**', 'ui/**') }}
@@ -51,14 +51,50 @@ jobs:
         with:
           version: 1.0.0-beta.25
           verb: check
-          # Preserve failed Cargo command output in the job log; plain progress
-          # only reports the check name and exit code for a failed container.
+          # Stream what the engine exposes. Some failed Cargo execs still give
+          # only exit 101, so the desktop check also writes a retained log.
           dagger-flags: --progress logs
       - name: Export Linux Cargo cache for the next hosted run
         id: cargo-export
         if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
         run: |
           dagger -m ci/dagger/check api call export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
+      # Preserve failing logs separately, so a cache restored into a later run
+      # cannot accidentally report a previous run's error as current evidence.
+      - name: Separate diagnostic logs from reusable compilation cache
+        if: ${{ always() && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          if [[ -d ci/cache/linux-cargo/check-logs ]]; then
+            mv ci/cache/linux-cargo/check-logs "$RUNNER_TEMP/muninn-check-logs"
+          fi
+      - name: Report failing desktop crate diagnostics
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          log="$RUNNER_TEMP/muninn-check-logs/desktop-tests.log"
+          if [[ -f "$log" ]]; then
+            echo '::group::Linux Tauri desktop Cargo output (last 200 lines)'
+            tail -n 200 "$log"
+            echo '::endgroup::'
+          else
+            echo 'Desktop Cargo log absent; the check may have failed before Cargo started.'
+          fi
+      - name: Retain failing desktop crate log
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-check-logs/desktop-tests.log
+          if-no-files-found: warn
+          retention-days: 14
+      # Explicit restore/save (not the combined cache action) retains compiled
+      # output even on failed checks. Cache entries are PR-scoped and remain
+      # compilation inputs, never substitute green test receipts.
+      - name: Preserve compiled Cargo cache after checks
+        if: ${{ always() && steps.cargo-export.outcome == 'success' && steps.restore-cargo.outputs.cache-hit != 'true' && !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci/cache/linux-cargo
+          key: ${{ steps.restore-cargo.outputs.cache-primary-key }}
       # upload-artifact normalizes file modes and times. Pack the entire cache
       # pair first, so Cargo's mtime fingerprints remain correct after GHCR.
       - name: Archive Cargo snapshot with timestamps and modes intact

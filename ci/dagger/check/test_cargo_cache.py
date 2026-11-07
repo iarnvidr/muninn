@@ -182,6 +182,27 @@ version = "0.0.0"
         self.assertEqual(fresh, dict.fromkeys(PACKAGES, True))
         self.assert_program_value(8)
 
+    def test_opt_in_diagnostic_log_retains_cargo_output_and_failure_status(self):
+        log = self.cache / "check-logs" / "desktop-tests.log"
+        env = {**self.env, "MUNINN_CARGO_LOG": str(log)}
+        self.build(env=env)
+        self.assertTrue(log.is_file())
+        self.assertIn("Finished", log.read_text())
+
+        failure = subprocess.run(
+            ["bash", str(HELPER), str(self.source), str(self.cache),
+             "cargo", "test", "--offline", "--locked", "-p", "missing-crate"],
+            cwd=self.root, env=env, text=True, capture_output=True, timeout=90,
+        )
+        self.assertNotEqual(failure.returncode, 0, failure.stdout + failure.stderr)
+        self.assertIn("missing-crate", log.read_text())
+        self.assertIn("missing-crate", failure.stdout + failure.stderr)
+
+        sentinel = self.root / "do-not-write-outside-cache.log"
+        bad_env = {**self.env, "MUNINN_CARGO_LOG": str(sentinel)}
+        self.build(succeeds=False, env=bad_env)
+        self.assertFalse(sentinel.exists())
+
     def test_deleted_input_is_not_resurrected_from_the_cached_worktree(self):
         self.build()
         (self.source / "base/src/lib.rs").unlink()
