@@ -78,8 +78,10 @@ to GitHub Actions' normal cache and GitHub Packages' OCI container registry:
    normal Dagger directory, then exports that to
    the seed directory. A fresh run/attempt nonce invalidates **only the copy**, so
    cached Dagger operations cannot return an older snapshot of the mutable volume.
-5. **Even on test failure**, the workflow exports and uploads the compilation
-   snapshot *before* enforcing the failed check result. A privileged, separate
+5. **Even on test failure**, the workflow exports a lossless `tar.zst` snapshot
+   (preserving modes, source mtimes and symlinks) and uploads it *before* the
+   failed job concludes. Uploading the raw tree would normalize metadata and
+   ruin Cargo fingerprint reuse. A privileged, separate
    `workflow_run` publisher (running only trusted default-branch code, never a
    PR checkout) copies the snapshot as inert data into GHCR. It does not run
    code from the artifact or turn a failed test into a passing check. Fork PR
@@ -107,8 +109,9 @@ not attest to which moving merge base was tested. To load an exact cache:
 image="ghcr.io/iarnvidr/muninn-ci-cache:run-42417777767-2"  # example run/attempt
 docker pull "$image"
 id=$(docker create --entrypoint /bin/true "$image")
-docker cp "$id:/cache/." ci/cache/linux-cargo/
+docker cp "$id:/cache/snapshot.tar.zst" ./muninn-linux-cargo-snapshot.tar.zst
 docker rm "$id"
+tar --use-compress-program='zstd -d -T2' -xf muninn-linux-cargo-snapshot.tar.zst -C ci/cache/linux-cargo
 dagger check  # must still test! Stored compilation != successful evidence.
 ```
 

@@ -2,4 +2,4 @@
 FROM scratch
 LABEL org.opencontainers.image.source="https://github.com/iarnvidr/muninn"
 LABEL io.muninn.cache.kind="cargo-cache-v1"
-COPY . /cache/
+COPY muninn-linux-cargo-snapshot.tar.zst /cache/snapshot.tar.zst

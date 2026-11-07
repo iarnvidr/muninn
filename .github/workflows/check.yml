@@ -56,15 +56,23 @@ jobs:
         if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
         run: |
           dagger api call muninn-ci export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" export --path ci/cache/linux-cargo
+      # upload-artifact normalizes file modes and times. Pack the entire cache
+      # pair first, so Cargo's mtime fingerprints remain correct after GHCR.
+      - name: Archive Cargo snapshot with timestamps and modes intact
+        id: cargo-archive
+        if: ${{ always() && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          set -euo pipefail
+          tar --format=posix --use-compress-program='zstd -1 -T2' -cf "$RUNNER_TEMP/muninn-linux-cargo-snapshot.tar.zst" -C ci/cache/linux-cargo .
       # A trusted workflow_run publisher will copy this data-only snapshot to
       # GitHub Packages, including when an individual crate test failed.
       - name: Retain Linux compilation snapshot for GHCR publication
-        if: ${{ always() && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        if: ${{ always() && steps.cargo-archive.outcome == 'success' && !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ci/cache/linux-cargo/
-          include-hidden-files: true
+          path: ${{ runner.temp }}/muninn-linux-cargo-snapshot.tar.zst
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
       - name: Record Dagger check receipt

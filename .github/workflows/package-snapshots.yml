@@ -63,8 +63,7 @@ jobs:
           set -euo pipefail
           if [[ "$PACKAGE_KIND" == cargo-cache-v1 ]]; then
             dockerfile="ci/dagger/check/Dockerfile.cargo-cache"
-            test -d "$RUNNER_TEMP/muninn-package/target"
-            test -d "$RUNNER_TEMP/muninn-package/worktree"
+            test -f "$RUNNER_TEMP/muninn-package/muninn-linux-cargo-snapshot.tar.zst"
           elif [[ "$PACKAGE_KIND" == macos-candidate-v1 ]]; then
             dockerfile="ci/dagger/check/Dockerfile.macos-candidate"
             compgen -G "$RUNNER_TEMP/muninn-package/Muninn_*.zip" >/dev/null

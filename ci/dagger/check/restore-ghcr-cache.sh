@@ -13,9 +13,15 @@ if [[ -e "$seed/worktree" || -e "$seed/target" || -e "$seed/cargo" ]]; then
   exit 0
 fi
 
+archive=""
+cleanup() {
+  if [[ -n "$archive" ]]; then rm -f -- "$archive"; fi
+  if [[ -n "${GHCR_READ_TOKEN:-}" ]]; then docker logout ghcr.io >/dev/null 2>&1 || true; fi
+}
+trap cleanup EXIT
+
 if [[ -n "${GHCR_READ_TOKEN:-}" ]]; then
   printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null
-  trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 fi
 
 images=()
@@ -36,12 +42,16 @@ for image in "${images[@]}"; do
     exit 1
   fi
   cid="$(docker create --entrypoint /bin/true "$image")"
-  if ! docker cp "$cid:/cache/." "$seed/"; then
+  archive="$(mktemp --suffix=.tar.zst "${RUNNER_TEMP:-/tmp}/muninn-cache.XXXXXX")"
+  if ! docker cp "$cid:/cache/snapshot.tar.zst" "$archive"; then
     docker rm "$cid" >/dev/null
     echo "Cannot restore package $image" >&2
     exit 1
   fi
   docker rm "$cid" >/dev/null
+  # Keep the source/target mtimes paired, as Cargo's fingerprints require.
+  # GNU tar rejects absolute and .. member paths on extraction.
+  tar --use-compress-program='zstd -d -T2' -xf "$archive" -C "$seed"
   echo "Restored Cargo source mirror + compiled artifacts from $(docker image inspect --format '{{index .RepoDigests 0}}' "$image")"
   exit 0
 done

@@ -114,7 +114,9 @@ class DaggerContract(unittest.TestCase):
         self.assertIn("restore-keys:", self.linux)
         self.assertIn("restore-ghcr-cache.sh", self.linux)
         self.assertIn("muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)
-        self.assertIn("include-hidden-files: true", self.linux)
+        self.assertIn("muninn-linux-cargo-snapshot.tar.zst", self.linux)
+        self.assertIn("tar --format=posix --use-compress-program='zstd -1 -T2'", self.linux)
+        self.assertIn("compression-level: 0", self.linux)
         self.assertIn("always() && steps.dagger-checks.outcome != 'skipped'", self.linux)
         self.assertNotIn("continue-on-error: true", self.linux)
         self.assertIn("steps.dagger-checks.outcome == 'success'", self.linux)
@@ -179,7 +181,7 @@ class DaggerContract(unittest.TestCase):
             dockerfile = (MODULE / file).read_text()
             self.assertRegex(dockerfile, r"(?m)^FROM scratch$")
             self.assertNotRegex(dockerfile, r"(?m)^RUN ")
-            self.assertIn("COPY . /", dockerfile)
+            self.assertRegex(dockerfile, r"(?m)^COPY ")
 
 
 if __name__ == "__main__":
