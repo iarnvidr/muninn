@@ -141,8 +141,8 @@ Cargo-validated compilation products, not permission to skip a test.
 ```sh
 # Optional when moving a successful local run's cache. A new nonce is required.
 # Ordinary local dagger check runs do not need this; their engine retains it.
-dagger api call muninn-ci export-cargo-cache --nonce local-snapshot-1 \
-  export --path ci/cache/linux-cargo
+dagger -m ci/dagger/check api call export-cargo-cache --nonce local-snapshot-1 \
+  --output ci/cache/linux-cargo
 ```
 
 The action's normal branch scoping keeps PR caches separate from trusted

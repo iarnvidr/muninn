@@ -51,11 +51,14 @@ jobs:
         with:
           version: 1.0.0-beta.25
           verb: check
+          # Preserve failed Cargo command output in the job log; plain progress
+          # only reports the check name and exit code for a failed container.
+          dagger-flags: --progress logs
       - name: Export Linux Cargo cache for the next hosted run
         id: cargo-export
         if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
         run: |
-          dagger api call muninn-ci export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" export --path ci/cache/linux-cargo
+          dagger -m ci/dagger/check api call export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
       # upload-artifact normalizes file modes and times. Pack the entire cache
       # pair first, so Cargo's mtime fingerprints remain correct after GHCR.
       - name: Archive Cargo snapshot with timestamps and modes intact
