@@ -55,48 +55,160 @@ type MuninnCi {
       .withWorkdir("/")
   }
 
-  let coreSource: Directory! {
+  # Cargo workspace discovery needs all REAL manifests/entrypoints, but it does
+  # not need unrelated crate implementations. Build input closures by following
+  # local path dependencies. A UI edit therefore changes only ui-assets, server,
+  # CLI and desktop checks; a capture edit doesn't invalidate policy tests.
+  let workspaceSkeleton: Directory! {
     ws.directory("/", include: [
       "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
-      "core/**", "crates/domain/**", "crates/policy/**", "crates/capture/**",
-      "crates/storage/**", "crates/media/**", "crates/client/**", "crates/protocol/**",
-      "crates/navigation/**",
-      # Cargo discovers every workspace member even when selecting packages.
-      # Use the real manifests and entrypoints, not dummy packages or a new lock.
-      "crates/*/Cargo.toml", "crates/*/src/lib.rs", "crates/*/src/main.rs", "crates/*/src/bin/**",
+      "core/Cargo.toml", "core/src/lib.rs",
+      "crates/*/Cargo.toml", "crates/*/src/lib.rs", "crates/*/src/main.rs",
+      "crates/*/src/bin/**",
       "src-tauri/Cargo.toml", "src-tauri/build.rs", "src-tauri/src/main.rs",
       "src-tauri/tauri.conf.json",
     ], exclude: ["**/target", "**/__pycache__", "**/node_modules"])
   }
 
+  let domainSource: Directory! {
+    workspaceSkeleton.withDirectory("/crates/domain", ws.directory("/crates/domain"))
+  }
+  let policySource: Directory! {
+    domainSource.withDirectory("/crates/policy", ws.directory("/crates/policy"))
+  }
+  let captureSource: Directory! {
+    domainSource.withDirectory("/crates/capture", ws.directory("/crates/capture"))
+  }
+  let storageSource: Directory! {
+    policySource.withDirectory("/crates/storage", ws.directory("/crates/storage"))
+  }
+  let mediaSource: Directory! {
+    domainSource.withDirectory("/crates/media", ws.directory("/crates/media"))
+  }
+  let navigationLibSource: Directory! {
+    captureSource.withDirectory("/crates/navigation", ws.directory("/crates/navigation"))
+  }
+  # Navigation's own tests use storage as a dev-dependency. Client builds that
+  # merely DEPEND on navigation must not pick up that test-only storage code.
+  let navigationSource: Directory! {
+    navigationLibSource
+      .withDirectory("/crates/policy", ws.directory("/crates/policy"))
+      .withDirectory("/crates/storage", ws.directory("/crates/storage"))
+  }
+  let protocolSource: Directory! {
+    domainSource.withDirectory("/crates/protocol", ws.directory("/crates/protocol"))
+  }
+  let clientSource: Directory! {
+    navigationLibSource
+      .withDirectory("/crates/protocol", ws.directory("/crates/protocol"))
+      .withDirectory("/crates/client", ws.directory("/crates/client"))
+  }
+  let coreSource: Directory! {
+    navigationSource
+      .withDirectory("/crates/media", ws.directory("/crates/media"))
+      .withDirectory("/core", ws.directory("/core"))
+  }
+  let uiAssetsSource: Directory! {
+    workspaceSkeleton
+      .withDirectory("/crates/ui-assets", ws.directory("/crates/ui-assets"))
+      .withDirectory("/ui", ws.directory("/ui"))
+  }
+  let serverSource: Directory! {
+    coreSource
+      .withDirectory("/crates/protocol", ws.directory("/crates/protocol"))
+      .withDirectory("/crates/ui-assets", ws.directory("/crates/ui-assets"))
+      .withDirectory("/ui", ws.directory("/ui"))
+      .withDirectory("/crates/server", ws.directory("/crates/server"))
+  }
+  # CLI integration tests have a DEV-dependency on muninn-server.
+  let cliSource: Directory! {
+    serverSource.withDirectory("/crates/cli", ws.directory("/crates/cli"))
+  }
   let desktopSource: Directory! {
-    ws.directory("/", include: [
-      "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
-      "core/**", "crates/**", "src-tauri/**", "ui/**",
-    ], exclude: ["**/target", "**/__pycache__", "**/node_modules", "src-tauri/gen"])
+    cliSource
+      .withDirectory("/crates/client", ws.directory("/crates/client"))
+      .withDirectory("/crates/navigation", ws.directory("/crates/navigation"))
+      .withDirectory("/src-tauri", ws.directory("/src-tauri", exclude: ["gen", "**/target"]))
   }
 
-  """
-  Headless domain, policy, capture, storage, media, client and runtime tests.
-  UI assets do not invalidate this check. Test domain without SQLite separately.
-  """
-  pub coreTests: Void @check {
-    rustBase
-      .withMountedDirectory("/input", coreSource)
-      # Synchronize and run both Cargo commands in one exec: the cache lock must
-      # not be released between changing the worktree and reading it.
-      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "bash", "-euc", "cargo test --locked -p muninn-domain --no-default-features && cargo test --locked -p muninn-domain -p muninn-policy -p muninn-capture -p muninn-storage -p muninn-media -p muninn-navigation -p muninn-protocol -p muninn-client -p muninn-core"])
+  # First-class per-crate checks. Dagger reports each independently, and Cargo
+  # validates fingerprints on the shared LOCKED volume. A failing crate cannot
+  # prevent other check results from being recorded.
+  pub domainTests: Void @check {
+    rustBase.withMountedDirectory("/input", domainSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "bash", "-euc", "cargo test --locked -p muninn-domain --no-default-features && cargo test --locked -p muninn-domain"])
       .sync
     null
   }
-
-  """
-  HTTP/UI asset adapter and Tauri composition tests, with their full input closure.
-  """
+  pub policyTests: Void @check {
+    rustBase.withMountedDirectory("/input", policySource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-policy"])
+      .sync
+    null
+  }
+  pub captureTests: Void @check {
+    rustBase.withMountedDirectory("/input", captureSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-capture"])
+      .sync
+    null
+  }
+  pub storageTests: Void @check {
+    rustBase.withMountedDirectory("/input", storageSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-storage"])
+      .sync
+    null
+  }
+  pub mediaTests: Void @check {
+    rustBase.withMountedDirectory("/input", mediaSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-media"])
+      .sync
+    null
+  }
+  pub navigationTests: Void @check {
+    rustBase.withMountedDirectory("/input", navigationSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-navigation"])
+      .sync
+    null
+  }
+  pub protocolTests: Void @check {
+    rustBase.withMountedDirectory("/input", protocolSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-protocol"])
+      .sync
+    null
+  }
+  pub clientTests: Void @check {
+    rustBase.withMountedDirectory("/input", clientSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-client"])
+      .sync
+    null
+  }
+  pub coreTests: Void @check {
+    rustBase.withMountedDirectory("/input", coreSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-core"])
+      .sync
+    null
+  }
+  pub uiAssetsTests: Void @check {
+    rustBase.withMountedDirectory("/input", uiAssetsSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-ui-assets"])
+      .sync
+    null
+  }
+  pub serverTests: Void @check {
+    rustBase.withMountedDirectory("/input", serverSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-server"])
+      .sync
+    null
+  }
+  pub cliTests: Void @check {
+    rustBase.withMountedDirectory("/input", cliSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-cli"])
+      .sync
+    null
+  }
   pub desktopTests: Void @check {
-    rustBase
-      .withMountedDirectory("/input", desktopSource)
-      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-server", "-p", "muninn-ui-assets", "-p", "muninn-cli", "-p", "muninn"])
+    rustBase.withMountedDirectory("/input", desktopSource)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn"])
       .sync
     null
   }

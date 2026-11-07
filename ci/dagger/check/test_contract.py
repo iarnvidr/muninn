@@ -2,7 +2,6 @@
 
 import json
 import re
-import shlex
 import tomllib
 import unittest
 from pathlib import Path
@@ -20,6 +19,7 @@ class DaggerContract(unittest.TestCase):
         cls.workspace = tomllib.loads((ROOT / "dagger.toml").read_text())
         cls.linux = (ROOT / ".github/workflows/check.yml").read_text()
         cls.macos = (ROOT / ".github/workflows/macos.yml").read_text()
+        cls.publisher = (ROOT / ".github/workflows/package-snapshots.yml").read_text()
 
     def test_native_module_and_hosted_cli_use_same_pinned_beta(self):
         self.assertEqual(self.config["engineVersion"], "v1.0.0-beta.25")
@@ -31,9 +31,14 @@ class DaggerContract(unittest.TestCase):
         self.assertNotIn("args: checks --source .", self.linux)
         self.assertIn("dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602", self.linux)
 
-    def test_exactly_four_first_class_checks(self):
+    def test_first_class_check_for_every_crate(self):
         names = re.findall(r"pub (\w+): Void @check", self.source)
-        self.assertEqual(names, ["coreTests", "desktopTests", "javascript", "packaging"])
+        self.assertEqual(names, [
+            "domainTests", "policyTests", "captureTests", "storageTests",
+            "mediaTests", "navigationTests", "protocolTests", "clientTests",
+            "coreTests", "uiAssetsTests", "serverTests", "cliTests",
+            "desktopTests", "javascript", "packaging",
+        ])
         self.assertNotIn("@check", self.source.split("pub exportCargoCache", 1)[1])
 
     def test_cargo_check_selection_covers_every_workspace_package(self):
@@ -43,36 +48,76 @@ class DaggerContract(unittest.TestCase):
             for directory in ROOT.glob(member):
                 manifest = tomllib.loads((directory / "Cargo.toml").read_text())
                 packages.add(manifest["package"]["name"])
-        rust_execs = [json.loads(value) for value in re.findall(
-            r'\.withExec\((\["bash", "/run-rust.sh"[^\n]+\])\)', self.source)]
-        self.assertEqual(len(rust_execs), 2)
-        commands = []
-        for command in rust_execs:
+        rust_checks = re.findall(
+            r'pub (\w+Tests): Void @check \{\s*rustBase\.withMountedDirectory\("/input", (\w+Source)\)\s*\.withExec\((\[[^\n]+\])\)',
+            self.source)
+        self.assertEqual(len(rust_checks), len(packages))
+        chosen = {}
+        for check, scope, command_json in rust_checks:
+            command = json.loads(command_json)
             self.assertEqual(command[:4], ["bash", "/run-rust.sh", "/input", "/cache"])
-            if command[4:6] == ["bash", "-euc"]:
-                commands.extend(shlex.split(part) for part in command[6].split(" && "))
+            self.assertEqual(scope, check.removesuffix("Tests") + "Source")
+            if check == "domainTests":
+                self.assertIn("--no-default-features", command[-1])
+                self.assertEqual(command[-1].count("-p muninn-domain"), 2)
+                chosen[check] = "muninn-domain"
             else:
-                commands.append(command[4:])
-        self.assertEqual(len(commands), 3)
-        selected = {command[index + 1] for command in commands
-                    for index, part in enumerate(command[:-1]) if part == "-p"}
-        self.assertEqual(selected, packages)
-        for command in commands:
-            self.assertEqual(command[:2], ["cargo", "test"])
-            self.assertIn("--locked", command)
+                self.assertEqual(command[4:8], ["cargo", "test", "--locked", "-p"])
+                chosen[check] = command[8]
+        self.assertEqual(set(chosen.values()), packages)
+        self.assertEqual(chosen["desktopTests"], "muninn")
 
-    def test_core_input_scope_excludes_ui_but_keeps_workspace_discovery(self):
-        scope = self.source.split("let coreSource:", 1)[1].split("let desktopSource:", 1)[0]
-        self.assertNotIn('"ui/**"', scope)
-        self.assertIn('"crates/*/Cargo.toml"', scope)
-        self.assertIn('"crates/*/src/lib.rs"', scope)
-        self.assertIn('"src-tauri/Cargo.toml"', scope)
-        self.assertIn('"crates/navigation/**"', scope)
-        self.assertIn('"crates/protocol/**"', scope)
+    def test_crate_sources_have_scoped_dependency_closures(self):
+        skeleton = self.source.split("let workspaceSkeleton:", 1)[1].split("let domainSource:", 1)[0]
+        self.assertIn('"crates/*/Cargo.toml"', skeleton)
+        self.assertIn('"crates/*/src/lib.rs"', skeleton)
+        self.assertIn('"src-tauri/Cargo.toml"', skeleton)
+        scopes = dict(re.findall(r'let (\w+Source): Directory! \{(.*?)\n  \}', self.source, re.S))
+        self.assertEqual(len(scopes), 14)
+
+        def paths(name):
+            source = scopes[name + "Source"]
+            base = re.search(r'\b(\w+Source)\b', source)
+            roots = paths(base.group(1).removesuffix("Source")) if base else set()
+            return roots | set(re.findall(r'\.withDirectory\("/([^"/]+(?:/[^"/]+)?)"', source))
+
+        def root(crate):
+            return "core" if crate == "muninn-core" else ("src-tauri" if crate == "muninn" else "crates/" + crate.removeprefix("muninn-"))
+
+        expected = {
+            "domain": {"domain"},
+            "policy": {"policy", "domain"},
+            "capture": {"capture", "domain"},
+            "storage": {"storage", "policy", "domain"},
+            "media": {"media", "domain"},
+            "navigation": {"navigation", "storage", "policy", "capture", "domain"},
+            "protocol": {"protocol", "domain"},
+            "client": {"client", "protocol", "navigation", "capture", "domain"},
+            "core": {"core", "navigation", "storage", "policy", "capture", "domain", "media"},
+            "uiAssets": {"ui-assets"},
+            "server": {"server", "core", "navigation", "storage", "policy", "capture", "domain", "media", "protocol", "ui-assets"},
+            "cli": {"cli", "server", "core", "navigation", "storage", "policy", "capture", "domain", "media", "protocol", "ui-assets"},
+            "desktop": {"cli", "server", "core", "navigation", "storage", "policy", "capture", "domain", "media", "protocol", "ui-assets", "client"},
+        }
+        for name, dirs in expected.items():
+            with self.subTest(name=name):
+                paths_found = paths(name)
+                expected_paths = {root("muninn-" + dependency) for dependency in dirs}
+                if "ui-assets" in dirs:
+                    expected_paths.add("ui")
+                if name == "desktop":
+                    expected_paths.add("src-tauri")
+                self.assertEqual(paths_found, expected_paths)
 
     def test_cache_transport_is_explicit_and_not_a_result_receipt(self):
         self.assertIn("path: ci/cache/linux-cargo", self.linux)
         self.assertIn("restore-keys:", self.linux)
+        self.assertIn("restore-ghcr-cache.sh", self.linux)
+        self.assertIn("muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)
+        self.assertIn("include-hidden-files: true", self.linux)
+        self.assertIn("always() && steps.dagger-checks.outcome != 'skipped'", self.linux)
+        self.assertNotIn("continue-on-error: true", self.linux)
+        self.assertIn("steps.dagger-checks.outcome == 'success'", self.linux)
         self.assertIn('source: cargoSeed', self.source)
         self.assertEqual(self.source.count('.withMountedCache("/cache", cargoCache)'), 2)
         self.assertIn('ws.directory("/ci/cache/linux-cargo"', self.source)
@@ -120,6 +165,21 @@ class DaggerContract(unittest.TestCase):
             self.assertNotIn("cloud-token:", workflow)
             self.assertNotIn("pull_request" + "_target", workflow)
             self.assertNotIn("self" + "-hosted", workflow)
+        self.assertNotIn("packages: write", self.linux)
+        self.assertNotIn("packages: write", self.macos)
+
+    def test_packages_are_data_only_and_published_from_a_trusted_workflow(self):
+        self.assertIn("workflow_run:", self.publisher)
+        self.assertIn("packages: write", self.publisher)
+        self.assertIn("head_repository.full_name == 'iarnvidr/muninn'", self.publisher)
+        self.assertIn("package_metadata.py", self.publisher)
+        self.assertNotIn("pull_request" + "_target", self.publisher)
+        self.assertIn("gh run download", self.publisher)
+        for file in ("Dockerfile.cargo-cache", "Dockerfile.macos-candidate", "Dockerfile.check-evidence"):
+            dockerfile = (MODULE / file).read_text()
+            self.assertRegex(dockerfile, r"(?m)^FROM scratch$")
+            self.assertNotRegex(dockerfile, r"(?m)^RUN ")
+            self.assertIn("COPY . /", dockerfile)
 
 
 if __name__ == "__main__":

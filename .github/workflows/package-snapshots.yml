@@ -1,0 +1,126 @@
+name: Publish CI artifacts to GitHub Packages
+on:
+  workflow_run:
+    workflows: [Checks, Apple Silicon build]
+    types: [completed]
+
+# This privileged workflow runs the trusted default-branch script, with no PR
+# checkout and no RUN instruction in any OCI Dockerfile. Uploaded snapshots
+# are untrusted data. Fork-originated workflow runs are ineligible.
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.head_repository.full_name == 'iarnvidr/muninn' &&
+      (github.event.workflow_run.name == 'Checks' ||
+       (github.event.workflow_run.name == 'Apple Silicon build' && github.event.workflow_run.conclusion == 'success'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    concurrency:
+      group: ghcr-muninn-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate origin, identity, artifact and immutable tags
+        id: package
+        run: python3 ci/dagger/check/package_metadata.py "$GITHUB_EVENT_PATH" >> "$GITHUB_OUTPUT"
+      - name: Download completed workflow's data artifact
+        id: download
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          ARTIFACT_NAME: ${{ steps.package.outputs.artifact }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/muninn-package"
+          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn --name "$ARTIFACT_NAME" --dir "$RUNNER_TEMP/muninn-package"
+      - name: Include exact native candidate archive and release receipt
+        if: ${{ steps.download.outcome == 'success' && steps.package.outputs.kind == 'macos-candidate-v1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/muninn-package/native-candidate"
+          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
+            --name "muninn-native-candidate-${WORKFLOW_RUN_ID}-${WORKFLOW_ATTEMPT}" \
+            --dir "$RUNNER_TEMP/muninn-package/native-candidate"
+      - name: Publish raw cache or native test build as an OCI package
+        if: steps.download.outcome == 'success'
+        env:
+          GHCR_PUBLISH_TOKEN: ${{ github.token }}
+          PACKAGE_IMAGE: ${{ steps.package.outputs.image }}
+          PACKAGE_KIND: ${{ steps.package.outputs.kind }}
+          PACKAGE_SHA: ${{ steps.package.outputs.sha }}
+          PACKAGE_TAGS: ${{ steps.package.outputs.tags }}
+        run: |
+          set -euo pipefail
+          if [[ "$PACKAGE_KIND" == cargo-cache-v1 ]]; then
+            dockerfile="ci/dagger/check/Dockerfile.cargo-cache"
+            test -d "$RUNNER_TEMP/muninn-package/target"
+            test -d "$RUNNER_TEMP/muninn-package/worktree"
+          elif [[ "$PACKAGE_KIND" == macos-candidate-v1 ]]; then
+            dockerfile="ci/dagger/check/Dockerfile.macos-candidate"
+            compgen -G "$RUNNER_TEMP/muninn-package/Muninn_*.zip" >/dev/null
+          else
+            echo 'Unsupported package kind' >&2
+            exit 1
+          fi
+          printf '%s' "$GHCR_PUBLISH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          read -r -a tags <<< "$PACKAGE_TAGS"
+          reference="$PACKAGE_IMAGE:${tags[0]}"
+          docker build --file "$dockerfile" --label "org.opencontainers.image.revision=$PACKAGE_SHA" --tag "$reference" "$RUNNER_TEMP/muninn-package"
+          docker push "$reference"
+          for tag in "${tags[@]:1}"; do
+            docker tag "$reference" "$PACKAGE_IMAGE:$tag"
+            docker push "$PACKAGE_IMAGE:$tag"
+          done
+          echo "Package: $reference" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Compiled caches are not check receipts; macOS candidates are not production releases.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Download exact passing Dagger check receipt
+        id: receipt-download
+        if: >-
+          github.event.workflow_run.name == 'Checks' &&
+          github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.conclusion == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/muninn-check-evidence"
+          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
+            --name "muninn-check-candidate-${WORKFLOW_RUN_ID}-${WORKFLOW_ATTEMPT}" \
+            --dir "$RUNNER_TEMP/muninn-check-evidence"
+      - name: Retain passing Dagger check receipt as a separate GHCR package
+        if: steps.receipt-download.outcome == 'success'
+        env:
+          GHCR_PUBLISH_TOKEN: ${{ github.token }}
+          PACKAGE_SHA: ${{ steps.package.outputs.sha }}
+          PACKAGE_TAGS: ${{ steps.package.outputs.tags }}
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/muninn-check-evidence/check-candidate.json"
+          printf '%s' "$GHCR_PUBLISH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          image=ghcr.io/iarnvidr/muninn-check-evidence
+          read -r -a tags <<< "$PACKAGE_TAGS"
+          reference="$image:${tags[0]}"
+          docker build --file ci/dagger/check/Dockerfile.check-evidence \
+            --label "org.opencontainers.image.revision=$PACKAGE_SHA" \
+            --tag "$reference" "$RUNNER_TEMP/muninn-check-evidence"
+          docker push "$reference"
+          for tag in "${tags[@]:1}"; do
+            docker tag "$reference" "$image:$tag"
+            docker push "$image:$tag"
+          done
+          echo "Check receipt: $reference" >> "$GITHUB_STEP_SUMMARY"
+      - name: Missing compilation snapshot
+        if: steps.download.outcome != 'success'
+        run: echo 'No compiled-cache/native-build artifact was exported for this run; that OCI package was not published.' >> "$GITHUB_STEP_SUMMARY"

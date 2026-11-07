@@ -1,0 +1,6 @@
+# Verified source/run check receipt archive. The receipt remains subject to
+# build/release_candidate.py's existing exact-tree verification before promotion.
+FROM scratch
+LABEL org.opencontainers.image.source="https://github.com/iarnvidr/muninn"
+LABEL io.muninn.artifact.kind="check-evidence-v1"
+COPY . /evidence/

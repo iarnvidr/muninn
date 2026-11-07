@@ -1,0 +1,5 @@
+# OCI data image for GitHub Packages. Never RUN untrusted cache contents.
+FROM scratch
+LABEL org.opencontainers.image.source="https://github.com/iarnvidr/muninn"
+LABEL io.muninn.cache.kind="cargo-cache-v1"
+COPY . /cache/
