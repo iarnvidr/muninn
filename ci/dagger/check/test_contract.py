@@ -120,6 +120,7 @@ class DaggerContract(unittest.TestCase):
     def test_cache_transport_is_explicit_and_not_a_result_receipt(self):
         self.assertIn("path: ci/cache/linux-cargo", self.linux)
         self.assertIn("restore-keys:", self.linux)
+        self.assertIn("            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-\n", self.linux)
         self.assertIn("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", self.linux)
         self.assertIn("restore-ghcr-cache.sh", self.linux)
         self.assertIn("muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)

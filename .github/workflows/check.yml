@@ -33,9 +33,12 @@ jobs:
         with:
           path: ci/cache/linux-cargo
           key: muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-${{ hashFiles('core/**', 'crates/**', 'src-tauri/**', 'ui/**') }}
+          # Preserve Cargo data across edits to the Dagger module itself;
+          # Cargo still checks the full compiler/source/ABI fingerprints.
           restore-keys: |
             muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-
             muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-
+            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-
       # A previous trusted-main (or same-PR) GHCR snapshot is the fallback when
       # Actions has no Cargo output. Its contents remain data; Cargo checks all
       # fingerprints again before executing any compiled output.

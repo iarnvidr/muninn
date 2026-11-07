@@ -143,7 +143,10 @@ For a macOS test build, pull the `muninn-macos-candidate` image and copy
 `/artifacts/.` instead; it remains a non-notarized, non-production candidate.
 
 The hosted key has compiler/container configuration, dependency-manifest and source parts.
-Restore prefixes allow unchanged dependencies to survive a lockfile change. The
+Restore prefixes allow unchanged dependencies to survive a lockfile change and
+include a final platform-only prefix so edits to the Dagger check implementation
+can still seed validated Cargo artifacts from an older check graph. Cargo and
+the native ABI-partitioned target decide what can actually be reused. The
 engine's volume name does not include a commit SHA or lockfile hash. Compiled
 artifacts are still validated by Cargo; changed source, compiler flags, features,
 target ABI or dependencies can legitimately rebuild a crate. The source mirror
