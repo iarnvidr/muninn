@@ -30,15 +30,18 @@ Releases attach exactly three files: `Muninn_<version>_macos-arm64.dmg` for inst
 
 Checksums, detached signatures, signing evidence and review metadata stay in CI artifacts. The DMG contains the app, an Applications shortcut, and a `Corresponding Source` folder with pinned source archives, recipe, manifest and notices. Packaging mounts the finished image read-only and verifies the app signature/version and source archive digests before publication.
 
-Tauri v2 updater format uses `latest.json` with `version`, `notes`, `pub_date`, and `platforms`; macOS Apple Silicon is `darwin-aarch64` with `url` and `signature`. The signed gzip tar update payload is separate from the manual-install DMG. Workflow validates stable version, existing `v<version>` tag and exact equality of tag, protected-main commit and dispatched SHA. It prepares and verifies artifacts with `publish=false`; only the separate `publish=true` job has write permission and uploads to an already existing release. No tag/release is created by workflow. A GitHub prerelease still does not activate the stable `releases/latest` updater feed.
+Tauri v2 updater format uses `latest.json` with `version`, `notes`, `pub_date`, and `platforms`; macOS Apple Silicon is `darwin-aarch64` with `url` and `signature`. The signed gzip tar update payload is separate from the manual-install DMG. **A successful same-repository PR merge to `main` now automatically publishes a prerelease when its source version is newer than the latest published version.** The post-merge `Map accepted Muninn native artifact` workflow first verifies the PR's exact native artifact and Linux/Dagger check receipts. Only its successful `workflow_run` event can trigger the trusted `Publish accepted Muninn preview` workflow. It retrieves the accepted app rather than compiling again, verifies its ad-hoc Apple signature, signs and verifies the Tauri updater archive, mount-verifies the DMG and corresponding sources, and creates a draft release. Publication happens only after the DMG, `latest.json` and `Muninn.app.tar.gz` all exist with matching SHA-256 digests; repeated runs never overwrite published assets. The workflow skips merges with an already published version and rejects version regressions, unexpected tag targets, stale `main` commits or missing signing credentials. A GitHub prerelease still does not activate the stable `releases/latest` updater feed.
+
+Automatic preview publication needs `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key is encrypted) accessible to the trusted workflow as repository-level Actions secrets. It never sends these secrets to PR checks or GitHub Packages cache publishers. A preview remains ad-hoc signed and not notarized. Its release tag is pinned to the accepted merge commit. For new releases, bump the checked-in Tauri version in the PR so that the merge will publish a new `v<version>` prerelease; no manual tag, release or workflow dispatch is needed.
 
 ## Provisioning and release gate
 
-Select `apple_signing=ad-hoc` explicitly for that distribution path; the default
-`developer-id` mode still requires all six Apple secrets and notarization. Both
-modes retain updater signing and verification, matching version/tag/main checks,
-and protected environment review. Publish ad-hoc candidates as GitHub prereleases
-while production acceptance remains outstanding; see the ad-hoc section of
+The automatic path above handles ad-hoc-signed *prereleases*. For the separate
+protected production workflow, select `apple_signing=ad-hoc` explicitly if using
+that distribution path; its default `developer-id` mode still requires all six
+Apple secrets and notarization. Both protected modes retain updater signing,
+matching version/tag/main checks and environment review. Use stable publication
+only after production acceptance; see the ad-hoc section of
 [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md). The remaining production gate below
 describes promotion to a notarized, accepted stable release.
 

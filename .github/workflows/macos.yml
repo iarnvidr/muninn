@@ -162,4 +162,5 @@ jobs:
             ${{ runner.temp }}/muninn-preview-evidence/**
           if-no-files-found: error
           retention-days: 90
-# Deliberately no automatic GitHub release. See docs/PUBLICATION.md before releasing.
+# PR builds are never releases. Only the later successful accepted-main mapping
+# can trigger trusted automatic preview publication; stable release stays protected.
