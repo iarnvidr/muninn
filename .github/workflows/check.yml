@@ -26,6 +26,25 @@ jobs:
           # rather than silently skipping the required history scan.
           GOBIN="$RUNNER_TEMP" GOTOOLCHAIN=auto go install github.com/zricethezav/gitleaks/v8@v8.30.1
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner
+      # Discover the exact system libraries in the Dagger Rust container. This
+      # call shares the engine's cached image/apt stage with the later checks.
+      - name: Resolve the Dagger compiler and system ABI
+        id: crate-abi
+        uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
+        with:
+          version: 1.0.0-beta.25
+          verb: call
+          module: ci/dagger/check
+          args: rust-abi
+          dagger-flags: --progress logs
+      - name: Validate Dagger ABI identity
+        run: |
+          set -euo pipefail
+          # The pinned v1 beta action streams the call output but does not
+          # expose the newer `stdout` step output. Its installed CLI persists.
+          abi="$(dagger -m ci/dagger/check api call rust-abi | tr -d '\r\n')"
+          [[ "$abi" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid Dagger system ABI'; exit 1; }
+          echo "MUNINN_LINUX_ABI=$abi" >> "$GITHUB_ENV"
       # A hosted job has a fresh engine. Named Dagger volumes alone do not persist
       # across jobs: restore a seed, then export the updated volume after checks.
       - name: Restore Linux Cargo cache seed
@@ -49,18 +68,65 @@ jobs:
           GHCR_READ_TOKEN: ${{ github.token }}
           MUNINN_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash ci/dagger/check/restore-ghcr-cache.sh
+      - name: Install pinned OCI artifact client
+        env:
+          GOBIN: ${{ runner.temp }}
+        run: GOTOOLCHAIN=auto go install oras.land/oras/cmd/oras@v1.3.0
+      - name: Restore independently published, unchanged Linux crates
+        if: steps.restore-cargo.outputs.cache-hit != 'true'
+        env:
+          GHCR_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_READ_TOKEN" | "$RUNNER_TEMP/oras" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          python3 ci/dagger/check/crate_packages.py pull \
+            --root . --platform linux-amd64 --abi "$MUNINN_LINUX_ABI" \
+            --target "ci/cache/linux-cargo/target/$MUNINN_LINUX_ABI" \
+            --mirror ci/cache/linux-cargo/worktree --oras "$RUNNER_TEMP/oras"
+      - name: Record complete checkout file list for source-scoped Cargo checks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          files = subprocess.check_output(['git', 'ls-files', '-z']).decode('utf-8').split('\0')
+          files = [path for path in files if path and not path.startswith('ci/cache/')]
+          if any('\n' in path or '\r' in path for path in files):
+              raise SystemExit('Newline-containing source paths cannot be safely mirrored')
+          manifest = Path('ci/cache/linux-cargo/current-source-files.txt')
+          manifest.parent.mkdir(parents=True, exist_ok=True)
+          manifest.write_text(''.join(path + '\n' for path in sorted(files, key=str.encode)))
+          PY
       - name: Rust, JavaScript, packaging, and publication checks
         id: dagger-checks
-        uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
+        # The pinned action's installer calls `dagger --silent version` when a
+        # CLI is already on PATH. Dagger v1 rejects that legacy flag. The ABI
+        # step already installs the pinned CLI, so invoke it directly instead.
+        # Stream what the engine exposes. Some failed Cargo execs still give
+        # only exit 101, so the desktop check also writes a retained log.
+        run: dagger --progress logs check
+      - name: Export separate compiled crate packages
+        id: crate-export
+        if: ${{ steps.dagger-checks.outcome == 'success' && !cancelled() }}
+        # Package next to Dagger's compiled Cargo volume. Export only the 13
+        # small OCI payloads; a full snapshot is not needed for a green run.
+        run: |
+          dagger -m ci/dagger/check api call export-crate-packages \
+            --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/muninn-crate-packages"
+      - name: Retain individually compiled crates for trusted GHCR publication
+        if: ${{ steps.crate-export.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          version: 1.0.0-beta.25
-          verb: check
-          # Stream what the engine exposes. Some failed Cargo execs still give
-          # only exit 101, so the desktop check also writes a retained log.
-          dagger-flags: --progress logs
-      - name: Export Linux Cargo cache for the next hosted run
+          name: muninn-crates-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-crate-packages/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Export Linux Cargo diagnostic cache after a failed check
         id: cargo-export
-        if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
         run: |
           dagger -m ci/dagger/check api call export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
       # Preserve failing logs separately, so a cache restored into a later run

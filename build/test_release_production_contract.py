@@ -128,7 +128,7 @@ class ProductionReleaseContract(unittest.TestCase):
 
     def test_hosted_checks_run_contract_test(self):
         self.assertIn("version: 1.0.0-beta.25", self.checks)
-        self.assertIn("verb: check", self.checks)
+        self.assertIn("run: dagger --progress logs check", self.checks)
         self.assertNotIn("args: checks --source .", self.checks)
         self.assertNotIn("module: ./ci/dagger/check", self.checks)
         for check in ("coreTests", "desktopTests", "javascript", "packaging"):
@@ -143,7 +143,8 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertNotIn("create-check", export)
         self.assertIn('"MUNINN_CACHE_EXPORT_NONCE", nonce', export)
         self.assertNotIn("GITHUB_RUN_ID", self.dagger_checks.split("pub exportCargoCache", 1)[0])
-        self.assertLess(self.checks.index("verb: check"), self.checks.index("create-check --root"))
+        self.assertLess(self.checks.index("run: dagger --progress logs check"),
+                        self.checks.index("create-check --root"))
         self.assertNotRegex(self.checks, r"(?m)^\s+continue-on-error:\s*true")
 
     def test_receipt_pipeline_identity_matches_committed_dagger_configuration(self):

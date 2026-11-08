@@ -53,8 +53,35 @@ fi
 
 # Deliberately NO --times. --checksum retains an existing file only when its
 # bytes match, whatever timestamp an archive or checkout happened to give it.
-# Changed files receive current mtimes; --delete makes removed inputs disappear.
-rsync --recursive --checksum --links --perms --delete "$input_dir/" "$worktree/"
+# Dagger's 13 checks mount DIFFERENT source subsets into the SAME worktree.
+# A plain `--delete` on every check destroys the sources imported with other
+# published crate packages; Cargo then recompiles those unchanged crates when
+# a subsequent check adds their sources back. The host supplies the complete
+# checked-out source path manifest to distinguish a scoped omission from a
+# real deletion. In local/full-worktree builds, retain the original --delete.
+source_manifest="$cache_root/current-source-files.txt"
+if [[ -f "$source_manifest" ]]; then
+  if ! LC_ALL=C sort --check=quiet --unique "$source_manifest"; then
+    printf '%s\n' 'Complete source manifest must be sorted with no duplicates.' >&2
+    exit 2
+  fi
+  rsync --recursive --checksum --links --perms "$input_dir/" "$worktree/"
+  stale_list="$(mktemp "$cache_root/.stale-sources.XXXXXX")"
+  trap 'rm -f -- "$stale_list"' EXIT
+  comm -23 <(find "$worktree" -type f -printf '%P\n' | LC_ALL=C sort) "$source_manifest" > "$stale_list"
+  while IFS= read -r stale; do
+    case "$stale" in
+      ''|/*|../*|*/../*|*/..|.)
+        printf 'Unsafe source path in removal list: %s\n' "$stale" >&2
+        exit 2 ;;
+    esac
+    rm -f -- "$worktree/$stale"
+  done < "$stale_list"
+  rm -f -- "$stale_list"
+  trap - EXIT
+else
+  rsync --recursive --checksum --links --perms --delete "$input_dir/" "$worktree/"
+fi
 rm -f -- "$anchor"
 trap - EXIT
 export CARGO_TARGET_DIR="$target"

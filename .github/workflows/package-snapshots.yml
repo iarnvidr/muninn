@@ -21,7 +21,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     concurrency:
-      group: ghcr-muninn-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+      # OCI tags are immutable by policy, but GHCR does not provide a
+      # compare-and-swap on the initial push. Serialize independent Linux,
+      # macOS and PR producers so two publishers cannot both observe a
+      # missing tag and race to overwrite the same crate identity.
+      group: ghcr-muninn-publisher
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -95,6 +99,73 @@ jobs:
           done
           echo "Package: $reference" >> "$GITHUB_STEP_SUMMARY"
           echo 'Compiled caches are not check receipts; macOS candidates are not production releases.' >> "$GITHUB_STEP_SUMMARY"
+      # These are individually addressable compiled workspace crate packages,
+      # not the combined target snapshot above. Only *fully successful* source
+      # workflows can publish units; this trusted job never runs PR code.
+      - name: Download independently compiled crates from successful workflow
+        id: crates-download
+        if: github.event.workflow_run.conclusion == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          case "$WORKFLOW_NAME" in
+            Checks) platform=linux ;;
+            'Apple Silicon build') platform=macos ;;
+            *) exit 1 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/muninn-crate-packages"
+          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
+            --name "muninn-crates-${platform}-${WORKFLOW_RUN_ID}-${WORKFLOW_ATTEMPT}" \
+            --dir "$RUNNER_TEMP/muninn-crate-packages"
+      - name: Identify the exact originating CI source tree
+        id: crate-source
+        if: steps.crates-download.outcome == 'success'
+        run: |
+          set -euo pipefail
+          source_sha="$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/muninn-crate-packages/index.json"))["source_sha"])')"
+          [[ "$source_sha" =~ ^[a-f0-9]{40}$ ]] || { echo 'Malformed CI source SHA'; exit 1; }
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Read original test-merge sources as data only
+        if: steps.crate-source.outcome == 'success'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.crate-source.outputs.sha }}
+          # Parent verification requires the original PR merge's second
+          # parent; shallow checkout hides that ancestry.
+          fetch-depth: 0
+          path: crate-source
+          persist-credentials: false
+      - name: Install pinned ORAS artifact client
+        if: steps.crate-source.outcome == 'success'
+        env:
+          GOBIN: ${{ runner.temp }}
+        run: GOTOOLCHAIN=auto go install oras.land/oras/cmd/oras@v1.3.0
+      - name: Verify sources and publish immutable per-crate OCI packages
+        if: steps.crate-source.outcome == 'success'
+        env:
+          GHCR_PUBLISH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_PUBLISH_TOKEN" | "$RUNNER_TEMP/oras" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          case "$WORKFLOW_NAME" in
+            Checks) platform=linux-amd64 ;;
+            'Apple Silicon build') platform=macos-arm64 ;;
+            *) exit 1 ;;
+          esac
+          python3 ci/dagger/check/crate_packages.py publish \
+            --root crate-source --input "$RUNNER_TEMP/muninn-crate-packages" \
+            --platform "$platform" --run-id "$WORKFLOW_RUN_ID" \
+            --head-sha "$WORKFLOW_HEAD_SHA" --event "$WORKFLOW_EVENT" \
+            --oras "$RUNNER_TEMP/oras"
       - name: Download exact passing Dagger check receipt
         id: receipt-download
         if: >-

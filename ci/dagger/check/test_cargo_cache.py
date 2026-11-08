@@ -210,6 +210,52 @@ version = "0.0.0"
         self.assertNotIn("cache_fixture_app", fresh)
         self.assertFalse((self.mirror / "base/src/lib.rs").exists())
 
+    def test_scoped_dagger_checks_preserve_other_published_crate_outputs(self):
+        # A Dagger check's input omits unrelated crate source files, but the
+        # same Cargo target/worktree is shared by all 13 first-class checks.
+        # Deleting such files would cause spurious recompilation in the next
+        # check, even after restoring that crate's published .rlib/fingerprint.
+        self.write("other/src/extra.rs", "pub fn answer() -> u32 { 7 }\n")
+        self.write("other/src/lib.rs", "mod extra; pub fn value() -> u32 { extra::answer() }\n")
+        self.build()
+        manifest = self.cache / "current-source-files.txt"
+
+        def file_list():
+            paths = [p.relative_to(self.source).as_posix()
+                     for p in self.source.rglob("*") if p.is_file()]
+            manifest.write_text("".join(p + "\n" for p in sorted(paths)))
+
+        def scoped_build(scope: Path, crate: str) -> dict[str, bool]:
+            result = subprocess.run(
+                ["bash", str(HELPER), str(scope), str(self.cache),
+                 "cargo", "build", "--offline", "--locked", "-p", crate,
+                 "--message-format=json"],
+                cwd=self.root, env=self.env, text=True, capture_output=True, timeout=90,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return {msg["target"]["name"]: msg["fresh"]
+                    for line in result.stdout.splitlines()
+                    if (msg := json.loads(line)).get("reason") == "compiler-artifact"}
+
+        file_list()
+        base_scope = self.root / "base-scope"
+        shutil.copytree(self.source, base_scope)
+        (base_scope / "other/src/extra.rs").unlink()
+        self.assertTrue(scoped_build(base_scope, "cache_fixture_base")["cache_fixture_base"])
+        self.assertTrue((self.mirror / "other/src/extra.rs").is_file())
+
+        other_scope = self.root / "other-scope"
+        shutil.copytree(self.source, other_scope)
+        self.assertTrue(scoped_build(other_scope, "cache_fixture_other")["cache_fixture_other"])
+
+        # A genuinely removed tracked file is deleted, even if this particular
+        # Dagger check cannot see the directory containing the removed file.
+        self.write("other/src/lib.rs", "pub fn value() -> u32 { 7 }\n")
+        (self.source / "other/src/extra.rs").unlink()
+        file_list()
+        self.assertTrue(scoped_build(base_scope, "cache_fixture_base")["cache_fixture_base"])
+        self.assertFalse((self.mirror / "other/src/extra.rs").exists())
+
     def test_future_target_timestamp_fails_closed_instead_of_reusing_stale_code(self):
         self.build()
         future = time.time_ns() + 3_600_000_000_000

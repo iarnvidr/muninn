@@ -1,9 +1,18 @@
 name: Apple Silicon build
 on:
   pull_request:
+  # Bootstrap native OCI packages automatically when the publisher/restore
+  # contract itself changes. Ordinary application PR merges reuse their
+  # already-validated native artifact; they do not rebuild a second time.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos.yml'
+      - 'ci/dagger/check/crate_packages.py'
   workflow_dispatch:
 permissions:
   contents: read
+  packages: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -36,7 +45,7 @@ jobs:
           path: ~/.cache/muninn-tools
           key: muninn-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/tools.lock.json', 'build/ffmpeg_lgpl.py') }}
       - name: Install helper build tools
-        run: brew install meson ninja pkgconf
+        run: brew install meson ninja pkgconf oras
       - name: Select the pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Fingerprint the native compiler and SDK
@@ -54,6 +63,7 @@ jobs:
           )"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
       - name: Restore native Cargo downloads and compiled artifacts
+        id: restore-cargo
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -64,6 +74,17 @@ jobs:
           restore-keys: |
             muninn-native-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-cache-abi.outputs.fingerprint }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'build/build-native-macos.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-
             muninn-native-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-cache-abi.outputs.fingerprint }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'build/build-native-macos.sh') }}-
+      - name: Restore independently published, unchanged Apple Silicon crates
+        if: steps.restore-cargo.outputs.cache-hit != 'true'
+        env:
+          GHCR_READ_TOKEN: ${{ github.token }}
+          MUNINN_MACOS_ABI: ${{ steps.rust-cache-abi.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_READ_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          python3 ci/dagger/check/crate_packages.py pull \
+            --root . --platform macos-arm64 --abi "$MUNINN_MACOS_ABI" \
+            --target target
       # This release build/package and its launch-health check intentionally do not
       # run the debug-only e2e harness.
       - name: Build, test and sign release artifact
@@ -107,6 +128,22 @@ jobs:
         run: bash build/native-ui-smoke.sh "$RUNNER_TEMP/muninn-debug-smoke/Muninn.app" "$RUNNER_TEMP/muninn-debug-ui-evidence"
       - name: Record exact native release candidate
         run: python3 build/release_candidate.py create --root "$RUNNER_TEMP/muninn" --source-root "$GITHUB_WORKSPACE"
+      - name: Export independently compiled Apple Silicon crates
+        env:
+          MUNINN_MACOS_ABI: ${{ steps.rust-cache-abi.outputs.fingerprint }}
+        run: |
+          python3 ci/dagger/check/crate_packages.py export \
+            --root . --platform macos-arm64 --abi "$MUNINN_MACOS_ABI" \
+            --target target --source-root . \
+            --output "$RUNNER_TEMP/muninn-crate-packages" --require-all
+      - name: Retain Apple Silicon crate packages for trusted GHCR publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-crates-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-crate-packages/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
       - id: upload
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
