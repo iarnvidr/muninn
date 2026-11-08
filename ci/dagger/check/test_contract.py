@@ -179,6 +179,7 @@ class DaggerContract(unittest.TestCase):
 
     def test_mac_cache_is_native_and_preserves_smoke_workflow(self):
         self.assertIn("runs-on: macos-15", self.macos)
+        self.assertIn("      - '.github/workflows/package-snapshots.yml'", self.macos)
         self.assertIn("MACOSX_DEPLOYMENT_TARGET: '14.0'", self.macos)
         for required in ("rustc -vV", "xcodebuild -version", "--show-sdk-version",
                          "~/.cargo/registry", "~/.cargo/git", "muninn-native-cargo-v1-",
@@ -207,6 +208,9 @@ class DaggerContract(unittest.TestCase):
         self.assertIn("head_repository.full_name == 'iarnvidr/muninn'", self.publisher)
         self.assertIn("package_metadata.py", self.publisher)
         self.assertIn("group: ghcr-muninn-publisher", self.publisher)
+        self.assertIn("  publish-crates:", self.publisher)
+        self.assertIn("group: ghcr-muninn-crate-publisher", self.publisher)
+        self.assertIn("find \"$RUNNER_TEMP/muninn-package/muninn\"", self.publisher)
         self.assertIn("cancel-in-progress: false", self.publisher)
         self.assertNotIn("pull_request" + "_target", self.publisher)
         self.assertIn("gh run download", self.publisher)

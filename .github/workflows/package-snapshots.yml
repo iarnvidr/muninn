@@ -83,6 +83,13 @@ jobs:
             test -f "$RUNNER_TEMP/muninn-package/muninn-linux-cargo-snapshot.tar.zst"
           elif [[ "$PACKAGE_KIND" == macos-candidate-v1 ]]; then
             dockerfile="ci/dagger/check/Dockerfile.macos-candidate"
+            # upload-artifact uses RUNNER_TEMP as the least common ancestor
+            # because the native package also includes smoke evidence. Bring
+            # the candidate archives back to the historical image root.
+            if [[ -d "$RUNNER_TEMP/muninn-package/muninn" ]]; then
+              find "$RUNNER_TEMP/muninn-package/muninn" -maxdepth 1 -type f -name 'Muninn_*' \
+                -exec mv -t "$RUNNER_TEMP/muninn-package" -- {} +
+            fi
             compgen -G "$RUNNER_TEMP/muninn-package/Muninn_*.zip" >/dev/null
           else
             echo 'Unsupported package kind' >&2
@@ -99,13 +106,73 @@ jobs:
           done
           echo "Package: $reference" >> "$GITHUB_STEP_SUMMARY"
           echo 'Compiled caches are not check receipts; macOS candidates are not production releases.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Download exact passing Dagger check receipt
+        id: receipt-download
+        if: >-
+          github.event.workflow_run.name == 'Checks' &&
+          github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.conclusion == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/muninn-check-evidence"
+          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
+            --name "muninn-check-candidate-${WORKFLOW_RUN_ID}-${WORKFLOW_ATTEMPT}" \
+            --dir "$RUNNER_TEMP/muninn-check-evidence"
+      - name: Retain passing Dagger check receipt as a separate GHCR package
+        if: steps.receipt-download.outcome == 'success'
+        env:
+          GHCR_PUBLISH_TOKEN: ${{ github.token }}
+          PACKAGE_SHA: ${{ steps.package.outputs.sha }}
+          PACKAGE_TAGS: ${{ steps.package.outputs.tags }}
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/muninn-check-evidence/check-candidate.json"
+          printf '%s' "$GHCR_PUBLISH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          image=ghcr.io/iarnvidr/muninn-check-evidence
+          read -r -a tags <<< "$PACKAGE_TAGS"
+          reference="$image:${tags[0]}"
+          docker build --file ci/dagger/check/Dockerfile.check-evidence \
+            --label "org.opencontainers.image.revision=$PACKAGE_SHA" \
+            --tag "$reference" "$RUNNER_TEMP/muninn-check-evidence"
+          docker push "$reference"
+          for tag in "${tags[@]:1}"; do
+            docker tag "$reference" "$image:$tag"
+            docker push "$image:$tag"
+          done
+          echo "Check receipt: $reference" >> "$GITHUB_STEP_SUMMARY"
+      - name: Missing compilation snapshot
+        if: steps.download.outcome != 'success'
+        run: echo 'No compiled-cache/native-build artifact was exported for this run; that OCI package was not published.' >> "$GITHUB_STEP_SUMMARY"
+
+  # Compiled Rust crates are independent OCI products. A failure in the older
+  # macOS candidate/raw-cache copier must never block their publication.
+  publish-crates:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == 'iarnvidr/muninn' &&
+      (github.event.workflow_run.name == 'Checks' ||
+       github.event.workflow_run.name == 'Apple Silicon build')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    concurrency:
+      group: ghcr-muninn-crate-publisher
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate source workflow metadata
+        run: python3 ci/dagger/check/package_metadata.py "$GITHUB_EVENT_PATH" >/dev/null
       # These are individually addressable compiled workspace crate packages,
       # not the combined target snapshot above. Only *fully successful* source
       # workflows can publish units; this trusted job never runs PR code.
       - name: Download independently compiled crates from successful workflow
         id: crates-download
         if: github.event.workflow_run.conclusion == 'success'
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -166,44 +233,3 @@ jobs:
             --platform "$platform" --run-id "$WORKFLOW_RUN_ID" \
             --head-sha "$WORKFLOW_HEAD_SHA" --event "$WORKFLOW_EVENT" \
             --oras "$RUNNER_TEMP/oras"
-      - name: Download exact passing Dagger check receipt
-        id: receipt-download
-        if: >-
-          github.event.workflow_run.name == 'Checks' &&
-          github.event.workflow_run.event == 'pull_request' &&
-          github.event.workflow_run.conclusion == 'success'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-          WORKFLOW_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/muninn-check-evidence"
-          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
-            --name "muninn-check-candidate-${WORKFLOW_RUN_ID}-${WORKFLOW_ATTEMPT}" \
-            --dir "$RUNNER_TEMP/muninn-check-evidence"
-      - name: Retain passing Dagger check receipt as a separate GHCR package
-        if: steps.receipt-download.outcome == 'success'
-        env:
-          GHCR_PUBLISH_TOKEN: ${{ github.token }}
-          PACKAGE_SHA: ${{ steps.package.outputs.sha }}
-          PACKAGE_TAGS: ${{ steps.package.outputs.tags }}
-        run: |
-          set -euo pipefail
-          test -f "$RUNNER_TEMP/muninn-check-evidence/check-candidate.json"
-          printf '%s' "$GHCR_PUBLISH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          image=ghcr.io/iarnvidr/muninn-check-evidence
-          read -r -a tags <<< "$PACKAGE_TAGS"
-          reference="$image:${tags[0]}"
-          docker build --file ci/dagger/check/Dockerfile.check-evidence \
-            --label "org.opencontainers.image.revision=$PACKAGE_SHA" \
-            --tag "$reference" "$RUNNER_TEMP/muninn-check-evidence"
-          docker push "$reference"
-          for tag in "${tags[@]:1}"; do
-            docker tag "$reference" "$image:$tag"
-            docker push "$image:$tag"
-          done
-          echo "Check receipt: $reference" >> "$GITHUB_STEP_SUMMARY"
-      - name: Missing compilation snapshot
-        if: steps.download.outcome != 'success'
-        run: echo 'No compiled-cache/native-build artifact was exported for this run; that OCI package was not published.' >> "$GITHUB_STEP_SUMMARY"
