@@ -65,6 +65,28 @@ def relative_files(root: Path, path: Path) -> list[str]:
         return []
     if path.is_symlink():
         raise ValueError(f"Source path is a symlink: {path}")
+    # Hosted native builds may generate untracked files inside source folders
+    # while running smoke tests. Package identities must describe the exact
+    # Git checkout, not whatever happens to remain after compilation.
+    # Read the *index* instead of working-tree directory contents, while still
+    # hashing the current bytes of every tracked file to catch modifications.
+    if (root / ".git").exists():
+        relative = path.relative_to(root).as_posix()
+        tracked = subprocess.check_output(
+            ["git", "-C", str(root), "ls-files", "--cached", "-z", "--", relative]
+        )
+        result = []
+        for raw in tracked.split(b"\0"):
+            if not raw:
+                continue
+            name = os.fsdecode(raw)
+            file = root / name
+            if file.is_symlink():
+                raise ValueError(f"Tracked source file is a symlink: {file}")
+            if not file.is_file():
+                raise ValueError(f"Tracked source file is missing: {file}")
+            result.append(Path(name).as_posix())
+        return sorted(result)
     if path.is_file():
         return [path.relative_to(root).as_posix()]
     items = []
@@ -421,7 +443,9 @@ def validate_index(folder: Path, root: Path, expected_platform: str | None = Non
         seen.add(crate)
         filename = crate + ".tar.gz"
         if row["archive"] != filename or row["tag"] != expected[crate]["tag"] or row["image"] != expected[crate]["image"]:
-            raise ValueError("Untrusted OCI package identity")
+            raise ValueError(f"Untrusted OCI package identity for {crate}: "
+                             f"archive={row['archive']} image={row['image']} "
+                             f"tag={row['tag']} expected={expected[crate]['tag']}")
         archive = folder / filename
         if hash_file(archive) != row["sha256"]:
             raise ValueError("Archive SHA mismatch")
