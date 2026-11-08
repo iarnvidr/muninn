@@ -71,7 +71,9 @@
       } while (Date.now() < deadline);
       const media = document.querySelector('video');
       throw new Error(label + ' timed out: ' + JSON.stringify({
-        time:media?.currentTime, seeking:media?.seeking, readyState:media?.readyState,
+        time:media?.currentTime, duration:media?.duration, seeking:media?.seeking,
+        readyState:media?.readyState, connected:media?.isConnected,
+        seekableRanges:media?.seekable?.length,
         activeTab:M.tabs.active?.id||M.tabs.active, page:M.page,
         openDialogs:[...document.querySelectorAll('dialog[open]')].map(dialog=>dialog.id),
       }));
@@ -86,7 +88,7 @@
       await M.activateTab(tabId);
       await M.refreshTabs?.();
       await settle();
-      const video = document.querySelector('video');
+      let video = document.querySelector('video');
       assert('synthetic watch API fixture consumed', calls.some(x => x.path === '/api/watch/' + videoId && x.method==='POST') && calls.some(x => x.path === '/api/video/' + videoId && x.method==='GET'), calls);
       assert('production video element mounted', video instanceof HTMLVideoElement, !!video);
       if (!(video instanceof HTMLVideoElement)) return {passed:false, results, calls, tabId};
@@ -100,11 +102,30 @@
       // has finished. Pause and establish a *real*
       // completed seek before testing the keyboard handler, rather than racing
       // a 120 ms timer against asynchronous WebKit media operations.
-      video.pause();
       const firstSeek = Math.min(12, Math.max(0, video.duration / 2));
-      video.currentTime = firstSeek;
-      await waitFor(() => !video.seeking && Math.abs(video.currentTime-firstSeek)<0.15,
-        'fixture initial seek');
+      assert('synthetic player has finite seekable duration',
+        Number.isFinite(firstSeek) && firstSeek > 0,
+        {duration:video.duration,seekableRanges:video.seekable.length});
+      // WebKit sometimes remounts the watch video or drops an initial seek
+      // immediately after metadata becomes available. Establish the fixture
+      // position with bounded retries, without retrying any actual J/L user
+      // commands or accepting a player which never completes its seek.
+      for (let attempt=0; attempt<3; attempt++) {
+        const mounted = document.querySelector('video');
+        if (mounted instanceof HTMLVideoElement) video = mounted;
+        await waitFor(() => video.readyState >= 1, 'fixture media metadata', 3000);
+        video.pause();
+        video.currentTime = firstSeek;
+        try {
+          await waitFor(() => video.isConnected && document.querySelector('video') === video &&
+            !video.seeking && Math.abs(video.currentTime-firstSeek)<0.15,
+          'fixture initial seek', 3000);
+          break;
+        } catch (error) {
+          if (attempt === 2) throw error;
+          await settle();
+        }
+      }
       const start = video.currentTime;
       const expectedJ = Math.max(0,start-10), jEvent = key('J');
       assert('J reaches the production keyboard handler', jEvent.defaultPrevented,

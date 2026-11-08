@@ -78,7 +78,17 @@ try:
             screenshot('settings')
             for theme in ('classified','classified_light','system'):
                 ev(f"(()=>{{window.Muninn.settings.theme={json.dumps(theme)};window.Muninn.applyAppearance();const n=document.querySelector('#set-favourite_carousel_days'),v=document.querySelector('#view-internal');v.scrollTop+=n.getBoundingClientRect().top-v.getBoundingClientRect().top-8;return true}})()")
-                hit=ev("(()=>{const n=document.querySelector('#set-favourite_carousel_days'),b=n.getBoundingClientRect(),hit=document.elementFromPoint(b.left+b.width/2,b.top+8);return {uncovered:hit===n,covering:hit?.className}})()")
+                hit_js="(()=>{const n=document.querySelector('#set-favourite_carousel_days'),b=n.getBoundingClientRect(),x=b.left+b.width/2,y=b.top+8,hit=document.elementFromPoint(x,y);return {uncovered:hit===n,covering:hit?.className??null,inViewport:x>=0&&y>=0&&x<innerWidth&&y<innerHeight,rect:{top:b.top,bottom:b.bottom,left:b.left,right:b.right},point:{x,y}}})()"
+                hit=ev(hit_js)
+                # Some WKWebView window sizes cannot scroll this input to the
+                # requested top offset. A null hit-test is not an overlay: the
+                # probe is offscreen. Bring it into view and retry the actual
+                # obstruction assertion; never accept a genuinely covering UI.
+                deadline=time.monotonic()+3
+                while not hit['uncovered'] and not hit['inViewport'] and time.monotonic()<deadline:
+                    ev("(()=>{document.querySelector('#set-favourite_carousel_days').scrollIntoView({block:'center',inline:'nearest'});return true})()")
+                    time.sleep(.1)
+                    hit=ev(hit_js)
                 check('scrolled settings input is not covered '+theme,hit['uncovered'],hit)
                 screenshot('settings-scroll-'+theme)
             ev("(()=>{document.querySelector('#view-internal').scrollTop=0;return true})()")
