@@ -21,7 +21,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     concurrency:
-      group: ghcr-muninn-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+      # OCI tags are immutable by policy, but GHCR does not provide a
+      # compare-and-swap on the initial push. Serialize independent Linux,
+      # macOS and PR producers so two publishers cannot both observe a
+      # missing tag and race to overwrite the same crate identity.
+      group: ghcr-muninn-publisher
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

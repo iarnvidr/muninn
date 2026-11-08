@@ -202,6 +202,8 @@ class DaggerContract(unittest.TestCase):
         self.assertIn("packages: write", self.publisher)
         self.assertIn("head_repository.full_name == 'iarnvidr/muninn'", self.publisher)
         self.assertIn("package_metadata.py", self.publisher)
+        self.assertIn("group: ghcr-muninn-publisher", self.publisher)
+        self.assertIn("cancel-in-progress: false", self.publisher)
         self.assertNotIn("pull_request" + "_target", self.publisher)
         self.assertIn("gh run download", self.publisher)
         for file in ("Dockerfile.cargo-cache", "Dockerfile.macos-candidate", "Dockerfile.check-evidence"):

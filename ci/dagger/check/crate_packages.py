@@ -266,9 +266,15 @@ def save_package(path: Path, target: Path, plan: dict, outputs: list[str]) -> di
                 tar_add_bytes(archive, "package.json", canonical(record))
                 for rel in outputs:
                     src = resolved[rel]
-                    info = archive.gettarinfo(str(src), "target/" + rel)
-                    if not info.isfile():
-                        raise ValueError(f"Non-file Cargo output: {src}")
+                    # gettarinfo() may encode a repeated inode as a hardlink,
+                    # even when `src.resolve()` is a regular file. The package
+                    # format intentionally contains only complete regular
+                    # files, including hardlinked/symlinked Cargo executables.
+                    stat = src.stat()
+                    info = tarfile.TarInfo("target/" + rel)
+                    info.size = stat.st_size
+                    info.mode = stat.st_mode & 0o777
+                    info.mtime = stat.st_mtime
                     with src.open("rb") as stream:
                         archive.addfile(info, stream)
     return {"crate": plan["crate"], "archive": path.name, "sha256": hash_file(path),
@@ -360,7 +366,12 @@ def read_package(archive: Path, plan: dict, target: Path | None = None,
                     if not src.is_file() or hash_file(src) != expected:
                         raise ValueError(f"Source changed during restoration: {rel}")
                     if mirror is None:
-                        os.utime(src, (baseline, baseline))
+                        # Many crates share the root Cargo.toml and .cargo
+                        # configuration. A later package must not move that
+                        # shared source *forward* past an earlier crate's
+                        # restored fingerprint and trigger recompilation.
+                        safe_time = min(baseline, src.stat().st_mtime)
+                        os.utime(src, (safe_time, safe_time))
                     else:
                         dst = mirror / rel
                         if any(p.is_symlink() for p in (dst, *dst.parents)):
@@ -368,7 +379,8 @@ def read_package(archive: Path, plan: dict, target: Path | None = None,
                         dst.parent.mkdir(parents=True, exist_ok=True)
                         if not dst.is_file() or hash_file(dst) != expected:
                             shutil.copyfile(src, dst)
-                        os.utime(dst, (baseline, baseline))
+                        safe_time = min(baseline, dst.stat().st_mtime)
+                        os.utime(dst, (safe_time, safe_time))
     return len(entries)
 
 

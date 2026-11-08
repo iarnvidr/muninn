@@ -147,6 +147,43 @@ class PublishedCrateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escapes target"):
             self.export()
 
+    def test_repeated_inode_after_dep_artifact_is_not_a_tar_hardlink(self):
+        MODULE.PACKAGE_BINARIES["beta"] = ("zz-beta",)
+        self.addCleanup(lambda: MODULE.PACKAGE_BINARIES.pop("beta", None))
+        executable = self.target / "debug/zz-beta"
+        os.link(self.target / "debug/deps/libbeta-2222222222222222.rlib", executable)
+        self.export()
+        with tarfile.open(self.out / "beta.tar.gz", "r:gz") as archive:
+            for member in archive.getmembers():
+                self.assertTrue(member.isfile(), member.name)
+        extracted = self.base / "hardlink-target"
+        MODULE.read_package(self.out / "beta.tar.gz", self.plan()["beta"], extracted, self.root)
+        self.assertEqual((extracted / "debug/zz-beta").read_bytes(), b"compiled-beta")
+
+    def test_later_package_cannot_age_shared_source_past_earlier_crate(self):
+        # Different crates may have been compiled several minutes apart. The
+        # shared root manifest must keep the oldest safe timestamp so an early
+        # restored .rlib remains Fresh after all 13 packages have been pulled.
+        later = time.time() + 600
+        for path in self.target.rglob("*"):
+            if path.is_file() and "gamma" in path.as_posix():
+                os.utime(path, (later, later))
+        self.export()
+        for mirror in (None, self.base / "mirror"):
+            # Separate root trees avoid leaking the first case's timestamps.
+            if mirror is None:
+                root = self.root
+            else:
+                root = self.base / "clone"
+                shutil.copytree(self.root, root, copy_function=shutil.copy)
+            plan = MODULE.plans(root, "linux-amd64", ABI)
+            target = self.base / ("native" if mirror is None else "dagger")
+            MODULE.read_package(self.out / "alpha.tar.gz", plan["alpha"], target, root, mirror)
+            shared = (mirror or root) / "Cargo.toml"
+            earlier = shared.stat().st_mtime
+            MODULE.read_package(self.out / "gamma.tar.gz", plan["gamma"], target, root, mirror)
+            self.assertLessEqual(shared.stat().st_mtime, earlier)
+
     def test_reject_archive_path_escape_before_any_target_write(self):
         self.export()
         path = self.out / "alpha.tar.gz"
