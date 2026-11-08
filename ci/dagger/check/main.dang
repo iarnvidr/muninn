@@ -44,6 +44,12 @@ type MuninnCi {
       .stdout
   }
 
+  # The same ABI that namespaces Cargo's target dir is used to resolve
+  # immutable, separately published crate packages before the check starts.
+  pub rustAbi: String! {
+    rustSystemABI
+  }
+
   let rustBase: Container! {
     rustSystem
       .withMountedCache("/cache", cargoCache)

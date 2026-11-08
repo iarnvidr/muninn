@@ -31,10 +31,22 @@ The Linux workflow exports compiled data even when an individual crate check
 fails and retains it as a data-only Actions artifact. A separate `workflow_run`
 publisher on the trusted default branch copies it to GitHub Packages (GHCR)
 using `packages:write`—PR code never has that permission. The publisher never
-checks out or runs PR scripts, and rejects fork-originating runs. Dagger's seed
+executes PR scripts; for per-crate packages it checks out the original tested
+PR merge tree **as data only**, then verifies provenance and file digests before
+publishing. Fork-originating runs remain ineligible. Dagger's seed
 can import the same PR's `pr-N` cache image or the latest green `main` image.
 macOS candidate ZIP/DMG packages are separate from Linux Cargo caches and from
 production releases. OCI cache tags never mean a check or release passed.
+
+Passing Linux and native Apple Silicon workflows now also retain thirteen
+**independently addressable compiled workspace crate OCI packages**. Their
+immutable identities bind source, local dependency and relevant third-party
+lockfile closure, compiler/system ABI and platform. Successful CI code from the
+trusted default branch verifies original PR source before any GHCR publication;
+only data is taken from the PR. The next build retrieves unchanged compiled
+crates independently and lets Cargo validate their restored fingerprints.
+These packages are distinct from the combined compilation cache and from
+signed end-user app/update release packages.
 
 After a **successful post-merge native mapping**, the trusted default-branch
 `Publish accepted Muninn preview` workflow can consume the exact accepted native

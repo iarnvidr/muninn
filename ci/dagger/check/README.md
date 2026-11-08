@@ -58,6 +58,47 @@ build scripts, proc macros and configuration outside a crate's Rust imports.
 
 ## Caching on a fresh hosted runner
 
+### Published, independently reusable compiled crate binaries
+
+Every passing Linux/Dagger check and Apple Silicon build exports one archive
+**per compiled Rust workspace crate**. A trusted `workflow_run` job verifies the
+original CI-tested Git tree and publishes each crate's real `.rlib`/`.rmeta`,
+test outputs, `.fingerprint` metadata and dep-info as a separate ORAS OCI
+artifact in GHCR:
+
+`ghcr.io/iarnvidr/muninn-crate-<crate>:<platform>-<sha256-identity>`
+
+`<crate>` is the workspace package name without `muninn-`. Identities include
+the crate source, recursively resolved local dependencies, its **own Cargo.lock
+dependency subtree** (rather than the entire lockfile), the target platform,
+and the compiler/system ABI (installed Debian packages for Linux; Rust/Xcode/
+macOS SDK/deployment target/flags for Apple Silicon). The desktop `muninn`
+identity also includes its embedded CI provenance/run, so a previous app binary
+cannot be substituted for the current PR's build.
+
+`ci/dagger/check/crate_packages.py` resolves each key before compilation and
+pulls matching packages into Cargo's target directory. On Linux it also primes
+the Dagger source mirror; on macOS it adjusts **only verified-identical source
+mtimes**. This preserves Cargo's native fingerprint decisions. A changed crate
+or dependency gets a new key; independent crates retain their keys even after
+an unrelated lockfile change. Missing packages compile normally. Linux and
+macOS use separate identities; binaries are never reused across platforms.
+
+The publisher has `packages:write` only on the trusted default branch. It
+checks the originating workflow commit (including the PR merge tree), source
+hashes, archive identity and every output digest. It checks out PR source **as
+data only** and executes only the trusted main-branch publisher. Existing
+package tags are never overwritten; failed workflows cannot publish binaries.
+These packages are compilation inputs, **not** green check receipts or app
+releases.
+
+The `test_real_cargo_reuses_published_rlibs_from_empty_target` acceptance test
+compiles three real crates, deletes all target output, restores only their
+published-style packages and checks Cargo reports `Fresh` for each. Other
+tests check dependency invalidation and malicious archive rejection.
+
+### Existing aggregate caches for third-party dependencies
+
 A named Dagger `CacheVolume` persists on **one engine**, not magically across new
 GitHub-hosted VMs. `.github/workflows/check.yml` bridges the engine volume
 to GitHub Actions' normal cache and GitHub Packages' OCI container registry:
@@ -120,7 +161,7 @@ The registry packages are:
 | `ghcr.io/iarnvidr/muninn-macos-candidate` | The ad-hoc signed Apple Silicon ZIP/DMG, native candidate archive/receipt, and native smoke evidence (not a release) | Exact `run-ID-attempt`, source `sha-<commit>`, `pr-<number>` |
 | `ghcr.io/iarnvidr/muninn-check-evidence` | Successful Dagger `check-candidate.json` receipt; **must still be verified** against the exact Git tree using existing promotion policy | Exact `run-ID-attempt`, source `sha-<commit>`, `pr-<number>` |
 
-Both packages link to the repository via OCI labels. GitHub's Package access
+The aggregate packages link to the repository via OCI labels. GitHub's Package access
 settings must grant the repository Actions read/write access. The publisher
 workflow must be present on the **default branch** before `workflow_run` fires:
 this PR can upload snapshots while unmerged, but GHCR publication starts after
@@ -188,9 +229,10 @@ still run on the GitHub-hosted Apple Silicon runner. Linux Dagger checks cannot
 replace those tests. The macOS workflow caches Cargo registry/git data and `target`
 separately, keyed on Rust, Xcode/macOS SDK, target OS/architecture, deployment target
 and relevant flags. Both release and debug steps use deployment target `14.0`.
-This native cache does not use the Linux checksum mirror: a fresh native checkout
-can still make Cargo rebuild local workspace crates, while preserving dependency
-compilation. No cross-platform compiler-cache reuse is claimed.
+This native cache does not use the Linux checksum mirror; native packages prime
+verified-identical source timestamps instead. Missing per-crate packages can
+still cause local crate recompilation, and no cross-platform binary reuse is
+claimed.
 
 `Checks / test` and `Apple Silicon build / package` retain their workflow/job names.
 Check receipts, native candidate artifacts, exact source-tree verification and

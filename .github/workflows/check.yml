@@ -26,6 +26,23 @@ jobs:
           # rather than silently skipping the required history scan.
           GOBIN="$RUNNER_TEMP" GOTOOLCHAIN=auto go install github.com/zricethezav/gitleaks/v8@v8.30.1
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner
+      # Discover the exact system libraries in the Dagger Rust container. This
+      # call shares the engine's cached image/apt stage with the later checks.
+      - name: Resolve the Dagger compiler and system ABI
+        id: crate-abi
+        uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
+        with:
+          version: 1.0.0-beta.25
+          verb: call
+          module: ci/dagger/check
+          args: rust-abi
+          dagger-flags: --progress logs
+      - name: Validate Dagger ABI identity
+        env:
+          MUNINN_ABI: ${{ steps.crate-abi.outputs.stdout }}
+        run: |
+          [[ "$MUNINN_ABI" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid Dagger system ABI'; exit 1; }
+          echo "MUNINN_LINUX_ABI=$MUNINN_ABI" >> "$GITHUB_ENV"
       # A hosted job has a fresh engine. Named Dagger volumes alone do not persist
       # across jobs: restore a seed, then export the updated volume after checks.
       - name: Restore Linux Cargo cache seed
@@ -49,6 +66,20 @@ jobs:
           GHCR_READ_TOKEN: ${{ github.token }}
           MUNINN_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash ci/dagger/check/restore-ghcr-cache.sh
+      - name: Install pinned OCI artifact client
+        env:
+          GOBIN: ${{ runner.temp }}
+        run: GOTOOLCHAIN=auto go install oras.land/oras/cmd/oras@v1.3.0
+      - name: Restore independently published, unchanged Linux crates
+        env:
+          GHCR_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_READ_TOKEN" | "$RUNNER_TEMP/oras" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          python3 ci/dagger/check/crate_packages.py pull \
+            --root . --platform linux-amd64 --abi "$MUNINN_LINUX_ABI" \
+            --target "ci/cache/linux-cargo/target/$MUNINN_LINUX_ABI" \
+            --mirror ci/cache/linux-cargo/worktree --oras "$RUNNER_TEMP/oras"
       - name: Rust, JavaScript, packaging, and publication checks
         id: dagger-checks
         uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
@@ -99,6 +130,24 @@ jobs:
         with:
           path: ci/cache/linux-cargo
           key: ${{ steps.restore-cargo.outputs.cache-primary-key }}
+      - name: Export separate compiled crate packages
+        id: crate-export
+        if: ${{ steps.dagger-checks.outcome == 'success' && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          python3 ci/dagger/check/crate_packages.py export \
+            --root . --platform linux-amd64 --abi "$MUNINN_LINUX_ABI" \
+            --target "ci/cache/linux-cargo/target/$MUNINN_LINUX_ABI" \
+            --source-root ci/cache/linux-cargo/worktree \
+            --output "$RUNNER_TEMP/muninn-crate-packages" --require-all
+      - name: Retain individually compiled crates for trusted GHCR publication
+        if: ${{ steps.crate-export.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-crates-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-crate-packages/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
       # upload-artifact normalizes file modes and times. Pack the entire cache
       # pair first, so Cargo's mtime fingerprints remain correct after GHCR.
       - name: Archive Cargo snapshot with timestamps and modes intact
