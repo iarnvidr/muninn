@@ -27,7 +27,9 @@ class DaggerContract(unittest.TestCase):
         self.assertEqual(self.workspace["modules"]["muninn-ci"]["source"], "./ci/dagger/check")
         self.assertTrue(self.workspace["modules"]["muninn-ci"]["main"])
         self.assertIn("version: " + self.config["engineVersion"].removeprefix("v"), self.linux)
-        self.assertIn("verb: check", self.linux)
+        # The pinned action must only install the CLI once. Its legacy
+        # `dagger --silent version` check fails on a second Dagger v1 call.
+        self.assertIn("run: dagger --progress logs check", self.linux)
         self.assertNotIn("args: checks --source .", self.linux)
         self.assertIn("dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602", self.linux)
 
