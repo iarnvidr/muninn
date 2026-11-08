@@ -203,7 +203,12 @@ class PreviewPublisherTests(PreviewReleaseArtifactTests):
         super().setUp()
         root = Path(__file__).resolve().parents[1]
         (self.base / "build").symlink_to(root / "build", target_is_directory=True)
-        (self.base / "src-tauri").symlink_to(root / "src-tauri", target_is_directory=True)
+        # Keep the previously accepted draft fixture independent of the current
+        # checkout version; the production recovery gate still verifies that
+        # the current on-disk Tauri version matches the draft being resumed.
+        config = self.base / "src-tauri"
+        config.mkdir()
+        (config / "tauri.conf.json").write_text(json.dumps({"version": self.version}))
         assets = self.base / "release-assets"
         assets.mkdir()
         for name, content in self.files.items():
@@ -321,6 +326,24 @@ sys.exit(0)
         self.assertEqual(final["tag"], SHA)
         self.assertFalse(final["release"]["draft"])
         self.assertEqual(len(final["release"]["assets"]), 3)
+
+    def test_refuses_older_draft_when_current_app_version_has_advanced(self):
+        state = self.state()
+        state["main"] = OTHER
+        state["tag"] = SHA
+        state["release"] = {"id": 123, "tag_name": self.tag, "draft": True,
+                            "prerelease": True,
+                            "body": f"<!-- muninn-auto-preview source={SHA} mapping={self.mapping_run_id} -->",
+                            "assets": []}
+        self.state_file.write_text(json.dumps(state))
+        # A newer checked-in application version must never permit resuming
+        # an old draft from the wrong release source.
+        (self.base / "src-tauri/tauri.conf.json").write_text('{"version":"0.2.24"}')
+        self.env["RECOVER_EXISTING_DRAFT"] = "true"
+        rejected = self.run_publisher()
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertEqual(self.state()["tag"], SHA)
+        self.assertTrue(self.state()["release"]["draft"])
 
     def test_refuses_stale_branch_and_tag_conflict(self):
         state = self.state()
