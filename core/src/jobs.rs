@@ -97,6 +97,15 @@ impl Core {
             if self.is_running(&entry.id) {
                 continue;
             }
+            if entry.origin == "background-tab" {
+                // Durable background intents use the same local HLS/cache
+                // pipeline as a watch, but only inside normal scheduler slots.
+                if let Err(error) = self.start_background_stream(&entry) {
+                    let message = self.redact_stream_text(&error.to_string(), &entry.video_id);
+                    let _ = self.video.set_status(&entry.id, STATUS_FAILED, Some(&message), self.now());
+                }
+                continue;
+            }
             // Admission: make room under both disk caps or fail the job with a clear reason.
             let estimate = estimate_bytes(&entry.variant, entry.duration_seconds, entry.expected_bytes);
             match self.enforce_caps(estimate) {

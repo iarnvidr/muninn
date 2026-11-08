@@ -2,9 +2,27 @@
 
 Search places online results above the query field and local results below it. Both use media cards with thumbnails, creators and explicit Saved/Not saved labels; the side filters remain visible. Up from the field enters online results and Down enters local results. Typing stays local; Enter fetches only the selected online type, Videos by default. Visible Videos, Live and Channels controls switch types without fetching; current-query results are cached separately. Left/Right or h/l also switch online types. Enter on an empty type heading explicitly searches that type and enters its results.
 
-The checked-in version is `0.2.22`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
+The checked-in version is `0.2.23`. A GitHub prerelease can distribute an explicitly ad-hoc-signed, non-notarized build without an Apple Developer account. A prerelease does not activate the stable updater feed at `releases/latest`. Do not treat CI's synthetic updater fixtures or uploaded workflow artifacts as owner acceptance.
 
 Settings defaults to **Stable only**. With no stable release, it explains that no stable update has been published. Choose **Stable and previews** to check published GitHub prereleases as well. This preference is local to the installation. Discovery selects the highest numeric version among the latest 100 published releases with a matching repository-owned `latest.json` asset; drafts and malformed tags are excluded. Preview manifests use their fixed release tag. The pinned verification key and signature checks apply to both channels; older and equal versions cannot be installed. A successful check with no newer version reports up to date. Preview builds may be unfinished and non-notarized; this option does not promote a build to stable.
+
+**PR builds (separate app)** is a third, explicit opt-in discovery channel. It
+requires matching successful Linux/Dagger and Apple Silicon GitHub Actions checks
+for the current head of a same-repository pull request, plus an unexpired
+`muninn-pr-preview-arm64` CI artifact. The UI identifies the PR, exact commit and
+run, then opens the GitHub Actions page for an authenticated download. It never
+feeds a PR artifact to the production updater or installs it in place: CI
+artifacts lack a release updater signature. The PR artifact is a separately
+signed `Muninn Preview.app`/DMG with bundle ID
+`io.github.iarnvidr.muninn.preview`, separate data path, and no `muninn://`
+URL registration. On the preview app, production update installation is blocked.
+This does not automatically publish a release or merge the PR. The existing
+`Stable only` and `Stable and previews` channels retain their semantics.
+
+All new native CI builds embed their actual checkout SHA, PR head, PR number,
+GitHub Actions run and channel in Settings and support diagnostics. The version
+alone does not distinguish a PR build from an older release built with the same
+SemVer. Before this change, diagnostic exports include only version/architecture.
 
 Versions through `0.2.16` use only the stable endpoint. Install `0.2.17` manually once to gain preview-channel support. The owner confirmed playback works in `0.2.16`; actual owner-Mac updater installation acceptance is still pending.
 

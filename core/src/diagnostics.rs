@@ -125,6 +125,12 @@ fn probe_media(data_dir:&Path, candidates:Vec<(String,std::path::PathBuf)>)->Val
 }
 
 pub fn export(data_dir: &Path, output: &Path) -> Result<Value> {
+    export_with_build(data_dir, output, None)
+}
+
+/// The native host can attach public build provenance without baking a CI SHA
+/// into the shared core crate (which would otherwise force its recompilation).
+pub fn export_with_build(data_dir: &Path, output: &Path, build: Option<Value>) -> Result<Value> {
     if !data_dir.is_dir() {
         return Err(Error::bad("Muninn data directory does not exist"));
     }
@@ -203,7 +209,7 @@ pub fn export(data_dir: &Path, output: &Path) -> Result<Value> {
         Err(_) => warnings.push("Video database unavailable; logs still included".into()),
     }
     database["media_probes"]=scrub(probe_media(data_dir,probe_candidates),&secrets,&home);
-    let report = json!({"schema_version":2,"app_version":crate::VERSION,"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"exported_at_ms":crate::util::now_ms(),"database":database,"warnings":warnings,"privacy":"No cookies, browser storage, raw databases, keys or media. Video IDs and error details may remain; review before sharing."});
+    let report = json!({"schema_version":2,"app_version":crate::VERSION,"build":build.map(|v| scrub(v, &secrets, &home)),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"exported_at_ms":crate::util::now_ms(),"database":database,"warnings":warnings,"privacy":"No cookies, browser storage, raw databases, keys or media. Video IDs and error details may remain; review before sharing."});
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -274,6 +280,10 @@ pub fn parse_save_dialog(success: bool, stdout: &str, stderr: &str) -> std::resu
 /// A regular file at `destination` was already confirmed for replacement by the
 /// save dialog, so it is replaced; anything else is never deleted.
 pub fn export_to(data_dir: &Path, destination: Option<&Path>) -> Result<Value> {
+    export_to_with_build(data_dir, destination, None)
+}
+
+pub fn export_to_with_build(data_dir: &Path, destination: Option<&Path>, build: Option<Value>) -> Result<Value> {
     let Some(destination) = destination else {
         return Ok(json!({"status":"cancelled"}));
     };
@@ -282,13 +292,29 @@ pub fn export_to(data_dir: &Path, destination: Option<&Path>) -> Result<Value> {
             std::fs::remove_file(destination)?;
         }
     }
-    let report = export(data_dir, destination)?;
+    let report = export_with_build(data_dir, destination, build)?;
     Ok(json!({"status":"saved","path":destination,"events":report["events"]}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn build_provenance_is_optional_and_exported_without_rebuilding_core_for_each_sha() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("provenance.zip");
+        export_with_build(dir.path(), &out, Some(json!({
+            "channel": "pr-preview", "pr_number": 43,
+            "source_sha": "9f2cfdd79c070888028dac68b89f0335bb3d7f70",
+        }))).unwrap();
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(out).unwrap()).unwrap();
+        let mut report = String::new();
+        archive.by_name("report.json").unwrap().read_to_string(&mut report).unwrap();
+        let value: Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(value["build"]["channel"], "pr-preview");
+        assert_eq!(value["build"]["pr_number"], 43);
+        assert_eq!(value["build"]["source_sha"], "9f2cfdd79c070888028dac68b89f0335bb3d7f70");
+    }
     #[test]
     fn export_is_offline_bounded_redacted_and_does_not_overwrite() {
         let dir = tempfile::tempdir().unwrap();

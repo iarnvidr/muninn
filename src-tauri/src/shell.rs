@@ -7,8 +7,9 @@
 //! until the live page is back.
 
 use muninn_core::model::TabIngest;
-use muninn_core::tabs::{self, classify_input, Face, Input, Loc, Move, Tab, HOME_URL};
-use muninn_core::{Core, Service};
+use muninn_client::{Client, tabs::{self, classify_input, Face, Input, Loc, Move, Tab, HOME_URL}};
+use muninn_core::Core;
+use muninn_server::{EmbeddedBackend, Service};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -81,6 +82,7 @@ pub struct Inner {
 
 pub struct Shell {
     pub app: AppHandle,
+    pub client: Client,
     pub core: Arc<Core>,
     pub service: Arc<Service>,
     pub inner: Mutex<Inner>,
@@ -95,7 +97,7 @@ struct TabView {
     url: String,
     face: Face,
     video_id: Option<String>,
-    playlist: Option<muninn_core::tabs::PlaylistContext>,
+    playlist: Option<tabs::PlaylistContext>,
     state: &'static str,
     live: bool,
     kind: &'static str,
@@ -112,8 +114,10 @@ fn now_ms() -> i64 {
 impl Shell {
     pub fn new(app: AppHandle, service: Arc<Service>) -> Arc<Shell> {
         let core = service.core.clone();
+        let client = Client::new(Arc::new(EmbeddedBackend::new(core.clone())));
         let shell = Arc::new(Shell {
             app,
+            client,
             core,
             service,
             inner: Mutex::new(Inner {
@@ -387,12 +391,22 @@ impl Shell {
 
     /// Opens a destination by find-or-open. `background` never takes the focus.
     fn open_dest(self: &Arc<Self>, loc: Loc, background: bool) -> u64 {
-        let (id, created) = self.find_or_open(loc);
+        let (id, created) = self.find_or_open(loc.clone());
         if background {
             if created {
                 if let Some(t) = self.lock().tabs.iter().find(|t| t.id == id).cloned() {
                     self.persist(&t, "hidden");
                 }
+                // This explicit user intent acquires a device-local copy without
+                // activating the tab, creating a webview, or reporting a play.
+                // Native cookie reads must not block the main thread.
+                let client = self.client.clone();
+                let core = self.core.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = client.prepare_background(&loc, created) {
+                        core.log_event("warn", "tab.background.acquire", json!({"error":error.to_string()}));
+                    }
+                });
             }
         } else {
             self.activate(id);

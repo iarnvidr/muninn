@@ -184,10 +184,11 @@
     return Object.assign(base, {
       meta_state, meta_error,
       playback: {
-        state: 'streaming', phase: 'caching', kind: 'hls', entry_id: seededEntry, variant: '360', height: 360, ready, progress: prog, error: null, segments: ready ? 3 : 1,
+        state: 'streaming', phase: 'caching', kind: hlsDir ? 'hls' : 'file', entry_id: seededEntry, variant: '360', height: 360, ready, progress: prog, error: null, segments: ready ? 3 : 1,
         duration_seconds: MOCK_DURATION, audio_only: false,
-        // Chromium cannot play HLS: hand it the seeded mp4 (token inside the path, like the real HLS URLs).
-        url_path: hlsDir ? '/h/' + handlers.app_boot().token + '/' + hlsDir + '/index.m3u8' : '/media/' + seededEntry + '?token=' + encodeURIComponent(handlers.app_boot().token || ''),
+        // Without a seeded HLS directory use the actual local MP4 route. The
+        // shared mediaUrl helper attaches its token; no network source is used.
+        url_path: hlsDir ? '/h/' + handlers.app_boot().token + '/' + hlsDir + '/index.m3u8' : '/media/' + seededEntry,
       },
     });
   }

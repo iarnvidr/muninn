@@ -1,0 +1,16 @@
+[package]
+name = "muninn-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Muninn client intents and navigation without a service implementation"
+
+[dependencies]
+muninn-domain = { path = "../domain" }
+muninn-protocol = { path = "../protocol" }
+muninn-navigation = { path = "../navigation" }
+
+[dev-dependencies]
+serde_json = "1"

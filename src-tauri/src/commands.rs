@@ -59,11 +59,21 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub(crate) fn build_provenance() -> Value {
+    json!({
+        "channel": option_env!("MUNINN_BUILD_CHANNEL").unwrap_or("local"),
+        "source_sha": option_env!("MUNINN_BUILD_SHA"),
+        "pr_number": option_env!("MUNINN_BUILD_PR"),
+        "pr_head_sha": option_env!("MUNINN_BUILD_PR_HEAD"),
+        "ci_run_id": option_env!("MUNINN_BUILD_RUN_ID"),
+    })
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn app_boot(shell: Sh<'_>) -> Result<Value, String> {
     Ok(json!({
         "token": shell.core.token(), "version": muninn_core::VERSION, "platform": std::env::consts::OS,
-        "data_dir": shell.core.paths.data_dir,
+        "data_dir": shell.core.paths.data_dir, "build": build_provenance(),
     }))
 }
 
@@ -119,17 +129,17 @@ pub async fn tab_open_video(
     id: u64,
     video_id: String,
     background: Option<bool>,
-    playlist: Option<muninn_core::tabs::PlaylistContext>,
+    playlist: Option<muninn_client::tabs::PlaylistContext>,
 ) -> Result<(), String> {
     if !muninn_core::util::valid_video_id(&video_id) {
         return Err("invalid video id".into());
     }
     let loc = match playlist {
         Some(playlist) if muninn_core::playlist::valid_list_id(&playlist.list_id) => {
-            muninn_core::tabs::Loc::WatchInPlaylist { video_id, playlist }
+            muninn_client::tabs::Loc::WatchInPlaylist { video_id, playlist }
         }
         Some(_) => return Err("invalid playlist context".into()),
-        None => muninn_core::tabs::Loc::Watch(video_id),
+        None => muninn_client::tabs::Loc::Watch(video_id),
     };
     shell.open_video_loc(id, loc, background.unwrap_or(false));
     Ok(())
@@ -215,7 +225,7 @@ pub async fn export_diagnostics(shell: Sh<'_>) -> Result<Value, String> {
     let data_dir = shell.core.paths.data_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let destination = choose_export_path()?;
-        muninn_core::diagnostics::export_to(&data_dir, destination.as_deref())
+        muninn_core::diagnostics::export_to_with_build(&data_dir, destination.as_deref(), Some(build_provenance()))
             .map_err(|e| e.to_string())
     })
     .await

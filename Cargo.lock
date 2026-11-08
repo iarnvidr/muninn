@@ -2246,12 +2246,15 @@ dependencies = [
 
 [[package]]
 name = "muninn"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "block2",
  "core-foundation 0.10.1",
  "gtk",
+ "muninn-cli",
+ "muninn-client",
  "muninn-core",
+ "muninn-server",
  "objc2",
  "security-framework",
  "semver",
@@ -2268,10 +2271,42 @@ dependencies = [
 ]
 
 [[package]]
-name = "muninn-core"
-version = "0.2.22"
+name = "muninn-capture"
+version = "0.2.23"
+dependencies = [
+ "muninn-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "muninn-cli"
+version = "0.2.23"
 dependencies = [
  "axum",
+ "muninn-core",
+ "muninn-server",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
+name = "muninn-client"
+version = "0.2.23"
+dependencies = [
+ "muninn-domain",
+ "muninn-navigation",
+ "muninn-protocol",
+ "serde_json",
+]
+
+[[package]]
+name = "muninn-core"
+version = "0.2.23"
+dependencies = [
  "bytes",
  "flate2",
  "futures-util",
@@ -2280,18 +2315,21 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "libc",
+ "muninn-capture",
+ "muninn-domain",
+ "muninn-media",
+ "muninn-navigation",
+ "muninn-policy",
+ "muninn-storage",
  "rcgen",
  "rusqlite",
  "rustls",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
- "thiserror 2.0.21",
  "time",
  "tokio",
  "tokio-rustls",
- "tower",
  "tower-service",
  "ureq",
  "uuid",
@@ -2299,6 +2337,95 @@ dependencies = [
  "x509-parser",
  "zip 2.4.2",
 ]
+
+[[package]]
+name = "muninn-domain"
+version = "0.2.23"
+dependencies = [
+ "libc",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "muninn-media"
+version = "0.2.23"
+dependencies = [
+ "axum",
+ "futures-util",
+ "http-body-util",
+ "muninn-domain",
+ "serde",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
+name = "muninn-navigation"
+version = "0.2.23"
+dependencies = [
+ "muninn-capture",
+ "muninn-domain",
+ "muninn-storage",
+ "serde",
+]
+
+[[package]]
+name = "muninn-policy"
+version = "0.2.23"
+dependencies = [
+ "muninn-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "muninn-protocol"
+version = "0.2.23"
+dependencies = [
+ "muninn-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "muninn-server"
+version = "0.2.23"
+dependencies = [
+ "axum",
+ "futures-util",
+ "http-body-util",
+ "muninn-core",
+ "muninn-protocol",
+ "muninn-ui-assets",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "muninn-storage"
+version = "0.2.23"
+dependencies = [
+ "flate2",
+ "muninn-domain",
+ "muninn-policy",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "muninn-ui-assets"
+version = "0.2.23"
 
 [[package]]
 name = "ndk"

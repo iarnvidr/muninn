@@ -1,16 +1,19 @@
 name: Checks
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+  packages: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -22,18 +25,103 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner
+      # A hosted job has a fresh engine. Named Dagger volumes alone do not persist
+      # across jobs: restore a seed, then export the updated volume after checks.
+      - name: Restore Linux Cargo cache seed
+        id: restore-cargo
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci/cache/linux-cargo
+          key: muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-${{ hashFiles('core/**', 'crates/**', 'src-tauri/**', 'ui/**') }}
+          # Preserve Cargo data across edits to the Dagger module itself;
+          # Cargo still checks the full compiler/source/ABI fingerprints.
+          restore-keys: |
+            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-
+            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'ci/dagger/check/main.dang', 'ci/dagger/check/dagger-module.toml', 'ci/dagger/check/run-rust.sh') }}-
+            muninn-dagger-cargo-v1-${{ runner.os }}-${{ runner.arch }}-
+      # A previous trusted-main (or same-PR) GHCR snapshot is the fallback when
+      # Actions has no Cargo output. Its contents remain data; Cargo checks all
+      # fingerprints again before executing any compiled output.
+      - name: Restore previous compiled work from GitHub Packages
+        if: steps.restore-cargo.outputs.cache-hit != 'true'
+        env:
+          GHCR_READ_TOKEN: ${{ github.token }}
+          MUNINN_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash ci/dagger/check/restore-ghcr-cache.sh
       - name: Rust, JavaScript, packaging, and publication checks
+        id: dagger-checks
         uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
         with:
-          version: 0.21.11
-          verb: call
-          module: ./ci/dagger/check
-          args: checks --source .
+          version: 1.0.0-beta.25
+          verb: check
+          # Stream what the engine exposes. Some failed Cargo execs still give
+          # only exit 101, so the desktop check also writes a retained log.
+          dagger-flags: --progress logs
+      - name: Export Linux Cargo cache for the next hosted run
+        id: cargo-export
+        if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
+        run: |
+          dagger -m ci/dagger/check api call export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
+      # Preserve failing logs separately, so a cache restored into a later run
+      # cannot accidentally report a previous run's error as current evidence.
+      - name: Separate diagnostic logs from reusable compilation cache
+        if: ${{ always() && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          if [[ -d ci/cache/linux-cargo/check-logs ]]; then
+            mv ci/cache/linux-cargo/check-logs "$RUNNER_TEMP/muninn-check-logs"
+          fi
+      - name: Report failing desktop crate diagnostics
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          log="$RUNNER_TEMP/muninn-check-logs/desktop-tests.log"
+          if [[ -f "$log" ]]; then
+            echo '::group::Linux Tauri desktop Cargo output (last 200 lines)'
+            tail -n 200 "$log"
+            echo '::endgroup::'
+          else
+            echo 'Desktop Cargo log absent; the check may have failed before Cargo started.'
+          fi
+      - name: Retain failing desktop crate log
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-check-logs/desktop-tests.log
+          if-no-files-found: warn
+          retention-days: 14
+      # Explicit restore/save (not the combined cache action) retains compiled
+      # output even on failed checks. Cache entries are PR-scoped and remain
+      # compilation inputs, never substitute green test receipts.
+      - name: Preserve compiled Cargo cache after checks
+        if: ${{ always() && steps.cargo-export.outcome == 'success' && steps.restore-cargo.outputs.cache-hit != 'true' && !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci/cache/linux-cargo
+          key: ${{ steps.restore-cargo.outputs.cache-primary-key }}
+      # upload-artifact normalizes file modes and times. Pack the entire cache
+      # pair first, so Cargo's mtime fingerprints remain correct after GHCR.
+      - name: Archive Cargo snapshot with timestamps and modes intact
+        id: cargo-archive
+        if: ${{ always() && steps.cargo-export.outcome == 'success' && !cancelled() }}
+        run: |
+          set -euo pipefail
+          tar --format=posix --use-compress-program='zstd -1 -T2' -cf "$RUNNER_TEMP/muninn-linux-cargo-snapshot.tar.zst" -C ci/cache/linux-cargo .
+      # A trusted workflow_run publisher will copy this data-only snapshot to
+      # GitHub Packages, including when an individual crate test failed.
+      - name: Retain Linux compilation snapshot for GHCR publication
+        if: ${{ always() && steps.cargo-archive.outcome == 'success' && !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-linux-cargo-snapshot.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
       - name: Record Dagger check receipt
-        if: github.event_name == 'pull_request'
+        if: ${{ github.event_name == 'pull_request' && steps.dagger-checks.outcome == 'success' }}
         run: python3 build/release_candidate.py create-check --root "$GITHUB_WORKSPACE"
       - name: Upload Dagger check receipt
-        if: github.event_name == 'pull_request'
+        if: ${{ github.event_name == 'pull_request' && steps.dagger-checks.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: muninn-check-candidate-${{ github.run_id }}-${{ github.run_attempt }}
@@ -41,4 +129,5 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Publication boundary checks (Git metadata required)
+        if: ${{ always() && !cancelled() }}
         run: python3 build/check_publication.py

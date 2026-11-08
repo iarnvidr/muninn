@@ -1,6 +1,6 @@
 //! The data behind Muninn's own watch view: make sure metadata, related videos,
 //! comments and a playable source exist for a video, and report how far along
-//! each is. Cache first: a finished cache entry always wins over streaming.
+//! each is. Cache-only: a finished cache entry wins over growing disk-backed HLS.
 
 use crate::content::KIND_META;
 use crate::engine::Core;
@@ -12,6 +12,52 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 impl Core {
+    /// Persist an explicit background-tab acquisition without starting playback.
+    /// The ordinary scheduler admits this queue entry into the local HLS/cache
+    /// pipeline when capacity is available; opening many tabs never drops work
+    /// at the foreground stream limit or preempts an existing download.
+    pub fn prepare_background_watch(self: &Arc<Self>, video_id: &str, audio_only: bool) -> Result<Value> {
+        if !valid_video_id(video_id) {
+            return Err(Error::bad("invalid video_id"));
+        }
+        self.resume_cleanup(video_id)?;
+        // Share admission with foreground opens and other background intents.
+        let _guard = self.streams.start_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = self.best_complete_entry(video_id) {
+            self.video.touch(&entry.id, self.now())?;
+            return Ok(self.watch_status(video_id));
+        }
+        if self.stream_job(video_id).is_some_and(|job| {
+            matches!(job.state.lock().unwrap_or_else(|e| e.into_inner()).phase.as_str(),
+                "resolving" | "starting" | "caching" | "done")
+        }) {
+            return Ok(self.watch_status(video_id));
+        }
+        if let Some(entry) = self.video.entries_for_video(video_id)?.into_iter().find(|entry| {
+            matches!(entry.status.as_str(), "queued" | "downloading") || self.is_running(&entry.id)
+        }) {
+            self.video.touch(&entry.id, self.now())?;
+            self.wake_scheduler();
+            return Ok(self.watch_status(video_id));
+        }
+        let quality = if audio_only { crate::quality::Quality::Audio }
+            else { crate::stream::variant_for_height(self.video.settings().watch_height) };
+        let facts = self.facts_for(video_id);
+        let decision = crate::rules::retention_for_request(&self.video.rules(), &facts);
+        // A failed foreground/manual attempt may own this same row. Retag the
+        // retry before create_entry wakes the scheduler; never retag a worker.
+        if let Some(plan) = crate::ytdlp::plan_format(quality, self.tools().ffmpeg.found) {
+            let id = crate::videodb::entry_id(video_id, plan.variant.as_str());
+            if let Some(entry) = self.video.get_entry(&id)? {
+                if matches!(entry.status.as_str(), "failed" | "canceled") && !self.is_running(&id) {
+                    self.video.set_origin(&id, "background-tab")?;
+                }
+            }
+        }
+        self.create_entry(&facts, quality, &decision, "background-tab", false)?;
+        Ok(self.watch_status(video_id))
+    }
+
     /// Starts whatever is missing and returns the current status.
     pub fn watch_open(self: &Arc<Self>, video_id: &str, audio_only: bool) -> Result<Value> {
         if !valid_video_id(video_id) {
@@ -125,6 +171,85 @@ mod tests {
     use super::*;
     use crate::engine::testutil::test_core;
     use crate::videodb::STATUS_COMPLETE;
+
+    #[test]
+    fn background_intents_are_durable_beyond_four_tabs_and_never_report_playback() {
+        let (dir, core) = test_core(None, None);
+        let mut settings = core.video.settings();
+        settings.auto_prefetch = false;
+        settings.offline_mode = true;
+        core.apply_settings(&settings).unwrap();
+        core.tools.write().unwrap().ffmpeg.found = true;
+        let ids: Vec<String> = (0..8).map(|index| format!("video{index:06}")).collect();
+        for id in &ids {
+            assert_eq!(core.prepare_background_watch(id, false).unwrap()["playback"]["ready"], false);
+        }
+        let repeats: Vec<_> = (0..8).map(|_| {
+            let core = core.clone();
+            let id = ids[0].clone();
+            std::thread::spawn(move || core.prepare_background_watch(&id, false).unwrap())
+        }).collect();
+        for thread in repeats { thread.join().unwrap(); }
+        let entries = core.video.list_entries().unwrap();
+        assert_eq!(entries.len(), 8);
+        assert!(entries.iter().all(|entry| entry.status == "queued" && entry.origin == "background-tab" && entry.variant == "720"));
+        core.start_queued();
+        assert_eq!(core.running_count(), 0, "offline intent stays pending without network");
+        assert!(core.streams.jobs.lock().unwrap().is_empty());
+        assert!(core.meta_fetches.lock().unwrap().is_empty());
+        assert!(core.pending_opens(0).1.is_empty(), "background intent must not request focus");
+        for id in &ids { assert!(core.content.get_progress(id).unwrap().is_none()); }
+        drop(core);
+        let reopened = Core::open(crate::CoreConfig {
+            data_dir: dir.path().to_path_buf(), tool_dirs: Some(vec![]), ..Default::default()
+        }).unwrap();
+        assert_eq!(reopened.video.entries_with_status("queued").unwrap().len(), 8);
+        assert!(reopened.pending_opens(0).1.is_empty());
+        assert_eq!(reopened.running_count(), 0);
+    }
+
+    #[test]
+    fn background_intent_reuses_kept_cache_without_new_work_or_progress() {
+        let (_dir, core) = test_core(None, None);
+        let mut settings = core.video.settings();
+        settings.offline_mode = true;
+        core.apply_settings(&settings).unwrap();
+        let path = core.paths.library_dir.join("aaaaaaaaaaa.360.mp4");
+        std::fs::write(&path, b"synthetic cache").unwrap();
+        let mut entry = EntryRow::new("aaaaaaaaaaa", "360", "360", "manual", 1);
+        entry.status = STATUS_COMPLETE.into();
+        entry.protected = true;
+        entry.file_path = Some(path.display().to_string());
+        entry.ext = Some("mp4".into());
+        core.video.insert_entry(&entry).unwrap();
+        let status = core.prepare_background_watch("aaaaaaaaaaa", false).unwrap();
+        assert_eq!(status["playback"]["url_path"], "/media/aaaaaaaaaaa.360");
+        let entries = core.video.entries_for_video("aaaaaaaaaaa").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].protected && path.exists());
+        assert!(core.stream_job("aaaaaaaaaaa").is_none());
+        assert!(core.content.get_progress("aaaaaaaaaaa").unwrap().is_none());
+        assert!(core.pending_opens(0).1.is_empty());
+    }
+
+    #[test]
+    fn background_intent_reuses_existing_queue_and_retags_only_a_stopped_retry() {
+        let (_dir, core) = test_core(None, None);
+        core.tools.write().unwrap().ffmpeg.found = true;
+        let mut entry = EntryRow::new("aaaaaaaaaaa", "720", "720", "manual", 1);
+        entry.protected = true;
+        core.video.insert_entry(&entry).unwrap();
+        core.prepare_background_watch("aaaaaaaaaaa", false).unwrap();
+        assert_eq!(core.video.get_entry(&entry.id).unwrap().unwrap().origin, "manual");
+        core.video.set_status(&entry.id, "canceled", None, core.now()).unwrap();
+        core.prepare_background_watch("aaaaaaaaaaa", false).unwrap();
+        let revived = core.video.get_entry(&entry.id).unwrap().unwrap();
+        assert_eq!((revived.origin.as_str(), revived.status.as_str()), ("background-tab", "queued"));
+        assert!(revived.protected);
+        assert_eq!(core.video.entries_for_video("aaaaaaaaaaa").unwrap().len(), 1);
+        assert!(core.content.get_progress("aaaaaaaaaaa").unwrap().is_none());
+        assert!(core.prepare_background_watch("../invalid", false).is_err());
+    }
 
     #[test]
     fn player_completion_policy_uses_current_settings_and_matching_rules() {

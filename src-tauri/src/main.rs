@@ -15,7 +15,8 @@ mod trust;
 mod trust_mac;
 mod updater;
 
-use muninn_core::{CoreConfig, Service};
+use muninn_core::CoreConfig;
+use muninn_server::Service;
 use shell::Shell;
 use std::sync::Arc;
 use tauri::{Manager, WindowEvent};
@@ -176,7 +177,7 @@ fn open_app_links(app: &tauri::AppHandle, links: impl IntoIterator<Item = impl A
 fn main() {
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() == Some("--cli") {
-        if let Err(e) = muninn_core::cli::run(args.collect()) {
+        if let Err(e) = muninn_cli::run(args.collect()) {
             eprintln!("muninn: {e}");
             std::process::exit(1);
         }

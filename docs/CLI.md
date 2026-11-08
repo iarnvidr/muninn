@@ -18,7 +18,10 @@ All successful results are JSON. Errors go to stderr and exit nonzero. No pairin
 step or token arguments: the client finds the running app through its private data
 directory. `--data-dir DIR` or `MUNINN_DATA_DIR` selects a different instance.
 The CLI never starts another service or edits a running app's SQLite databases.
-On Linux, `cargo run -p muninn-core --bin muninn-cli -- …` runs the same client.
+On Linux, `cargo run -p muninn-cli --bin muninn-cli -- …` runs the same client.
+The implementation lives in `crates/cli`; both the standalone command and the
+desktop app's `--cli` entry point call that library. This package separation does
+not add a second service process or change the existing app/data-directory layout.
 
 ## Cache, keep and cleanup
 

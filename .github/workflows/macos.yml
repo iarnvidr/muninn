@@ -11,6 +11,18 @@ jobs:
   package:
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      # Match release and debug compilation; do not accidentally invalidate one
+      # set of artifacts with a different deployment target in the next step.
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      CARGO_INCREMENTAL: '0'
+      # Embed the exact checkout and PR head so diagnostics distinguish builds
+      # even when the application SemVer is intentionally unchanged.
+      MUNINN_BUILD_CHANNEL: ${{ github.event_name == 'pull_request' && 'pr' || 'ci' }}
+      MUNINN_BUILD_SHA: ${{ github.sha }}
+      MUNINN_BUILD_PR: ${{ github.event.pull_request.number || '' }}
+      MUNINN_BUILD_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+      MUNINN_BUILD_RUN_ID: ${{ github.run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -27,6 +39,31 @@ jobs:
         run: brew install meson ninja pkgconf
       - name: Select the pinned Rust toolchain
         run: rustup show active-toolchain
+      - name: Fingerprint the native compiler and SDK
+        id: rust-cache-abi
+        run: |
+          set -euo pipefail
+          fingerprint="$(
+            {
+              rustc -vV
+              cargo -vV
+              xcodebuild -version
+              xcrun --sdk macosx --show-sdk-version
+              printf '%s\n' "$MACOSX_DEPLOYMENT_TARGET" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}"
+            } | shasum -a 256 | cut -d ' ' -f 1
+          )"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Restore native Cargo downloads and compiled artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: muninn-native-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-cache-abi.outputs.fingerprint }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'build/build-native-macos.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-${{ hashFiles('core/**', 'crates/**', 'src-tauri/**', 'ui/**') }}
+          restore-keys: |
+            muninn-native-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-cache-abi.outputs.fingerprint }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'build/build-native-macos.sh') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'core/Cargo.toml', 'crates/*/Cargo.toml', 'src-tauri/Cargo.toml') }}-
+            muninn-native-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-cache-abi.outputs.fingerprint }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'build/build-native-macos.sh') }}-
       # This release build/package and its launch-health check intentionally do not
       # run the debug-only e2e harness.
       - name: Build, test and sign release artifact
@@ -101,6 +138,28 @@ jobs:
         with:
           name: muninn-native-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/muninn/native-candidate/*
+          if-no-files-found: error
+          retention-days: 90
+      # A separate user-facing PR application; do not change the exact
+      # Muninn.app/native receipt used by the trusted release-promotion gate.
+      - name: Build separately identified Muninn Preview app
+        if: github.event_name == 'pull_request'
+        run: bash build/build-preview-macos.sh "$RUNNER_TEMP/muninn" "$RUNNER_TEMP/muninn-preview" "$RUNNER_TEMP/muninn/corresponding-source"
+      - name: Smoke isolated PR Preview launch
+        if: github.event_name == 'pull_request'
+        env:
+          SMOKE_EVIDENCE_DIR: ${{ runner.temp }}/muninn-preview-evidence
+        run: bash build/smoke-native-macos.sh "$RUNNER_TEMP/muninn-preview/Muninn Preview.app"
+      - name: Retain independently installable PR Preview
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-pr-preview-arm64
+          path: |
+            ${{ runner.temp }}/muninn-preview/Muninn_PR*_macos-arm64.dmg
+            ${{ runner.temp }}/muninn-preview/Muninn_PR*_macos-arm64.zip
+            ${{ runner.temp }}/muninn-preview/Muninn_PR*_macos-arm64.zip.sha256
+            ${{ runner.temp }}/muninn-preview-evidence/**
           if-no-files-found: error
           retention-days: 90
 # Deliberately no automatic GitHub release. See docs/PUBLICATION.md before releasing.

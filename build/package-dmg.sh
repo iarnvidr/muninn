@@ -2,6 +2,8 @@
 # Package the verified app and corresponding sources as one public download.
 set -euo pipefail
 app="$(cd "$1" && pwd)"
+app_name="$(basename "$app")"
+[[ "$app_name" == 'Muninn.app' || "$app_name" == 'Muninn Preview.app' ]] || { echo 'Unexpected application name' >&2; exit 2; }
 sources="$(cd "$2" && pwd)"
 image_dir="$(dirname "$3")"
 mkdir -p "$image_dir"
@@ -22,15 +24,15 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$stage/payload" "$mount"
-ditto "$app" "$stage/payload/Muninn.app"
+ditto "$app" "$stage/payload/$app_name"
 ditto "$sources" "$stage/payload/Corresponding Source"
 ln -s /Applications "$stage/payload/Applications"
-hdiutil create -volname Muninn -srcfolder "$stage/payload" -fs HFS+ -format UDZO -ov "$image"
+hdiutil create -volname "${app_name%.app}" -srcfolder "$stage/payload" -fs HFS+ -format UDZO -ov "$image"
 hdiutil verify "$image"
 hdiutil attach "$image" -readonly -nobrowse -mountpoint "$mount"
 attached=1
-codesign --verify --deep --strict "$mount/Muninn.app"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$mount/Muninn.app/Contents/Info.plist")" = "$version"
+codesign --verify --deep --strict "$mount/$app_name"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$mount/$app_name/Contents/Info.plist")" = "$version"
 test -L "$mount/Applications"
 test "$(readlink "$mount/Applications")" = /Applications
 python3 - "$mount/Corresponding Source" <<'PY'

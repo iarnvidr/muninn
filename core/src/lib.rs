@@ -1,10 +1,10 @@
-//! Muninn core: caches, rules, scheduler, yt-dlp worker and the localhost server.
-//! Plain Rust, no GUI: it builds and tests on Linux; the Tauri app embeds it.
+//! Muninn application core: caches, rules, scheduler and yt-dlp workers.
+//! HTTP, UI assets and the native shell are adapters outside this crate.
 
-pub mod browsing;
+pub use muninn_storage::browsing;
 pub mod automation;
 pub mod organization;
-pub mod playlist;
+pub use muninn_domain::playlist;
 pub mod search;
 pub mod logging;
 pub mod diagnostics;
@@ -18,49 +18,34 @@ mod offline;
 mod featured;
 mod account;
 pub mod youtube_session;
-pub mod cli;
 pub mod capture;
 pub mod ca;
-pub mod content;
+pub use muninn_storage::content;
 pub mod engine;
-pub mod error;
-pub mod eviction;
-pub mod extract;
+pub use muninn_domain::error;
+pub use muninn_policy::eviction;
+pub use muninn_capture::extract;
 pub mod ingest;
 pub mod innertube;
 pub mod jobs;
-pub mod merge;
-pub mod migrations;
-pub mod model;
+pub use muninn_capture::merge;
+pub use muninn_storage::migrations;
+pub use muninn_domain::model;
 pub mod proxy;
-pub mod quality;
-pub mod range;
-pub mod rules;
-pub mod server;
-pub mod settings;
+pub use muninn_domain::quality;
+pub use muninn_media::range;
+pub use muninn_policy::rules;
+mod service_ops;
+pub use muninn_domain::settings;
 pub mod stream;
-pub mod stream_diag;
-pub mod tabs;
+pub use muninn_media::stream_diag;
+pub use muninn_navigation as tabs;
 pub mod tools_setup;
-pub mod ui_assets;
-pub mod util;
-pub mod videodb;
+pub use muninn_domain::util;
+pub use muninn_storage::videodb;
 pub mod views;
 pub mod watch;
-pub mod ytdlp;
+pub use muninn_media::ytdlp;
 
 pub use engine::{Core, CoreConfig, OpenRequest, Paths, DEFAULT_PORT, VERSION};
 pub use error::{Error, Result};
-pub use server::Service;
-
-#[cfg(test)]
-mod version_tests {
-    /// The shell's tauri.conf.json, the Cargo workspace and the core report one version.
-    #[test]
-    fn app_and_core_versions_agree() {
-        let conf: serde_json::Value = serde_json::from_str(include_str!("../../src-tauri/tauri.conf.json")).unwrap();
-        assert_eq!(conf["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(conf["identifier"], "io.github.iarnvidr.muninn");
-        assert_eq!(conf["bundle"]["macOS"]["minimumSystemVersion"], "14.0");
-    }
-}

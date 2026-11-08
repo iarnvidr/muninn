@@ -1,0 +1,22 @@
+[package]
+name = "muninn-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared Muninn models, settings, quality and native utility contracts"
+
+[features]
+default = []
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

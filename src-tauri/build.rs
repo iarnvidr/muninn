@@ -1,4 +1,7 @@
 fn main() {
+    for key in ["MUNINN_BUILD_CHANNEL", "MUNINN_BUILD_SHA", "MUNINN_BUILD_PR", "MUNINN_BUILD_PR_HEAD", "MUNINN_BUILD_RUN_ID"] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
     // Zig's Intel Mach-O linker may leave no room for LC_CODE_SIGNATURE.
     // Reserve header space so the cross-built executable can be signed.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {

@@ -1,15 +1,24 @@
 # Muninn architecture
 
-This overview describes the desktop implementation at version **0.2.22**. Muninn
+This overview describes the desktop implementation at version **0.2.23**. Muninn
 combines a native YouTube browser, a local content library and its own video
 player. The Rust service runs **inside the desktop app**. WebKit and the bundled
 media helpers can run in separate processes; a separate Muninn server deployment
 is not required.
 
+The Cargo workspace separates reusable libraries, the client, the server adapter
+and the native composition root. This is an internal rebuild of the existing app,
+not a new UI or a switch to a hosted service. See [Modular runtime and acceptance](MODULAR_RUNTIME.md)
+for crate ownership, build/cache boundaries and the required parity checks.
+
 The central architectural distinction is between **capturing browser content**
 and **fetching media for playback**. They use separate network paths. The browser
 capture proxy collects feeds and metadata; the playback pipeline downloads video
-and audio through its own clients and exposes local playback URLs.
+and audio through its own clients. **Playback is always from the device's local
+cache**, either a completed file or already-written segments of a growing HLS
+cache. Neither upstream media URLs nor a future remote server's media URLs are
+valid player sources. Downloading and playback can overlap; that does not make
+remote playback a fallback.
 
 ## Components
 
@@ -40,16 +49,21 @@ flowchart TB
 
 | Component | Responsibility | Main source |
 | --- | --- | --- |
-| UI | Plain HTML/JS/CSS, including the local player and universal search; embedded in the binary | [`ui/`](../ui/), [`ui_assets.rs`](../core/src/ui_assets.rs) |
+| UI | Plain HTML/JS/CSS, including the local player and universal search; embedded by a separate asset crate | [`ui/`](../ui/), [`muninn-ui-assets`](../crates/ui-assets/src/lib.rs) |
 | Tauri shell | Native windows/webviews, tab activation and hibernation, menus, video handoff and certificate trust | [`main.rs`](../src-tauri/src/main.rs), [`shell.rs`](../src-tauri/src/shell.rs), [`commands.rs`](../src-tauri/src/commands.rs) |
-| Local service | Serves the UI, authenticated control API, thumbnails, local media and streaming endpoints | [`server.rs`](../core/src/server.rs) |
+| Client and watch contract | Client intents and shared navigation; explicit acquisition/status/Keep operations; validates cache-only playback descriptors | [`muninn-client`](../crates/client/src/lib.rs), [`muninn-protocol`](../crates/protocol/src/lib.rs), [`muninn-navigation`](../crates/navigation/src/lib.rs) |
+| Local service | Serves the UI, authenticated control API, thumbnails, local media and streaming endpoints; embeds the application core | [`muninn-server`](../crates/server/src/lib.rs) |
 | Capture proxy | Routes browser connections, terminates selected TLS connections and copies eligible responses | [`proxy.rs`](../core/src/proxy.rs), [`ca.rs`](../core/src/ca.rs) |
-| Content extraction | Classifies YouTube responses and stores feeds, metadata, recommendations and comments | [`capture.rs`](../core/src/capture.rs), [`extract.rs`](../core/src/extract.rs), [`ingest.rs`](../core/src/ingest.rs) |
-| Media pipeline | Cache-first watch state, play while caching, downloads and local compatibility playback | [`watch.rs`](../core/src/watch.rs), [`stream.rs`](../core/src/stream.rs), [`jobs.rs`](../core/src/jobs.rs), [`local_playback.rs`](../core/src/local_playback.rs) |
-| Policy and persistence | Settings, rules, subscriptions, organization, retention and eviction | [`engine.rs`](../core/src/engine.rs), [`settings.rs`](../core/src/settings.rs), [`rules.rs`](../core/src/rules.rs), [`eviction.rs`](../core/src/eviction.rs) |
+| Content extraction | Classifies YouTube responses and stores feeds, metadata, recommendations and comments | [`capture.rs`](../core/src/capture.rs), [`muninn-capture`](../crates/capture/src/lib.rs), [`ingest.rs`](../core/src/ingest.rs) |
+| Media pipeline | Cache-only watch state, play while caching, downloads and local compatibility playback | [`watch.rs`](../core/src/watch.rs), [`stream.rs`](../core/src/stream.rs), [`jobs.rs`](../core/src/jobs.rs), [`local_playback.rs`](../core/src/local_playback.rs), [`muninn-media`](../crates/media/src/lib.rs) |
+| Policy and persistence | Shared models/settings, rules and eviction decisions, SQLite stores; core coordinates subscriptions, organization and lifecycle | [`muninn-domain`](../crates/domain/src/lib.rs), [`muninn-policy`](../crates/policy/src/lib.rs), [`muninn-storage`](../crates/storage/src/lib.rs), [`engine.rs`](../core/src/engine.rs) |
 
-The same core library also supports the headless `muninn-service` binary. The
-desktop app additionally supplies native browser, cookie-store and UI hooks.
+The `muninn-server` package also provides the existing headless `muninn-service`
+binary. It still binds to loopback; extracting the package does not enable remote
+access. The desktop app supplies native browser, cookie-store and UI hooks and
+composes the client and server roles in the same process. The CLI implementation
+is a separate [`muninn-cli`](../crates/cli/src/lib.rs) library used by both the
+standalone CLI and the desktop executable's existing `--cli` entry point.
 
 ## The two local listeners
 
@@ -190,6 +204,21 @@ The watch flow is:
 4. FFmpeg writes fragmented-MP4 HLS for startup playback and a final MP4 cache
    file in the same pipeline. The player reads playlists and segments through
    local `/h/…` URLs; once the file is complete, later playback uses that file.
+
+The range feeder in step 3 is an input to the downloader, **not a player route**.
+The watch contract only accepts `/media/{entry_id}` and
+`/h/{token}/{job}/index.m3u8` as playable cache paths. The UI also rejects a
+non-loopback origin, arbitrary URLs and internal feeder paths in its media URL
+builder. A syntactically valid path is not proof that bytes exist; the existing
+watch readiness checks and file-serving handlers still determine availability.
+
+Opening a new video in a background tab requests acquisition without focusing
+that tab or starting playback. Reusing its tab does not enqueue another request.
+Restoring/importing sleeping tabs and browsing a feed are not equivalent to this
+explicit video-opening intent. The existing player remains unchanged: **Keep**
+protects the current copy without pausing, replacing the source or requesting
+a different-quality download. Completion/cleanup settings retain their current
+defaults and configured overrides; the crate split adds no new policy setup.
 
 Consequently, blocking browser requests to `googlevideo.com` does not block
 Muninn's media downloader: that downloader has its own HTTP path. The proxy's

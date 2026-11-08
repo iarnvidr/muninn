@@ -1,0 +1,16 @@
+[package]
+name = "muninn-navigation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure tab, URL and restoration model shared by Muninn adapters"
+
+[dependencies]
+muninn-domain = { path = "../domain" }
+muninn-capture = { path = "../capture" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+muninn-storage = { path = "../storage" }

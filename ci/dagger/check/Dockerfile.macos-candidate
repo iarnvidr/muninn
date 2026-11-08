@@ -1,0 +1,5 @@
+# Ad-hoc signed test builds, not notarized production releases.
+FROM scratch
+LABEL org.opencontainers.image.source="https://github.com/iarnvidr/muninn"
+LABEL io.muninn.artifact.kind="macos-candidate-v1"
+COPY . /artifacts/

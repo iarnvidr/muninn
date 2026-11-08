@@ -20,6 +20,9 @@ url = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 muninn-core = { path = "../core" }
+muninn-client = { path = "../crates/client" }
+muninn-server = { path = "../crates/server" }
+muninn-cli = { path = "../crates/cli" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"

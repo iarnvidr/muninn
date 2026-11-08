@@ -16,11 +16,13 @@ app="$(cd "$(dirname "$app")" && pwd)/$(basename "$app")"
 plutil -lint "$app/Contents/Info.plist" | tee "$evidence/plist.txt"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist" > "$evidence/executable-name.txt"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" > "$evidence/version.txt"
+display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Contents/Info.plist")"
+[[ "$display_name" == 'Muninn' || "$display_name" == 'Muninn Preview' ]] || { echo 'Unexpected app identity' >&2; exit 2; }
 /usr/bin/lipo "$app/Contents/MacOS/$(cat "$evidence/executable-name.txt")" -verify_arch arm64
 /usr/bin/codesign --verify --deep --strict "$app"
 # App is purpose-built for developer-hosted interactive session; never import accounts or trigger login.
 open -n "$app"
-cleanup() { /usr/bin/osascript -e 'tell application "Muninn" to quit' >/dev/null 2>&1 || true; }
+cleanup() { /usr/bin/osascript -e "tell application \"$display_name\" to quit" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 python3 - "$evidence" <<'PY'
 import json,sys,time,urllib.request

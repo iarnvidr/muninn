@@ -32,13 +32,13 @@ pub fn youtube_target(link: &str) -> Option<Url> {
         || !target.username().is_empty()
         || target.password().is_some()
         || target.port().is_some()
-        || !(host == "youtu.be" || muninn_core::tabs::is_youtube_host(host))
+        || !(host == "youtu.be" || muninn_client::tabs::is_youtube_host(host))
     {
         return None;
     }
     // The normal tab router sends non-video short links back to the browser.
     // Reject those here rather than create a handoff loop with an external caller.
-    if host == "youtu.be" && muninn_core::tabs::video_id_of_url(target.as_str()).is_none() {
+    if host == "youtu.be" && muninn_client::tabs::video_id_of_url(target.as_str()).is_none() {
         return None;
     }
     Some(target)
@@ -120,8 +120,8 @@ mod tests {
         ] {
             let target = youtube_target(&app_link(target)).unwrap();
             assert!(!matches!(
-                muninn_core::tabs::classify_input(target.as_str()),
-                muninn_core::tabs::Input::External(_)
+                muninn_client::tabs::classify_input(target.as_str()),
+                muninn_client::tabs::Input::External(_)
             ));
         }
     }
