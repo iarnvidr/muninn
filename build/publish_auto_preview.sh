@@ -149,7 +149,14 @@ if [[ "$(jq -r '.draft' "$state/release.json")" == true ]]; then
         --data-binary "@release-assets/$name" \
         "https://uploads.github.com/repos/$GH_REPO/releases/$release_id/assets?name=$name" \
         > "$state/uploaded-asset.json"
-      gh api "repos/$GH_REPO/releases/$release_id" > "$state/release.json"
+      # GitHub can expose a newly uploaded asset before its digest is filled in.
+      # Wait briefly for the server-side hash, then fail closed on a mismatch.
+      for attempt in {1..12}; do
+        gh api "repos/$GH_REPO/releases/$release_id" > "$state/release.json"
+        remote_digest="$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest // empty' "$state/release.json")"
+        [[ -n "$remote_digest" ]] && break
+        sleep 1
+      done
       verify_remote_assets
     fi
   done
