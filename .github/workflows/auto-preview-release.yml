@@ -5,7 +5,7 @@ on:
     types: [completed]
 
 # This is a trusted workflow_run consumer of the post-merge acceptance mapping,
-# never a pull_request_target job and never an unreviewed PR build publisher.
+# never a privileged PR-event job and never an unreviewed PR build publisher.
 # Serial publication prevents two successive accepted merges racing on a tag.
 concurrency:
   group: muninn-accepted-preview-publisher
