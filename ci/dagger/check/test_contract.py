@@ -179,6 +179,7 @@ class DaggerContract(unittest.TestCase):
 
     def test_mac_cache_is_native_and_preserves_smoke_workflow(self):
         self.assertIn("runs-on: macos-15", self.macos)
+        self.assertIn("      - '.github/workflows/package-snapshots.yml'", self.macos)
         self.assertIn("MACOSX_DEPLOYMENT_TARGET: '14.0'", self.macos)
         for required in ("rustc -vV", "xcodebuild -version", "--show-sdk-version",
                          "~/.cargo/registry", "~/.cargo/git", "muninn-native-cargo-v1-",

@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/macos.yml'
+      - '.github/workflows/package-snapshots.yml'
       - 'ci/dagger/check/crate_packages.py'
   workflow_dispatch:
 permissions:
