@@ -9,6 +9,12 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 pub const ENDPOINT: &str =
     "https://github.com/iarnvidr/muninn/releases/latest/download/latest.json";
+const REPOSITORY: &str = "iarnvidr/muninn";
+const PREVIEW_IDENTIFIER: &str = "io.github.iarnvidr.muninn.preview";
+
+fn is_preview_app(app: &AppHandle) -> bool {
+    app.config().identifier == PREVIEW_IDENTIFIER
+}
 
 /// Isolated updater fixture overrides are intentionally unavailable in release builds.
 pub fn plugin_builder() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config> {
@@ -41,6 +47,100 @@ fn release_endpoint(releases: &serde_json::Value, previews: bool) -> Result<Stri
         } else {
             "No stable release has been published yet. Select ‘Stable and previews’ to receive preview updates.".into()
         })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrBuild {
+    number: u64,
+    run_id: u64,
+    sha: String,
+}
+
+/// PR builds are a discovery channel, never a Tauri updater feed. CI artifacts
+/// aren't signed updater payloads and must not replace an installed application.
+fn pr_build_candidates(listing: &serde_json::Value) -> Vec<PrBuild> {
+    let mut candidates = Vec::new();
+    if let Some(runs) = listing["workflow_runs"].as_array() {
+        for run in runs {
+            if run["event"] != "pull_request" || run["status"] != "completed"
+                || run["conclusion"] != "success"
+                || run["path"] != ".github/workflows/macos.yml"
+                || run["head_repository"]["full_name"] != REPOSITORY
+            {
+                continue;
+            }
+            let (Some(run_id), Some(sha), Some(prs)) = (
+                run["id"].as_u64(), run["head_sha"].as_str(),
+                run["pull_requests"].as_array(),
+            ) else { continue };
+            if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) { continue; }
+            for pr in prs {
+                let (Some(number), Some(pr_sha)) = (pr["number"].as_u64(), pr["head"]["sha"].as_str())
+                    else { continue };
+                if number > 0 && pr_sha == sha && pr["head"]["repo"]["id"] == run["repository"]["id"] {
+                    candidates.push(PrBuild { number, run_id, sha: sha.to_owned() });
+                    break;
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| b.run_id.cmp(&a.run_id));
+    candidates
+}
+
+fn check_names_passed(checks: &serde_json::Value, sha: &str) -> bool {
+    ["test", "package"].iter().all(|name| {
+        checks["check_runs"].as_array().is_some_and(|runs| runs.iter().any(|run| {
+            run["name"] == *name
+                && run["head_sha"] == sha
+                && run["app"]["slug"] == "github-actions"
+                && run["status"] == "completed"
+                && run["conclusion"] == "success"
+        }))
+    })
+}
+
+fn contains_native_artifact(artifacts: &serde_json::Value, sha: &str) -> bool {
+    artifacts["artifacts"].as_array().is_some_and(|items| items.iter().any(|item| {
+        item["name"] == "muninn-pr-preview-arm64"
+            && item["expired"] == false
+            && item["workflow_run"]["head_sha"] == sha
+            && item["digest"].as_str().is_some_and(|s| s.starts_with("sha256:") && s.len() == 71)
+    }))
+}
+
+/// Fixed GitHub API paths only; no user-controlled hosts, URLs or tokens.
+fn github_json(path: &str) -> Result<serde_json::Value, String> {
+    let url = format!("https://api.github.com/repos/{REPOSITORY}/{path}");
+    let response = ureq::get(&url)
+        .set("User-Agent", "Muninn PR build discovery")
+        .set("Accept", "application/vnd.github+json")
+        .timeout(std::time::Duration::from_secs(12))
+        .call().map_err(|_| "Could not check PR builds. Check your connection and try again.".to_string())?;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    response.into_reader().take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 2 * 1024 * 1024 { return Err("GitHub response is too large".into()); }
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid GitHub response".into())
+}
+
+fn latest_pr_build() -> Result<PrBuild, String> {
+    let listing = github_json("actions/workflows/macos.yml/runs?event=pull_request&status=success&per_page=25")?;
+    // Bound API calls (and public rate-limit usage); never fetch code from PRs.
+    for build in pr_build_candidates(&listing).into_iter().take(5) {
+        let pr = github_json(&format!("pulls/{}", build.number))?;
+        if pr["state"] != "open" || pr["head"]["sha"] != build.sha
+            || pr["head"]["repo"]["full_name"] != REPOSITORY
+        {
+            continue;
+        }
+        let checks = github_json(&format!("commits/{}/check-runs?per_page=100", build.sha))?;
+        if !check_names_passed(&checks, &build.sha) { continue; }
+        let artifacts = github_json(&format!("actions/runs/{}/artifacts?per_page=100", build.run_id))?;
+        if contains_native_artifact(&artifacts, &build.sha) { return Ok(build); }
+    }
+    Err("No PR build has both passing checks and an unexpired macOS artifact yet.".into())
 }
 
 async fn configured_updater(app: &AppHandle, previews: bool) -> Result<tauri_plugin_updater::Updater, String> {
@@ -142,6 +242,12 @@ pub enum UpdateStatus {
         version: String,
         notes: Option<String>,
         date: Option<String>,
+    },
+    PrCandidate {
+        pr_number: u64,
+        source_sha: String,
+        run_id: u64,
+        url: String,
     },
     Downloading {
         version: String,
@@ -247,8 +353,13 @@ pub async fn updater_check(
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<UpdaterState>>,
     include_previews: Option<bool>,
+    include_pr_builds: Option<bool>,
 ) -> Result<UpdateStatus, String> {
     trusted(&webview)?;
+    if is_preview_app(&app) && !include_pr_builds.unwrap_or(false) {
+        state.set(UpdateStatus::Unavailable { reason: "Muninn Preview uses the PR build channel; production updates cannot replace it.".into() });
+        return Ok(state.status());
+    }
     if let Some(shell) = app.try_state::<Arc<crate::shell::Shell>>() {
         if shell.core.is_offline() {
             state.set(UpdateStatus::Unavailable {
@@ -267,6 +378,16 @@ pub async fn updater_check(
     let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         let result = async {
+            if include_pr_builds.unwrap_or(false) {
+                let build = tauri::async_runtime::spawn_blocking(latest_pr_build)
+                    .await.map_err(|e| e.to_string())??;
+                return Ok(UpdateStatus::PrCandidate {
+                    pr_number: build.number,
+                    source_sha: build.sha,
+                    run_id: build.run_id,
+                    url: format!("https://github.com/{REPOSITORY}/actions/runs/{}", build.run_id),
+                });
+            }
             let update = configured_updater(&app, include_previews.unwrap_or(false)).await?
                 .check()
                 .await
@@ -302,8 +423,15 @@ pub async fn updater_download(
     webview: tauri::Webview,
     state: tauri::State<'_, Arc<UpdaterState>>,
     include_previews: Option<bool>,
+    include_pr_builds: Option<bool>,
 ) -> Result<UpdateStatus, String> {
     trusted(&webview)?;
+    if include_pr_builds.unwrap_or(false) {
+        return Err("PR builds must be downloaded as separate applications from GitHub; they cannot be installed over Muninn.".into());
+    }
+    if is_preview_app(&app) {
+        return Err("Production updates are disabled inside Muninn Preview.".into());
+    }
     if let Some(shell) = app.try_state::<Arc<crate::shell::Shell>>() {
         if shell.core.is_offline() {
             state.set(UpdateStatus::Unavailable {
@@ -389,6 +517,7 @@ pub async fn updater_install(
     state: tauri::State<'_, Arc<UpdaterState>>,
 ) -> Result<UpdateStatus, String> {
     trusted(&webview)?;
+    if is_preview_app(&app) { return Err("Production updates cannot replace Muninn Preview.".into()); }
     if let Some(shell) = app.try_state::<Arc<crate::shell::Shell>>() {
         if shell.core.is_offline() {
             state.set(UpdateStatus::Unavailable {
@@ -453,6 +582,40 @@ pub async fn updater_cancel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_same_repository_successful_pr_runs_are_discoverable() {
+        let valid = serde_json::json!({
+            "id": 321, "path": ".github/workflows/macos.yml", "event": "pull_request",
+            "status": "completed", "conclusion": "success",
+            "head_repository": {"full_name": REPOSITORY}, "repository": {"id": 17},
+            "head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "pull_requests": [{"number": 43, "head": {"sha": "0123456789abcdef0123456789abcdef01234567", "repo": {"id": 17}}}]
+        });
+        let mut foreign = valid.clone();
+        foreign["id"] = 999.into(); foreign["head_repository"]["full_name"] = "other/muninn".into();
+        let mut failed = valid.clone();
+        failed["id"] = 998.into(); failed["conclusion"] = "failure".into();
+        let mut stale = valid.clone();
+        stale["id"] = 997.into(); stale["pull_requests"][0]["head"]["sha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
+        let builds = pr_build_candidates(&serde_json::json!({"workflow_runs": [foreign, failed, stale, valid]}));
+        assert_eq!(builds, vec![PrBuild { number: 43, run_id: 321, sha: "0123456789abcdef0123456789abcdef01234567".into() }]);
+    }
+    #[test]
+    fn pr_candidates_require_green_checks_and_exact_native_artifacts() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let valid = |name: &str| serde_json::json!({"name": name, "head_sha": sha,
+            "app": {"slug": "github-actions"}, "status": "completed", "conclusion": "success"});
+        assert!(check_names_passed(&serde_json::json!({"check_runs": [valid("test"),valid("package")]}), sha));
+        assert!(!check_names_passed(&serde_json::json!({"check_runs": [valid("package")]}), sha));
+        assert!(contains_native_artifact(&serde_json::json!({"artifacts": [{
+            "name": "muninn-pr-preview-arm64", "expired": false,
+            "workflow_run": {"head_sha": sha}, "digest": format!("sha256:{}", "a".repeat(64))
+        }]}), sha));
+        assert!(!contains_native_artifact(&serde_json::json!({"artifacts": [{
+            "name": "muninn-pr-preview-arm64", "expired": true,
+            "workflow_run": {"head_sha": sha}, "digest": format!("sha256:{}", "a".repeat(64))
+        }]}), sha));
+    }
     #[test]
     fn published_preview_requires_opt_in_and_uses_repository_manifest() {
         let release = |tag: &str, preview: bool, draft: bool| serde_json::json!({

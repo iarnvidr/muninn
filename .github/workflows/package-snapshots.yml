@@ -51,6 +51,19 @@ jobs:
           gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
             --name "muninn-native-candidate-${WORKFLOW_RUN_ID}-${WORKFLOW_ATTEMPT}" \
             --dir "$RUNNER_TEMP/muninn-package/native-candidate"
+      - name: Include isolated, separately identified PR build in the candidate package
+        if: >-
+          steps.download.outcome == 'success' &&
+          steps.package.outputs.kind == 'macos-candidate-v1' &&
+          github.event.workflow_run.event == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/muninn-package/pr-preview"
+          gh run download "$WORKFLOW_RUN_ID" --repo iarnvidr/muninn \
+            --name muninn-pr-preview-arm64 \
+            --dir "$RUNNER_TEMP/muninn-package/pr-preview"
       - name: Publish raw cache or native test build as an OCI package
         if: steps.download.outcome == 'success'
         env:

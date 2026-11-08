@@ -28,3 +28,14 @@ test('errors and offline unavailable do not expose unspecified fields', () => {
   const v = U.view({ state: 'failed', error: 'offline', token: 'secret' });
   assert.equal(v.label, 'offline'); assert.equal('token' in v, false);
 });
+test('PR build is a distinct opt-in discovery outcome, never an in-place update', () => {
+  const candidate = U.view({ state: 'pr_candidate', pr_number: 43, run_id: 42425419454,
+    source_sha: '9f2cfdd79c070888028dac68b89f0335bb3d7f70',
+    url: 'https://github.com/iarnvidr/muninn/actions/runs/42425419454' });
+  assert.equal(candidate.prNumber, 43);
+  assert.equal(candidate.canOpenPrBuild, true);
+  assert.equal(candidate.canDownload, false);
+  assert.equal(candidate.canInstall, false);
+  assert.equal(candidate.sourceSha.slice(0, 7), '9f2cfdd');
+  assert.equal(U.view({ ...candidate, url: 'https://example.com/unsafe' }).state, 'unavailable');
+});

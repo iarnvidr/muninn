@@ -2,10 +2,19 @@ import json
 from pathlib import Path
 import unittest
 
-from native_info import metadata
+from native_info import metadata, configured_bundle
 
 
 class NativeBundleIdentityTests(unittest.TestCase):
+    def test_pr_preview_bundle_has_distinct_identifier_and_no_production_url_handler(self):
+        import os
+        from unittest.mock import patch
+        overlay = '{"identifier":"io.github.iarnvidr.muninn.preview","productName":"Muninn Preview","bundle":{"macOS":{"infoPlist":"Info.preview.plist"}}}'
+        with patch.dict(os.environ, {"TAURI_CONFIG": overlay}):
+            info = metadata(configured_bundle())
+        self.assertEqual(info["CFBundleIdentifier"], "io.github.iarnvidr.muninn.preview")
+        self.assertEqual(info["CFBundleDisplayName"], "Muninn Preview")
+        self.assertNotIn("CFBundleURLTypes", info)
     def test_native_bundle_preserves_installation_identity_and_local_networking(self):
         root = Path(__file__).resolve().parents[1]
         config = json.loads((root / "src-tauri/tauri.conf.json").read_text())

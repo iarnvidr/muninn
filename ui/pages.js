@@ -564,9 +564,14 @@
         localStorage.setItem('muninn.updates.previews', updateChannel.value);
         updateState.value = { state: 'idle' }; renderUpdate();
       } catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
-    } }, h('option', { value: 'stable', text: 'Stable only' }), h('option', { value: 'preview', text: 'Stable and previews' }));
-    try { updateChannel.value = localStorage.getItem('muninn.updates.previews') === 'preview' ? 'preview' : 'stable'; } catch (e) { /* default stable */ }
-    const updateOptions = () => ({ includePreviews: updateChannel.value === 'preview' });
+    } }, h('option', { value: 'stable', text: 'Stable only' }), h('option', { value: 'preview', text: 'Stable and previews' }),
+      h('option', { value: 'pr', text: 'PR builds (separate app)' }));
+    try {
+      const saved = localStorage.getItem('muninn.updates.previews');
+      updateChannel.value = M.boot?.build?.channel === 'pr-preview' ? 'pr'
+        : ['stable', 'preview', 'pr'].includes(saved) ? saved : 'stable';
+    } catch (e) { /* default stable */ }
+    const updateOptions = () => ({ includePreviews: updateChannel.value === 'preview', includePrBuilds: updateChannel.value === 'pr' });
     const updateStatus = h('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
     const updateDetails = h('p', { class: 'muted' });
     const updateProgress = h('progress', { max: 100, value: 0, class: 'update-progress', hidden: true, 'aria-label': 'Update download progress' });
@@ -582,6 +587,12 @@
       try { await M.invoke('updater_download', updateOptions()); await pollUpdate(); }
       catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
       finally { downloadUpdate.disabled = false; }
+    } });
+    const openPrBuild = h('button', { type: 'button', class: 'primary', text: 'Open PR build on GitHub', hidden: true, onclick: async () => {
+      const v = window.MuninnUpdates.view(updateState.value);
+      if (!v.canOpenPrBuild || M.offline) return;
+      try { await M.invoke('open_external', { url: v.buildUrl }); }
+      catch (e) { updateState.value = { state: 'failed', error: M.errText(e) }; renderUpdate(); }
     } });
     const installUpdate = h('button', { type: 'button', class: 'primary', text: 'Install and restart', hidden: true, onclick: async () => {
       if (updateState.value.state !== 'ready_to_install' || M.offline) return;
@@ -611,12 +622,23 @@
     function renderUpdate() {
       const v = window.MuninnUpdates.view(updateState.value);
       setText(updateStatus, v.label);
-      const installed = v.installedVersion || v.currentVersion;
-      updateDetails.replaceChildren(document.createTextNode([installed ? 'Installed version ' + installed : '', v.availableVersion ? 'Available version ' + v.availableVersion : '', updateChannel.value === 'preview' ? 'Preview updates may contain unfinished changes and may not be notarized.' : 'Stable channel: only stable releases are offered.', v.notes].filter(Boolean).join('\n')));
+      const installed = v.installedVersion || v.currentVersion || M.boot?.version;
+      const build = M.boot?.build || {};
+      const provenance = build.source_sha
+        ? `Build ${build.channel || 'unknown'}${build.pr_number ? ` PR #${build.pr_number}` : ''}, source ${String(build.source_sha).slice(0, 12)}${build.pr_head_sha ? ` (PR head ${String(build.pr_head_sha).slice(0, 12)})` : ''}${build.ci_run_id ? `, Actions run ${build.ci_run_id}` : ''}`
+        : 'Build identity: not embedded in this installation.';
+      const channelNote = updateChannel.value === 'pr'
+        ? 'PR builds are unreviewed, ad-hoc signed, and not notarized. Open the passing CI artifact on GitHub (sign-in required), and install Muninn Preview separately. This never replaces the installed app.'
+        : updateChannel.value === 'preview'
+          ? 'Preview releases may contain unfinished changes and may not be notarized.'
+          : 'Stable channel: only stable releases are offered.';
+      const buildNote = v.canOpenPrBuild ? `PR #${v.prNumber}, source ${v.sourceSha.slice(0, 8)}, CI run ${v.runId}.` : '';
+      updateDetails.replaceChildren(document.createTextNode([installed ? 'Installed version ' + installed : '', provenance, v.availableVersion ? 'Available version ' + v.availableVersion : '', buildNote, channelNote, v.notes].filter(Boolean).join('\n')));
       updateChannel.disabled = ['checking','downloading','installing'].includes(v.state);
       updateProgress.hidden = v.state !== 'downloading';
       if (v.progress != null) updateProgress.value = v.progress;
       checkUpdate.disabled = !v.canCheck || !!M.offline; downloadUpdate.hidden = !v.canDownload; downloadUpdate.disabled = !!M.offline;
+      openPrBuild.hidden = !v.canOpenPrBuild; openPrBuild.disabled = !!M.offline;
       installUpdate.hidden = !v.canInstall; installUpdate.disabled = !!M.offline; cancelUpdate.hidden = !v.canCancel; cancelUpdate.disabled = !!M.offline;
     }
     const accountLine=h('p',{class:'muted',role:'status','aria-live':'polite'});
@@ -759,7 +781,7 @@
             h('p', { class: 'muted', text: 'Check for a trusted Muninn release. Updates are never installed automatically.' }),
             h('div', { class: 'field' }, h('label', { for: 'update-channel', text: 'Update channel' }), updateChannel),
             updateStatus, updateDetails, updateProgress,
-            h('div', { class: 'actions' }, checkUpdate, downloadUpdate, installUpdate, cancelUpdate)),
+            h('div', { class: 'actions' }, checkUpdate, downloadUpdate, openPrBuild, installUpdate, cancelUpdate)),
 
           h('section', { class: 'card', 'aria-labelledby': 'setup-h' },
             h('h2', { class: 'h2', id: 'setup-h', text: 'Setup and repair' }),

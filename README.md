@@ -68,9 +68,15 @@ Requires **macOS 14 (Sonoma) or newer**.
 
 For unreleased test builds, open a successful
 [Apple Silicon build](https://github.com/iarnvidr/muninn/actions/workflows/macos.yml)
-and download **muninn-macos-arm64** under **Artifacts** (GitHub sign-in required).
-That CI artifact contains the DMG and test evidence. Check its branch and commit;
-PR artifacts contain only that PR's changes and are not published releases.
+and download **muninn-pr-preview-arm64** under **Artifacts** (GitHub sign-in required).
+This is `Muninn Preview.app`, a separate test installation with its own bundle ID
+and Application Support folder, and it does not register the normal `muninn://`
+URL handler. **Do not replace `/Applications/Muninn.app` with a PR artifact.**
+The other `muninn-macos-arm64` artifact is the production-identity native candidate
+used by CI and future release acceptance; it shares your existing Muninn data.
+The Preview artifact includes a DMG and a ZIP; check its PR and commit, and use
+Settings → Muninn updates → **PR builds (separate app)** for subsequent discovery.
+Neither CI artifact is a published release. Both are ad-hoc signed and not notarized.
 
 Then open Muninn and browse YouTube. Sign-in has been reported working on the user's
 Mac. Google may still reject some embedded-browser login flows. Configured public
