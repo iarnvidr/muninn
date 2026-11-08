@@ -82,6 +82,15 @@ class PublishedCrateTests(unittest.TestCase):
         self.assertEqual({k: v["identity"] for k,v in before.items()},
                          {k: v["identity"] for k,v in after.items()})
 
+    def test_ci_orchestration_edit_does_not_invalidate_compiled_crates(self):
+        before = self.plan()
+        self.write("ci/dagger/check/crate_packages.py", "# maintenance-only change\n")
+        self.write("ci/dagger/check/main.dang", "# check graph-only change\n")
+        self.write("build/build-native-macos.sh", "# packaging-only change\n")
+        after = self.plan()
+        self.assertEqual({k: v["identity"] for k,v in before.items()},
+                         {k: v["identity"] for k,v in after.items()})
+
     def test_per_crate_payload_contains_actual_compiled_outputs_and_fingerprints(self):
         self.export()
         index, expected = MODULE.validate_index(self.out, self.root, "linux-amd64")

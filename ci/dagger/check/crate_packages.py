@@ -39,8 +39,6 @@ PACKAGE_BINARIES = {"muninn": ("muninn",), "muninn-cli": ("muninn-cli",),
 IGNORED_DIRS = {".git", "target", "gen", "node_modules", "__pycache__", ".venv"}
 GLOBAL_FILES = [
     "Cargo.toml", "rust-toolchain.toml", ".cargo",
-    "ci/dagger/check/run-rust.sh", "ci/dagger/check/main.dang",
-    "ci/dagger/check/crate_packages.py", "build/build-native-macos.sh",
 ]
 BUILD_CONTEXT_KEYS = ("MUNINN_BUILD_CHANNEL", "MUNINN_BUILD_SHA", "MUNINN_BUILD_PR",
                       "MUNINN_BUILD_PR_HEAD", "MUNINN_BUILD_RUN_ID")
@@ -163,6 +161,10 @@ def plans(root: Path, platform: str, abi: str, context: dict[str, str] | None = 
             raise ValueError(f"Cyclic crate dependency: {crate}")
         info = crates[crate]
         dependencies = {dep: resolve(dep, visiting | {crate})["identity"] for dep in info["deps"]}
+        # CI orchestration and this publisher do not change Rust crate
+        # machine code. Their edits must NOT invalidate every published crate.
+        # Compiler/SDK/flags are already bound to the ABI and Cargo validates
+        # each concrete mode/feature set inside the imported fingerprint.
         paths = [info["path"], *GLOBAL_FILES]
         if crate in {"muninn-ui-assets", "muninn-server", "muninn"}:
             paths.append("ui")
