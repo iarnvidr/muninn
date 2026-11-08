@@ -7,14 +7,18 @@ performs no network activity unless explicitly invoked with ``prepare``.
 """
 import argparse
 import hashlib
+import http.client
 import json
 import shutil
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+DOWNLOAD_ATTEMPTS = 4
 
 
 def pinned_sources(root=ROOT):
@@ -33,8 +37,21 @@ def pinned_sources(root=ROOT):
 
 def _verified_download(source, opener=urllib.request.urlopen):
     request = urllib.request.Request(source["url"], headers={"User-Agent": "muninn-corresponding-source"})
-    with opener(request, timeout=300) as response:
-        data = response.read()
+    # Hosted runners occasionally lose a connection while fetching the pinned
+    # corresponding-source archives. Retry transport failures; an incorrect
+    # checksum must *never* be treated as transient or accepted on retry.
+    for attempt in range(DOWNLOAD_ATTEMPTS):
+        try:
+            with opener(request, timeout=300) as response:
+                data = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (408, 429, 500, 502, 503, 504) or attempt + 1 == DOWNLOAD_ATTEMPTS:
+                raise
+        except (OSError, http.client.IncompleteRead):
+            if attempt + 1 == DOWNLOAD_ATTEMPTS:
+                raise
+        time.sleep(2 ** attempt)
     digest = hashlib.sha256(data).hexdigest()
     if digest != source["sha256"]:
         raise ValueError(f"{source['name']} archive SHA-256 mismatch: expected {source['sha256']}, got {digest}")
