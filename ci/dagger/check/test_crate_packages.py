@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 SPEC = importlib.util.spec_from_file_location("crate_packages", Path(__file__).with_name("crate_packages.py"))
@@ -66,6 +67,27 @@ class PublishedCrateTests(unittest.TestCase):
         MODULE.export_packages(argparse.Namespace(root=self.root, target=self.target,
             source_root=self.root, output=self.out, platform="linux-amd64", abi=ABI,
             require_all=True))
+
+    def test_publisher_passes_relative_verified_archive_to_oras(self):
+        # ORAS rejects absolute payload paths. Keep its path protection enabled
+        # while uploading an already hashed, verified package from that folder.
+        mock_index = {"packages": [{"image": "ghcr.io/iarnvidr/muninn-crate-alpha",
+                                    "tag": "linux-amd64-" + "a" * 64,
+                                    "archive": "alpha.tar.gz"}]}
+        with mock.patch.object(MODULE, "validate_index", return_value=(mock_index, {})):
+            with mock.patch.object(MODULE.subprocess, "run") as run:
+                run.side_effect = [subprocess.CompletedProcess(["oras", "manifest"], 1,
+                                    stderr="404 not found"),
+                                   subprocess.CompletedProcess(["oras", "push"], 0)]
+                MODULE.publish_packages(argparse.Namespace(
+                    root=self.root, input=self.out, platform="linux-amd64",
+                    run_id="1", head_sha="b" * 40, event="push", oras="oras"))
+                self.assertEqual(run.call_count, 2)
+                (command,), options = run.call_args
+                self.assertEqual(command[-1], "alpha.tar.gz:" + MODULE.LAYER_TYPE)
+                self.assertEqual(options["cwd"], self.out.resolve())
+                self.assertTrue(options["check"])
+                self.assertNotIn("--disable-path-validation", command)
 
     def test_dependency_change_invalidates_only_reverse_dependency_closure(self):
         original = self.plan()

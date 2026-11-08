@@ -97,47 +97,41 @@ compiles three real crates, deletes all target output, restores only their
 published-style packages and checks Cargo reports `Fresh` for each. Other
 tests check dependency invalidation and malicious archive rejection.
 
-### Existing aggregate caches for third-party dependencies
+### First-class compiled crate packages and fallback diagnostics
 
-A named Dagger `CacheVolume` persists on **one engine**, not magically across new
-GitHub-hosted VMs. `.github/workflows/check.yml` bridges the engine volume
-to GitHub Actions' normal cache and GitHub Packages' OCI container registry:
+GitHub-hosted runners have fresh engines, so a named Dagger `CacheVolume` does not
+automatically persist across jobs. The primary reusable first-party build
+products are **independently published GHCR crate packages**, not an aggregate
+target snapshot.
 
-1. The pinned cache action restores downloaded crates, the source mirror and
-   compiled outputs into `ci/cache/linux-cargo`. If no files were restored,
-   `restore-ghcr-cache.sh` tries the same PR's `:pr-N` cache package and then
-   the latest passing main cache package (`:main`). The script never overlays
-   one source mirror/target pair with another. A registry miss is a cold build.
-   The tracked `.gitignore` makes an empty seed valid locally.
-2. `cacheVolume(..., source: cargoSeed, sharing: LOCKED)` initializes the volume
-   from that seed. Tests and export mount the same object: source and sharing are
-   part of the v1 cache identity. A long-lived engine with the same seed retains
-   its existing volume; a changed seed creates a new volume from those artifacts.
-3. `dagger check` runs each crate check independently. For Rust, `run-rust.sh` uses checksum-based
-   `rsync` from the immutable `/input` snapshot to `/cache/worktree`, deliberately
-   without preserving input timestamps. Unchanged bytes retain their prior
-   timestamps; changed bytes get current timestamps and deleted files disappear.
-   Synchronization and Cargo run inside one locked exec. No cache entry is itself
-   a check result.
-4. `export-cargo-cache` copies Cargo registry/git data, the source mirror and
-   compiled `target` artifacts (preserving timestamps) from the volume into a
-   normal Dagger directory, then exports that to
-   the seed directory. A fresh run/attempt nonce invalidates **only the copy**, so
-   cached Dagger operations cannot return an older snapshot of the mutable volume.
-5. **Even on test failure**, the workflow exports a lossless `tar.zst` snapshot
-   (preserving modes, source mtimes and symlinks) and uploads it *before* the
-   failed job concludes. Uploading the raw tree would normalize metadata and
-   ruin Cargo fingerprint reuse. A privileged, separate
-   `workflow_run` publisher (running only trusted default-branch code, never a
-   PR checkout) copies the snapshot as inert data into GHCR. It does not run
-   code from the artifact or turn a failed test into a passing check. Fork PR
-   runs are excluded.
-6. The workflow uses the explicit `actions/cache/restore` and
-   `actions/cache/save` pair. The save step runs after a successful export even
-   if a crate check failed, provided the primary key was not already present.
-   The combined cache action would skip its post-save after failure. The saved
-   PR-scoped seed makes compilation reusable while a failing crate is diagnosed,
-   without changing check outcomes.
+1. Before compilation, the workflow resolves the exact Linux compiler/system ABI
+   using Dagger, then imports matching GHCR crate packages into the Cargo target
+   directory. For a given source/dependency closure, unchanged crates keep the
+   same OCI identity; changed crates and their dependants miss and rebuild.
+   Cargo independently verifies each restored fingerprint.
+2. The Actions cache and earlier `muninn-ci-cache` snapshots can still seed
+   third-party downloads and cold starts. They are optional optimizations; a
+   cache miss must not prevent separately published crate packages being read.
+3. `cacheVolume(..., source: cargoSeed, sharing: LOCKED)` initializes the
+   engine's Rust volume from that seed. `dagger check` executes per-crate checks,
+   synchronizing source into `/cache/worktree` without wiping unchanged
+   unrelated crates. The tracked source manifest identifies genuine deletions.
+4. **On successful checks**, `export-crate-packages` mounts that same volume
+   directly inside Dagger. It exports each crate's compiled fingerprints,
+   `.rlib`/`.rmeta` and other real output as a separate compressed payload.
+   Only those payloads (about a few hundred MB in the initial hosted run) cross
+   the Dagger/host boundary. The workflow retains them as `muninn-crates-linux-*`;
+   a trusted default-branch `workflow_run` job verifies source-tree identity,
+   archive digests and original CI result before publishing immutable GHCR tags.
+5. **Only after failed checks**, `export-cargo-cache` optionally copies the full
+   multi-GB volume to preserve failing diagnostic state. The failure path can
+   archive its raw data as `tar.zst`, upload it, and save the Actions cache for a
+   subsequent debugging attempt. This cannot turn a failing check green.
+   Stale check logs are separated from reusable Cargo data.
+
+Neither a package download nor a cache hit is itself a test receipt: all checks
+still execute for each PR/commit and Cargo decides whether any compiled unit
+must be rebuilt.
 
 The Linux Tauri check also writes full Cargo stdout/stderr to
 `/cache/check-logs/desktop-tests.log` under the locked cache mount. The exporter
@@ -157,6 +151,7 @@ The registry packages are:
 
 | GitHub Package | Stored data | Reusable tags |
 | --- | --- | --- |
+| `ghcr.io/iarnvidr/muninn-crate-<crate>` | Individually compiled crate output and verified fingerprints, isolated per Linux/Apple Silicon ABI | Immutable `<platform>-<source/dependency-identity>` per crate |
 | `ghcr.io/iarnvidr/muninn-ci-cache` | Linux Cargo registry, compiled target, stable source mirror | Exact `run-ID-attempt`, source `sha-<commit>`, moving `pr-<number>` for same-PR reuse, `main` only after a green default-branch check |
 | `ghcr.io/iarnvidr/muninn-macos-candidate` | The ad-hoc signed Apple Silicon ZIP/DMG, native candidate archive/receipt, and native smoke evidence (not a release) | Exact `run-ID-attempt`, source `sha-<commit>`, `pr-<number>` |
 | `ghcr.io/iarnvidr/muninn-check-evidence` | Successful Dagger `check-candidate.json` receipt; **must still be verified** against the exact Git tree using existing promotion policy | Exact `run-ID-attempt`, source `sha-<commit>`, `pr-<number>` |
@@ -199,12 +194,12 @@ following hidden out-of-tree inputs. The real offline Cargo fixture in
 `test_cargo_cache.py` tests cold/warm builds, timestamp-only input changes,
 same-size changed content, deleted sources and both safety guards.
 
-The cache is an optimization, not a promise that every unchanged crate will
-always be reused. All Rust scopes share a worktree: switching scopes removes
-out-of-scope files and switching back restores them. Adapter crates may rebuild;
-unchanged shared source bytes retain their timestamps. Each hosted engine is
-new, so its previous *Dagger check-result* cache isn't in GHCR. GHCR contains
-Cargo-validated compilation products, not permission to skip a test.
+The old aggregate cache remains an optional third-party dependency seed. Each
+compiled crate package has its own GHCR reference and is independently restored
+when available. Missing packages rebuild naturally. Dagger checks retain
+unrelated source files and delete only paths absent from the complete checkout
+manifest. GitHub Packages stores compilation products—not authority to skip
+tests or bypass the merge gate.
 
 ```sh
 # Optional when moving a successful local run's cache. A new nonce is required.
@@ -213,14 +208,14 @@ dagger -m ci/dagger/check api call export-cargo-cache --nonce local-snapshot-1 \
   --output ci/cache/linux-cargo
 ```
 
-The action's normal branch scoping keeps PR caches separate from trusted
-default-branch caches; GHCR's moving PR tag stays within one PR. No signing
+The action's branch scoping keeps legacy snapshots separate from trusted
+default-branch caches; immutable crate-package identities are independent of PR numbers. No signing
 secrets, Cargo credentials, private runner or remote engine
 endpoint is passed into public PR checks. Local and CI use the same graph, but
 different engines do not share result caches unless configured to do so; this
-repository does not silently enroll in Dagger Cloud. Checks now also run on
-pushes to `main` to populate the trusted `:main` cache image after success.
-Cache misses and eviction must remain safe.
+repository does not silently enroll in Dagger Cloud. Checks also run on pushes to `main` to establish trusted compiled crate
+packages. The legacy `:main` aggregate cache remains an optional fallback,
+not the primary publishing mechanism. Cache misses and eviction remain safe.
 
 ## Native macOS and provenance
 
