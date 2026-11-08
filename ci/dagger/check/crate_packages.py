@@ -427,6 +427,8 @@ def validate_index(folder: Path, root: Path, expected_platform: str | None = Non
             raise ValueError("Archive SHA mismatch")
         if read_package(archive, expected[crate]) != row["outputs"]:
             raise ValueError("Package output count mismatch")
+    if seen != set(expected):
+        raise ValueError(f"Missing expected workspace crate packages: {sorted(set(expected) - seen)}")
     return index, expected
 
 

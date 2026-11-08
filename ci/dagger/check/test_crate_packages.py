@@ -68,6 +68,15 @@ class PublishedCrateTests(unittest.TestCase):
             source_root=self.root, output=self.out, platform="linux-amd64", abi=ABI,
             require_all=True))
 
+    def test_refuse_incomplete_successful_crate_publication(self):
+        self.export()
+        index_path = self.out / "index.json"
+        data = json.loads(index_path.read_text())
+        data["packages"].pop()
+        index_path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "Missing expected workspace crate packages"):
+            MODULE.validate_index(self.out, self.root, "linux-amd64")
+
     def test_publisher_passes_relative_verified_archive_to_oras(self):
         # ORAS rejects absolute payload paths. Keep its path protection enabled
         # while uploading an already hashed, verified package from that folder.
