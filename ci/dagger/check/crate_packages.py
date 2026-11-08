@@ -446,8 +446,11 @@ def publish_packages(args: argparse.Namespace) -> None:
         subprocess.run([
             args.oras, "push", "--artifact-type", ARTIFACT_TYPE,
             "--annotation", f"org.opencontainers.image.source=https://github.com/iarnvidr/muninn",
-            ref, f"{folder / row['archive']}:{LAYER_TYPE}",
-        ], check=True)
+            # Validate the archive under the verified input directory and ask
+            # ORAS to resolve a relative filename there. ORAS rejects absolute
+            # layer paths by design; disabling its path protection is unnecessary.
+            ref, f"{row['archive']}:{LAYER_TYPE}",
+        ], check=True, cwd=folder)
         published += 1
     print(f"Published {published} new immutable per-crate OCI artifacts ({len(index['packages'])} checked)")
 
