@@ -122,6 +122,25 @@ class PublishedCrateTests(unittest.TestCase):
         self.assertEqual({k: v["identity"] for k,v in before.items()},
                          {k: v["identity"] for k,v in after.items()})
 
+    @unittest.skipUnless(shutil.which("git"), "Git is required for the checkout identity test")
+    def test_git_checkout_ignores_generated_untracked_files(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "--all"], check=True)
+        original = self.plan()
+        # Native smokes and toolchains may leave outputs under tracked folders.
+        # These must not alter the identity recomputed by a clean publisher.
+        self.write("crates/alpha/src/generated-by-native-build.txt", "scratch output")
+        self.assertEqual(original, self.plan())
+        self.assertNotIn("crates/alpha/src/generated-by-native-build.txt",
+                         MODULE.relative_files(self.root, self.root / "crates/alpha"))
+        # Actual modifications of Git-tracked inputs must still invalidate the
+        # modified crate and its reverse dependency closure.
+        self.write("crates/alpha/src/lib.rs", "pub fn alpha() { panic!() }\n")
+        changed = self.plan()
+        self.assertNotEqual(original["alpha"]["identity"], changed["alpha"]["identity"])
+        self.assertNotEqual(original["beta"]["identity"], changed["beta"]["identity"])
+        self.assertEqual(original["gamma"]["identity"], changed["gamma"]["identity"])
+
     def test_per_crate_payload_contains_actual_compiled_outputs_and_fingerprints(self):
         self.export()
         index, expected = MODULE.validate_index(self.out, self.root, "linux-amd64")
