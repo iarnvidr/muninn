@@ -38,11 +38,13 @@ jobs:
           args: rust-abi
           dagger-flags: --progress logs
       - name: Validate Dagger ABI identity
-        env:
-          MUNINN_ABI: ${{ steps.crate-abi.outputs.stdout }}
         run: |
-          [[ "$MUNINN_ABI" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid Dagger system ABI'; exit 1; }
-          echo "MUNINN_LINUX_ABI=$MUNINN_ABI" >> "$GITHUB_ENV"
+          set -euo pipefail
+          # The pinned v1 beta action streams the call output but does not
+          # expose the newer `stdout` step output. Its installed CLI persists.
+          abi="$(dagger -m ci/dagger/check api call rust-abi | tr -d '\r\n')"
+          [[ "$abi" =~ ^[0-9a-f]{64}$ ]] || { echo 'Invalid Dagger system ABI'; exit 1; }
+          echo "MUNINN_LINUX_ABI=$abi" >> "$GITHUB_ENV"
       # A hosted job has a fresh engine. Named Dagger volumes alone do not persist
       # across jobs: restore a seed, then export the updated volume after checks.
       - name: Restore Linux Cargo cache seed
@@ -71,6 +73,7 @@ jobs:
           GOBIN: ${{ runner.temp }}
         run: GOTOOLCHAIN=auto go install oras.land/oras/cmd/oras@v1.3.0
       - name: Restore independently published, unchanged Linux crates
+        if: steps.restore-cargo.outputs.cache-hit != 'true'
         env:
           GHCR_READ_TOKEN: ${{ github.token }}
         run: |

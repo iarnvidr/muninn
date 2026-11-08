@@ -34,7 +34,9 @@ REPOSITORY = "ghcr.io/iarnvidr"
 ARTIFACT_TYPE = "application/vnd.muninn.compiled-crate.v1"
 LAYER_TYPE = "application/vnd.muninn.compiled-crate.tar+gzip"
 FINGERPRINT = re.compile(r"^[0-9a-f]{16}$")
-IGNORED_DIRS = {".git", "target", "node_modules", "__pycache__", ".venv"}
+PACKAGE_BINARIES = {"muninn": ("muninn",), "muninn-cli": ("muninn-cli",),
+                    "muninn-server": ("muninn-service",)}
+IGNORED_DIRS = {".git", "target", "gen", "node_modules", "__pycache__", ".venv"}
 GLOBAL_FILES = [
     "Cargo.toml", "rust-toolchain.toml", ".cargo",
     "ci/dagger/check/run-rust.sh", "ci/dagger/check/main.dang",
@@ -206,9 +208,11 @@ def crate_outputs(target: Path, crate: str, source_root: Path, source: dict[str,
             if not any(f.suffix == ".json" for f in unit.iterdir()):
                 continue
             normalized = crate.replace("-", "_")
+            unit_names = {normalized, *(name.replace("-", "_") for name in PACKAGE_BINARIES.get(crate, ()))}
             unit_outputs = [
                 f for f in deps_dir.glob(f"*-{hash_suffix}*")
-                if f.is_file() and (f.name.startswith(normalized + "-") or f.name.startswith("lib" + normalized + "-"))
+                if f.is_file() and any(f.name.startswith(name + "-") or f.name.startswith("lib" + name + "-")
+                                       for name in unit_names)
             ]
             if not unit_outputs:
                 continue
@@ -223,6 +227,10 @@ def crate_outputs(target: Path, crate: str, source_root: Path, source: dict[str,
                 continue
             outputs.update(f.relative_to(target).as_posix() for f in unit_outputs)
             outputs.update(f.relative_to(target).as_posix() for f in unit.rglob("*") if f.is_file())
+            for binary in PACKAGE_BINARIES.get(crate, ()):
+                executable = profile / binary
+                if executable.is_file():
+                    outputs.add(executable.relative_to(target).as_posix())
             # Build-script outputs must travel with the fingerprint and .rlib.
             for build in (profile / "build").glob(f"{crate}-{hash_suffix}") if (profile / "build").is_dir() else ():
                 outputs.update(f.relative_to(target).as_posix() for f in build.rglob("*") if f.is_file())
@@ -297,7 +305,9 @@ def read_package(archive: Path, plan: dict, target: Path | None = None,
             if not member.isfile() or member.issym() or member.islnk():
                 raise ValueError("Only regular build output files are allowed")
             name = PurePosixPath(member.name)
-            if name.is_absolute() or ".." in name.parts or len(name.parts) < 4 or name.parts[0] != "target":
+            # `target/debug/muninn` is a valid top-level Cargo executable;
+            # fingerprints and deps have one or more additional path parts.
+            if name.is_absolute() or ".." in name.parts or len(name.parts) < 3 or name.parts[0] != "target":
                 raise ValueError("Unsafe or non-target archive entry")
             rel = name.relative_to("target").as_posix()
             if rel in seen or rel not in entries or member.size > (1 << 31):
@@ -375,6 +385,10 @@ def validate_index(folder: Path, root: Path, expected_platform: str | None = Non
     context = index.get("build_context")
     if not isinstance(context, dict) or (run_id is not None and context.get("MUNINN_BUILD_RUN_ID") not in ("", run_id)):
         raise ValueError("Untrusted originating CI build context")
+    if context.get("MUNINN_BUILD_SHA") and context["MUNINN_BUILD_SHA"] != index.get("source_sha"):
+        raise ValueError("Embedded app source stamp does not match original test checkout")
+    if event == "pull_request" and context.get("MUNINN_BUILD_CHANNEL") not in ("", "pr"):
+        raise ValueError("PR application incorrectly claims another update channel")
     expected = plans(root, index["platform"], index["abi"], context)
     seen = set()
     for row in index["packages"]:

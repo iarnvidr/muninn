@@ -108,6 +108,16 @@ class PublishedCrateTests(unittest.TestCase):
                 MODULE.plans(self.root, "linux-amd64", "b" * 64)["alpha"])
         self.assertNotEqual(plan["identity"], self.plan()["alpha"]["identity"])
 
+    def test_top_level_executable_is_part_of_compiled_crate_package(self):
+        MODULE.PACKAGE_BINARIES["beta"] = ("beta",)
+        self.addCleanup(lambda: MODULE.PACKAGE_BINARIES.pop("beta", None))
+        executable = self.target / "debug/beta"
+        executable.write_bytes(b"compiled executable")
+        self.export()
+        extracted = self.base / "bin-target"
+        MODULE.read_package(self.out / "beta.tar.gz", self.plan()["beta"], extracted, self.root)
+        self.assertEqual((extracted / "debug/beta").read_bytes(), b"compiled executable")
+
     def test_reject_archive_path_escape_before_any_target_write(self):
         self.export()
         path = self.out / "alpha.tar.gz"
@@ -158,6 +168,15 @@ class PublishedCrateTests(unittest.TestCase):
         for crate in ("alpha", "beta", "gamma"):
             self.assertIn(f"Fresh {crate}", second.stderr, second.stderr[-2000:])
             self.assertNotIn(f"Compiling {crate}", second.stderr, second.stderr[-2000:])
+        # Change a leaf and verify only that crate and its reverse-dependent
+        # crate rebuild. The independent third crate must remain Fresh.
+        self.write("crates/alpha/src/lib.rs", "pub fn alpha() { let _ = 1; }\n")
+        modified = subprocess.run(["cargo", "build", "--offline", "--workspace", "-v"],
+                                  cwd=self.root, env=environment, capture_output=True, text=True)
+        self.assertEqual(modified.returncode, 0, modified.stderr[-3000:])
+        self.assertIn("Compiling alpha", modified.stderr)
+        self.assertIn("Compiling beta", modified.stderr)
+        self.assertIn("Fresh gamma", modified.stderr)
 
 
 if __name__ == "__main__":

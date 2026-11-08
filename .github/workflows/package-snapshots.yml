@@ -131,6 +131,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ steps.crate-source.outputs.sha }}
+          # Parent verification requires the original PR merge's second
+          # parent; shallow checkout hides that ancestry.
+          fetch-depth: 0
           path: crate-source
           persist-credentials: false
       - name: Install pinned ORAS artifact client
