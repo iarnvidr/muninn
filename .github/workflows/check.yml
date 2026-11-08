@@ -85,13 +85,12 @@ jobs:
             --mirror ci/cache/linux-cargo/worktree --oras "$RUNNER_TEMP/oras"
       - name: Rust, JavaScript, packaging, and publication checks
         id: dagger-checks
-        uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
-        with:
-          version: 1.0.0-beta.25
-          verb: check
-          # Stream what the engine exposes. Some failed Cargo execs still give
-          # only exit 101, so the desktop check also writes a retained log.
-          dagger-flags: --progress logs
+        # The pinned action's installer calls `dagger --silent version` when a
+        # CLI is already on PATH. Dagger v1 rejects that legacy flag. The ABI
+        # step already installs the pinned CLI, so invoke it directly instead.
+        # Stream what the engine exposes. Some failed Cargo execs still give
+        # only exit 101, so the desktop check also writes a retained log.
+        run: dagger --progress logs check
       - name: Export Linux Cargo cache for the next hosted run
         id: cargo-export
         if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
