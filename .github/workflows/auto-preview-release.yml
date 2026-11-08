@@ -1,5 +1,7 @@
 name: Publish accepted Muninn preview
 on:
+  push:
+    branches: [main]
   workflow_run:
     workflows: [Map accepted Muninn native artifact]
     types: [completed]
@@ -14,8 +16,67 @@ permissions:
   contents: read
 
 jobs:
+  recover:
+    # Resume an interrupted accepted preview from its retained signed review.
+    # The old release tag is never moved to a newer CI-only fix merge.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Identify only a verified interrupted accepted preview
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 build/recover_auto_preview.py --root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+      - name: Install signature verifier for retained payload
+        if: steps.plan.outputs.recover_needed == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y minisign
+      - name: Retrieve exact previously signed review artifact
+        if: steps.plan.outputs.recover_needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_RUN_ID: ${{ steps.plan.outputs.review_run_id }}
+          ARTIFACT_NAME: ${{ steps.plan.outputs.artifact_name }}
+        run: gh run download "$REVIEW_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir release-assets
+      - name: Reverify signed draft and resume three-asset publication
+        if: steps.plan.outputs.recover_needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ steps.plan.outputs.source_sha }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          MAPPING_RUN_ID: ${{ steps.plan.outputs.mapping_run_id }}
+          RECOVER_EXISTING_DRAFT: 'true'
+        run: |
+          set -euo pipefail
+          python3 build/auto_preview_release.py verify-assets \
+            --directory release-assets --version "$VERSION" --tag "$TAG" \
+            --sha "$SOURCE_SHA" --mapping-run-id "$MAPPING_RUN_ID"
+          python3 - src-tauri/tauri.conf.json release-assets <<'PY'
+          import base64, json, pathlib, sys
+          public = json.load(open(sys.argv[1]))["plugins"]["updater"]["pubkey"]
+          directory = pathlib.Path(sys.argv[2])
+          (directory / "updater.pub").write_bytes(base64.b64decode(public, validate=True))
+          detached = base64.b64decode((directory / "Muninn.app.tar.gz.sig").read_bytes(), validate=True)
+          (directory / "Muninn.app.tar.gz.sig.minisig").write_bytes(detached)
+          PY
+          minisign -Vm release-assets/Muninn.app.tar.gz \
+            -p release-assets/updater.pub -x release-assets/Muninn.app.tar.gz.sig.minisig
+          bash build/publish_auto_preview.sh
+
   package:
     if: >-
+      github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&

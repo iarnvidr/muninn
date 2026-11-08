@@ -36,6 +36,8 @@ Automatic preview publication needs `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGN
 
 ## Provisioning and release gate
 
+An interrupted draft remains unpublished and invisible to the updater. The trusted preview workflow checks for pending drafts after later main pushes. It may resume one only if the old tag still points to the original accepted ancestor, the original acceptance mapping passed, a uniquely retained signed review artifact came from the trusted package job, and its updater signature and three release assets verify again. It publishes by GitHub's numeric release ID because the by-tag API does not expose unpublished drafts. Recovery never moves an existing release tag to a newer merge.
+
 The automatic path above handles ad-hoc-signed *prereleases*. For the separate
 protected production workflow, select `apple_signing=ad-hoc` explicitly if using
 that distribution path; its default `developer-id` mode still requires all six
