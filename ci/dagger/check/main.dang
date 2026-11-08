@@ -17,6 +17,9 @@ type MuninnCi {
   let nodeTools: Container! = container(platform: "linux/amd64")
     .from("node:22.23.3-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9")
 
+  let pythonTools: Container! = container(platform: "linux/amd64")
+    .from("python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337")
+
   # This tracked-empty directory is populated by actions/cache on hosted CI.
   # The seed initializes a new volume; the same seed reuses an existing volume.
   # It is deliberately outside the module directory and every source filter.
@@ -244,8 +247,7 @@ type MuninnCi {
   Git-history/publication boundary checks run on the host checkout afterwards.
   """
   pub packaging: Void @check {
-    container(platform: "linux/amd64")
-      .from("python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337")
+    pythonTools
       .withExec(["sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends bash build-essential git rsync zstd && ln -s /usr/local/bin/python3 /usr/bin/python3 && rm -rf /var/lib/apt/lists/*"])
       .withDirectory("/usr/local/cargo", rustTools.directory("/usr/local/cargo"))
       .withDirectory("/usr/local/rustup", rustTools.directory("/usr/local/rustup"))
@@ -263,6 +265,32 @@ type MuninnCi {
       .withExec(["sh", "-ec", "python3 -m unittest discover -s build -p 'test_*.py' -v && python3 -m unittest discover -s ci/dagger/check -p 'test_*.py' -v && python3 build/updater-smoke/test_protocol.py"])
       .sync
     null
+  }
+
+  """
+  Package each compiled crate *inside the Dagger engine*, adjacent to its
+  existing Cargo volume. Only the 13 compressed archives cross the host
+  boundary. No multi-gigabyte cache snapshot or replayed compilation.
+  """
+  pub exportCratePackages(nonce: String!, sourceSha: String!): Directory! {
+    pythonTools
+      .withMountedCache("/cache", cargoCache)
+      .withMountedDirectory("/source", ws.directory("/", include: [
+        "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
+        "core/**", "crates/**", "src-tauri/**", "ui/**", "shell/**",
+        "LICENSE", "THIRD_PARTY_NOTICES.md",
+        "ci/dagger/check/crate_packages.py",
+      ], exclude: ["**/target", "**/__pycache__", "**/node_modules", "src-tauri/gen"]))
+      .withEnvVariable("GITHUB_SHA", sourceSha)
+      .withEnvVariable("MUNINN_CRATE_EXPORT_NONCE", nonce)
+      .withExec([
+        "python3", "/source/ci/dagger/check/crate_packages.py", "export",
+        "--root", "/source", "--platform", "linux-amd64",
+        "--abi", rustSystemABI, "--target", `/cache/target/${rustSystemABI}`,
+        "--source-root", "/cache/worktree",
+        "--output", "/crate-packages", "--require-all",
+      ])
+      .directory("/crate-packages")
   }
 
   """

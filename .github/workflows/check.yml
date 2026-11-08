@@ -105,9 +105,28 @@ jobs:
         # Stream what the engine exposes. Some failed Cargo execs still give
         # only exit 101, so the desktop check also writes a retained log.
         run: dagger --progress logs check
-      - name: Export Linux Cargo cache for the next hosted run
+      - name: Export separate compiled crate packages
+        id: crate-export
+        if: ${{ steps.dagger-checks.outcome == 'success' && !cancelled() }}
+        # Package next to Dagger's compiled Cargo volume. Export only the 13
+        # small OCI payloads; a full snapshot is not needed for a green run.
+        run: |
+          dagger -m ci/dagger/check api call export-crate-packages \
+            --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/muninn-crate-packages"
+      - name: Retain individually compiled crates for trusted GHCR publication
+        if: ${{ steps.crate-export.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-crates-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-crate-packages/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Export Linux Cargo diagnostic cache after a failed check
         id: cargo-export
-        if: ${{ always() && steps.dagger-checks.outcome != 'skipped' && !cancelled() }}
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
         run: |
           dagger -m ci/dagger/check api call export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
       # Preserve failing logs separately, so a cache restored into a later run
@@ -146,24 +165,6 @@ jobs:
         with:
           path: ci/cache/linux-cargo
           key: ${{ steps.restore-cargo.outputs.cache-primary-key }}
-      - name: Export separate compiled crate packages
-        id: crate-export
-        if: ${{ steps.dagger-checks.outcome == 'success' && steps.cargo-export.outcome == 'success' && !cancelled() }}
-        run: |
-          python3 ci/dagger/check/crate_packages.py export \
-            --root . --platform linux-amd64 --abi "$MUNINN_LINUX_ABI" \
-            --target "ci/cache/linux-cargo/target/$MUNINN_LINUX_ABI" \
-            --source-root ci/cache/linux-cargo/worktree \
-            --output "$RUNNER_TEMP/muninn-crate-packages" --require-all
-      - name: Retain individually compiled crates for trusted GHCR publication
-        if: ${{ steps.crate-export.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: muninn-crates-linux-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/muninn-crate-packages/*
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 30
       # upload-artifact normalizes file modes and times. Pack the entire cache
       # pair first, so Cargo's mtime fingerprints remain correct after GHCR.
       - name: Archive Cargo snapshot with timestamps and modes intact
