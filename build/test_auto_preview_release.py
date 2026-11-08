@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import auto_preview_release as preview
 import updater_release
@@ -95,6 +96,21 @@ class PreviewReleasePlanTests(unittest.TestCase):
         self.assertEqual(preview.release_versions(list_fn), [])
         self.assertTrue(preview.decision(event(), SHA, SHA, "0.2.23", [])["release_needed"])
 
+    def test_new_main_does_not_retarget_an_older_accepted_draft(self):
+        draft = {**released("0.2.23"), "draft": True, "assets": []}
+        def api(path):
+            if "/releases?" in path:
+                return [draft]
+            if path.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": SHA}}
+            if path.endswith("/git/ref/tags/v0.2.23"):
+                return {"object": {"type": "commit", "sha": OTHER}}
+            raise AssertionError(path)
+        with patch.object(preview.release_candidate, "git", return_value=SHA), \
+             patch.object(preview.release_candidate, "version", return_value="0.2.23"):
+            result = preview.plan(Path("/unused"), event(), api_fn=api)
+        self.assertFalse(result["release_needed"], "existing accepted draft must be recovered, not retagged")
+
 
 class PreviewReleaseArtifactTests(unittest.TestCase):
     def setUp(self):
@@ -169,8 +185,11 @@ class PreviewWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("pull_request_target:", auto)
         self.assertNotIn("cargo build", auto)
         self.assertNotIn("--clobber", publisher)
-        self.assertIn("--draft --prerelease", publisher)
-        self.assertIn('gh release edit "$TAG" --draft=false', publisher)
+        self.assertIn('repos/$GH_REPO/releases?per_page=100', publisher)
+        self.assertIn('repos/$GH_REPO/releases/$release_id', publisher)
+        self.assertIn('-F draft=true -F prerelease=true', publisher)
+        self.assertIn('-F draft=false -F prerelease=true', publisher)
+        self.assertIn('https://uploads.github.com/repos/$GH_REPO/releases/$release_id/assets', publisher)
         self.assertIn("name: muninn-release", protected)
         self.assertIn("workflow_dispatch:", protected)
         self.assertNotIn("workflow_run:", protected)
@@ -184,6 +203,7 @@ class PreviewPublisherTests(PreviewReleaseArtifactTests):
         super().setUp()
         root = Path(__file__).resolve().parents[1]
         (self.base / "build").symlink_to(root / "build", target_is_directory=True)
+        (self.base / "src-tauri").symlink_to(root / "src-tauri", target_is_directory=True)
         assets = self.base / "release-assets"
         assets.mkdir()
         for name, content in self.files.items():
@@ -208,24 +228,48 @@ if a[:2] == ["api", "repos/iarnvidr/muninn/git/ref/heads/main"]:
 elif a[:2] == ["api", "repos/iarnvidr/muninn/git/ref/tags/v0.2.23"]:
     if s["tag"] is None: missing()
     print(json.dumps({"object":{"type":"commit","sha":s["tag"]}}))
-elif a[:3] == ["api", "--method", "POST"]:
+elif a[:3] == ["api", "--method", "POST"] and a[3] == "repos/iarnvidr/muninn/git/refs":
     s["tag"] = next(x.removeprefix("sha=") for x in a if x.startswith("sha="))
     print("{}")
-elif a[:2] == ["api", "repos/iarnvidr/muninn/releases/tags/v0.2.23"]:
+elif a[:2] == ["api", "repos/iarnvidr/muninn/releases?per_page=100"]:
+    print(json.dumps([s["release"]] if s["release"] else []))
+elif a[:3] == ["api", "--method", "POST"] and a[3] == "repos/iarnvidr/muninn/releases":
+    s["release"]={"id":123,"tag_name":"v0.2.23","draft":True,"prerelease":True,
+                  "body":next(x.removeprefix("body=") for x in a if x.startswith("body=")),"assets":[]}
+    print(json.dumps(s["release"]))
+elif a[:2] == ["api", "repos/iarnvidr/muninn/releases/123"]:
     if s["release"] is None: missing()
     print(json.dumps(s["release"]))
-elif a[:2] == ["release", "create"]:
-    s["release"]={"draft":True,"prerelease":True,"body":a[a.index("--notes")+1],"assets":[]}
-elif a[:2] == ["release", "upload"]:
-    file=pathlib.Path(a[3]); data=file.read_bytes()
-    s["release"]["assets"].append({"name":file.name,"digest":"sha256:"+hashlib.sha256(data).hexdigest()})
-elif a[:2] == ["release", "edit"]:
+elif a[:4] == ["api", "--method", "PATCH", "repos/iarnvidr/muninn/releases/123"]:
     s["release"]["draft"]=False
+    print(json.dumps(s["release"]))
 else:
     raise RuntimeError("unexpected GitHub CLI arguments: "+repr(a))
 state_file.write_text(json.dumps(s))
 ''')
         cli.chmod(0o755)
+        upload = binary / "curl"
+        upload.write_text('''#!/usr/bin/env python3
+import hashlib, json, os, pathlib, sys, urllib.parse
+state_file=pathlib.Path(os.environ["GH_STATE"])
+s=json.loads(state_file.read_text())
+a=sys.argv[1:]
+file=pathlib.Path(a[a.index("--data-binary")+1].removeprefix("@"))
+url=urllib.parse.urlparse(a[-1]); name=urllib.parse.parse_qs(url.query)["name"][0]
+assert name==file.name
+s["calls"].append(["upload", name])
+s["release"]["assets"].append({"name":name,"digest":"sha256:"+hashlib.sha256(file.read_bytes()).hexdigest()})
+state_file.write_text(json.dumps(s))
+print("{}")
+''')
+        upload.chmod(0o755)
+        git = binary / "git"
+        git.write_text('''#!/usr/bin/env python3
+import sys
+assert sys.argv[1:3]==["merge-base","--is-ancestor"]
+sys.exit(0)
+''')
+        git.chmod(0o755)
         self.publisher = root / "build/publish_auto_preview.sh"
         self.env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
                         GH_TOKEN="mock", GH_REPO="iarnvidr/muninn", GH_STATE=str(self.state_file),
@@ -246,12 +290,12 @@ state_file.write_text(json.dumps(s))
         self.assertEqual(state["tag"], SHA)
         self.assertFalse(state["release"]["draft"])
         self.assertEqual(len(state["release"]["assets"]), 3)
-        upload_calls = [a for a in state["calls"] if a[:2] == ["release", "upload"]]
+        upload_calls = [a for a in state["calls"] if a[0] == "upload"]
         self.assertEqual(len(upload_calls), 3)
         result = self.run_publisher()
         self.assertEqual(result.returncode, 0, result.stderr)
         again = self.state()
-        self.assertEqual(len([a for a in again["calls"] if a[:2] == ["release", "upload"]]), 3)
+        self.assertEqual(len([a for a in again["calls"] if a[0] == "upload"]), 3)
 
     def test_refuses_to_modify_existing_published_digest_mismatch(self):
         self.assertEqual(self.run_publisher().returncode, 0)
@@ -261,6 +305,22 @@ state_file.write_text(json.dumps(s))
         rejected = self.run_publisher()
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("digest mismatch", rejected.stderr)
+
+    def test_recovers_older_accepted_draft_without_moving_its_tag(self):
+        state = self.state()
+        state["main"] = OTHER
+        state["tag"] = SHA
+        marker = f"<!-- muninn-auto-preview source={SHA} mapping={self.mapping_run_id} -->"
+        state["release"] = {"id": 123, "tag_name": self.tag, "draft": True,
+                            "prerelease": True, "body": marker, "assets": []}
+        self.state_file.write_text(json.dumps(state))
+        self.env["RECOVER_EXISTING_DRAFT"] = "true"
+        result = self.run_publisher()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        final = self.state()
+        self.assertEqual(final["tag"], SHA)
+        self.assertFalse(final["release"]["draft"])
+        self.assertEqual(len(final["release"]["assets"]), 3)
 
     def test_refuses_stale_branch_and_tag_conflict(self):
         state = self.state()

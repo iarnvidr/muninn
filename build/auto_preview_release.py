@@ -27,19 +27,23 @@ def version_key(value):
     return tuple(map(int, match.groups())) if match else None
 
 
-def release_versions(api_fn):
-    """Enumerate every published, numeric release; drafts are not installable."""
-    versions = []
+def all_releases(api_fn):
+    """Enumerate both drafts and published releases for interruption recovery."""
+    releases = []
     for page in range(1, 21):
         rows = api_fn(f"repos/{REPOSITORY}/releases?per_page=100&page={page}")
         if not isinstance(rows, list):
             raise ValueError("GitHub release listing is malformed")
-        for release in rows:
-            if not release.get("draft") and version_key(release.get("tag_name", "")) is not None:
-                versions.append(release)
+        releases.extend(rows)
         if len(rows) < 100:
-            return versions
+            return releases
     raise ValueError("GitHub release listing exceeded pagination limit")
+
+
+def release_versions(api_fn):
+    """Enumerate every published numeric release; drafts are not installable."""
+    return [release for release in all_releases(api_fn)
+            if not release.get("draft") and version_key(release.get("tag_name", "")) is not None]
 
 
 def decision(event, checkout_sha, current_main_sha, source_version, published):
@@ -92,7 +96,24 @@ def plan(root, event, api_fn=release_candidate.api):
     checkout_sha = release_candidate.git(root, "rev-parse", "HEAD^{commit}")
     current_main_sha = api_fn(f"repos/{REPOSITORY}/git/ref/heads/main")["object"]["sha"]
     source_version = release_candidate.version(root)
-    return decision(event, checkout_sha, current_main_sha, source_version, release_versions(api_fn))
+    releases = all_releases(api_fn)
+    published = [release for release in releases if not release.get("draft")
+                 and version_key(release.get("tag_name", "")) is not None]
+    result = decision(event, checkout_sha, current_main_sha, source_version, published)
+    # A newer main merge must not supersede an interrupted earlier accepted
+    # release with the same version. The separate trusted recovery job resumes
+    # that draft using the prior accepted commit and its retained package.
+    drafts = [release for release in releases if release.get("draft")
+              and release.get("tag_name") == result["tag"]]
+    if len(drafts) > 1:
+        raise ValueError("ambiguous draft releases for this version")
+    if drafts:
+        ref = api_fn(f"repos/{REPOSITORY}/git/ref/tags/{result['tag']}")["object"]
+        if ref.get("type") != "commit":
+            raise ValueError("draft release tag does not point directly to a commit")
+        if ref.get("sha") != checkout_sha:
+            result["release_needed"] = False
+    return result
 
 
 def validate_assets(directory, version, tag, sha, mapping_run_id):

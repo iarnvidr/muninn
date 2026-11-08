@@ -24,8 +24,16 @@ mkdir -p "$state"
 # compiled here: the only native binary is the previously accepted PR artifact.
 main_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)"
 if [[ "$main_sha" != "$SOURCE_SHA" ]]; then
-  echo 'Refusing to publish a merge which is no longer main HEAD' >&2
-  exit 1
+  if [[ "${RECOVER_EXISTING_DRAFT:-false}" != true ]] ||
+     ! git merge-base --is-ancestor "$SOURCE_SHA" HEAD; then
+    echo 'Refusing to publish a merge which is no longer main HEAD' >&2
+    exit 1
+  fi
+  # Recovery may finish a previously accepted draft, never start a new
+  # release for a superseded commit. The existing tag and marker are checked
+  # below; both must still identify that accepted source.
+  current_version="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+  test "$current_version" = "$VERSION"
 fi
 
 # Distinguish a missing tag/release (404) from an authorization/API error.
@@ -49,12 +57,30 @@ if fetch_or_missing "repos/$GH_REPO/git/ref/tags/$TAG" "$state/tag.json" "$state
     exit 1
   fi
 else
+  if [[ "$main_sha" != "$SOURCE_SHA" ]]; then
+    echo 'Historic draft recovery requires the pre-existing immutable release tag' >&2
+    exit 1
+  fi
   gh api --method POST "repos/$GH_REPO/git/refs" \
     -f "ref=refs/tags/$TAG" -f "sha=$SOURCE_SHA" >/dev/null
 fi
 
 marker="<!-- muninn-auto-preview source=$SOURCE_SHA mapping=$MAPPING_RUN_ID -->"
-if ! fetch_or_missing "repos/$GH_REPO/releases/tags/$TAG" "$state/release.json" "$state/release.err"; then
+# GitHub's by-tag endpoint returns HTTP 404 for *draft* releases. Enumerate
+# releases with an authenticated token so interrupted drafts are discoverable.
+gh api "repos/$GH_REPO/releases?per_page=100" > "$state/releases.json"
+matching="$(jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | length' "$state/releases.json")"
+if [[ "$matching" -gt 1 ]]; then
+  echo 'More than one release identifies this version' >&2
+  exit 1
+fi
+if [[ "$matching" -eq 1 ]]; then
+  jq --arg tag "$TAG" '.[] | select(.tag_name == $tag)' "$state/releases.json" > "$state/release.json"
+else
+  if [[ "$main_sha" != "$SOURCE_SHA" ]]; then
+    echo 'Historic draft recovery cannot create a missing release' >&2
+    exit 1
+  fi
   notes="Automated macOS preview from an accepted PR merge to main.
 
 Source commit: $SOURCE_SHA
@@ -65,10 +91,13 @@ payload is separately signed and verified. Select Stable and previews in Muninn
 to receive this version; stable-only installations are unaffected.
 
 $marker"
-  gh release create "$TAG" --verify-tag --draft --prerelease \
-    --title "Muninn $VERSION" --notes "$notes"
-  gh api "repos/$GH_REPO/releases/tags/$TAG" > "$state/release.json"
+  gh api --method POST "repos/$GH_REPO/releases" \
+    -f "tag_name=$TAG" -f "target_commitish=$SOURCE_SHA" \
+    -f "name=Muninn $VERSION" -f "body=$notes" \
+    -F draft=true -F prerelease=true > "$state/release.json"
 fi
+release_id="$(jq -r '.id' "$state/release.json")"
+[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid GitHub release ID' >&2; exit 1; }
 
 if ! jq -e --arg marker "$marker" \
      '.prerelease == true and ((.body | type) == "string") and (.body | contains($marker))' \
@@ -111,14 +140,22 @@ if [[ "$(jq -r '.draft' "$state/release.json")" == true ]]; then
   for name in "${assets[@]}"; do
     count="$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' "$state/release.json")"
     if [[ "$count" == 0 ]]; then
-      gh release upload "$TAG" "release-assets/$name"
-      gh api "repos/$GH_REPO/releases/tags/$TAG" > "$state/release.json"
+      # Draft releases are not available through the public by-tag lookup, so
+      # upload directly to the authenticated numeric release ID.
+      curl --fail-with-body --silent --show-error --retry 3 --retry-delay 2 --retry-all-errors \
+        -H "Authorization: Bearer $GH_TOKEN" \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'Content-Type: application/octet-stream' \
+        --data-binary "@release-assets/$name" \
+        "https://uploads.github.com/repos/$GH_REPO/releases/$release_id/assets?name=$name" \
+        > "$state/uploaded-asset.json"
+      gh api "repos/$GH_REPO/releases/$release_id" > "$state/release.json"
       verify_remote_assets
     fi
   done
   test "$(jq '.assets | length' "$state/release.json")" -eq 3
-  gh release edit "$TAG" --draft=false --prerelease
-  gh api "repos/$GH_REPO/releases/tags/$TAG" > "$state/release.json"
+  gh api --method PATCH "repos/$GH_REPO/releases/$release_id" \
+    -F draft=false -F prerelease=true > "$state/release.json"
 fi
 
 verify_remote_assets
