@@ -83,6 +83,20 @@ jobs:
             --root . --platform linux-amd64 --abi "$MUNINN_LINUX_ABI" \
             --target "ci/cache/linux-cargo/target/$MUNINN_LINUX_ABI" \
             --mirror ci/cache/linux-cargo/worktree --oras "$RUNNER_TEMP/oras"
+      - name: Record complete checkout file list for source-scoped Cargo checks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          files = subprocess.check_output(['git', 'ls-files', '-z']).decode('utf-8').split('\0')
+          files = [path for path in files if path and not path.startswith('ci/cache/')]
+          if any('\n' in path or '\r' in path for path in files):
+              raise SystemExit('Newline-containing source paths cannot be safely mirrored')
+          manifest = Path('ci/cache/linux-cargo/current-source-files.txt')
+          manifest.parent.mkdir(parents=True, exist_ok=True)
+          manifest.write_text(''.join(path + '\n' for path in sorted(files, key=str.encode)))
+          PY
       - name: Rust, JavaScript, packaging, and publication checks
         id: dagger-checks
         # The pinned action's installer calls `dagger --silent version` when a

@@ -250,13 +250,22 @@ def tar_add_bytes(tar: tarfile.TarFile, name: str, data: bytes, mtime: float = 0
 
 
 def save_package(path: Path, target: Path, plan: dict, outputs: list[str]) -> dict:
-    record = {**plan, "schema": SCHEMA, "outputs": {p: hash_file(target / p) for p in outputs}}
+    # Cargo can place a symlink at target/debug/<binary> pointing to its
+    # fingerprinted executable in deps/. Store the actual compiled bytes as a
+    # regular archive entry. Never follow a link outside the trusted target.
+    resolved = {}
+    for rel in outputs:
+        file = (target / rel).resolve(strict=True)
+        if not file.is_relative_to(target) or not file.is_file():
+            raise ValueError(f"Cargo artifact escapes target directory: {rel}")
+        resolved[rel] = file
+    record = {**plan, "schema": SCHEMA, "outputs": {p: hash_file(src) for p, src in resolved.items()}}
     with path.open("wb") as raw:
         with gzip.GzipFile(fileobj=raw, filename="", mode="wb", mtime=0, compresslevel=1) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
                 tar_add_bytes(archive, "package.json", canonical(record))
                 for rel in outputs:
-                    src = target / rel
+                    src = resolved[rel]
                     info = archive.gettarinfo(str(src), "target/" + rel)
                     if not info.isfile():
                         raise ValueError(f"Non-file Cargo output: {src}")

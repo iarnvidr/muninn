@@ -127,6 +127,26 @@ class PublishedCrateTests(unittest.TestCase):
         MODULE.read_package(self.out / "beta.tar.gz", self.plan()["beta"], extracted, self.root)
         self.assertEqual((extracted / "debug/beta").read_bytes(), b"compiled executable")
 
+    def test_cargo_executable_symlink_is_saved_as_checked_regular_bytes(self):
+        MODULE.PACKAGE_BINARIES["beta"] = ("beta",)
+        self.addCleanup(lambda: MODULE.PACKAGE_BINARIES.pop("beta", None))
+        executable = self.target / "debug/beta"
+        executable.symlink_to("deps/libbeta-2222222222222222.rlib")
+        self.export()
+        extracted = self.base / "symlink-target"
+        MODULE.read_package(self.out / "beta.tar.gz", self.plan()["beta"], extracted, self.root)
+        self.assertEqual((extracted / "debug/beta").read_bytes(), b"compiled-beta")
+        self.assertFalse((extracted / "debug/beta").is_symlink())
+
+    def test_cargo_executable_symlink_cannot_escape_compilation_target(self):
+        MODULE.PACKAGE_BINARIES["beta"] = ("beta",)
+        self.addCleanup(lambda: MODULE.PACKAGE_BINARIES.pop("beta", None))
+        outside = self.base / "outside"
+        outside.write_bytes(b"untrusted data")
+        (self.target / "debug/beta").symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "escapes target"):
+            self.export()
+
     def test_reject_archive_path_escape_before_any_target_write(self):
         self.export()
         path = self.out / "alpha.tar.gz"
