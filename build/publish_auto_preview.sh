@@ -95,7 +95,8 @@ verify_remote_assets() {
     fi
     if [[ "$count" -eq 1 ]]; then
       remote="$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest' "$state/release.json")"
-      expected="sha256:$(sha256sum "release-assets/$name" | cut -d ' ' -f 1)"
+      # shasum is available on both macOS test runners and Ubuntu publishers.
+      expected="sha256:$(shasum -a 256 "release-assets/$name" | cut -d ' ' -f 1)"
       if [[ "$remote" != "$expected" ]]; then
         echo "Published asset digest mismatch: $name" >&2; return 1
       fi
