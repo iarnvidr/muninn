@@ -1,0 +1,172 @@
+name: Publish accepted Muninn preview
+on:
+  workflow_run:
+    workflows: [Map accepted Muninn native artifact]
+    types: [completed]
+
+# This is a trusted workflow_run consumer of the post-merge acceptance mapping,
+# never a privileged PR-event job and never an unreviewed PR build publisher.
+# Serial publication prevents two successive accepted merges racing on a tag.
+concurrency:
+  group: muninn-accepted-preview-publisher
+  cancel-in-progress: false
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.repository.full_name == github.repository
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      release_needed: ${{ steps.plan.outputs.release_needed }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      mapping_run_id: ${{ steps.plan.outputs.mapping_run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.3'
+      - name: Require successful accepted-main mapping and a new SemVer release
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 build/auto_preview_release.py plan
+          --root "$GITHUB_WORKSPACE"
+          --event "$GITHUB_EVENT_PATH"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Retrieve the exact tested native app and Dagger check receipt
+        if: steps.plan.outputs.release_needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAPPING_RUN_ID: ${{ steps.plan.outputs.mapping_run_id }}
+          SOURCE_SHA: ${{ steps.plan.outputs.source_sha }}
+        run: >-
+          python3 build/release_candidate.py retrieve
+          --root "$GITHUB_WORKSPACE"
+          --mapping-run-id "$MAPPING_RUN_ID"
+          --expected-commit "$SOURCE_SHA"
+          --target "$RUNNER_TEMP/muninn"
+      - name: Verify ad-hoc Apple signature and Tauri signing key presence
+        if: steps.plan.outputs.release_needed == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo 'TAURI_SIGNING_PRIVATE_KEY must be available to the trusted automatic preview job' >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict "$RUNNER_TEMP/muninn/Muninn.app"
+          printf '%s\n' 'Apple signing: ad-hoc; not Developer ID signed or notarized.' > "$RUNNER_TEMP/muninn/signing-notarization-evidence.txt"
+      - name: Install detached-signature verifier
+        if: steps.plan.outputs.release_needed == 'true'
+        run: brew install minisign
+      - name: Package and verify signed updater payload
+        if: steps.plan.outputs.release_needed == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          INPUT_VERSION: ${{ steps.plan.outputs.version }}
+          INPUT_TAG: ${{ steps.plan.outputs.tag }}
+          MAPPING_RUN_ID: ${{ steps.plan.outputs.mapping_run_id }}
+          SOURCE_SHA: ${{ steps.plan.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          npx --yes @tauri-apps/cli@2.10.1 signer --help
+          cd "$RUNNER_TEMP/muninn"
+          test -d Muninn.app/Contents/Resources/licenses
+          bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Muninn.app/Contents/Info.plist)
+          python3 "$GITHUB_WORKSPACE/build/updater_release.py" check-version "$bundle_version" "$INPUT_VERSION"
+          rm -f Muninn.app.tar.gz Muninn.app.tar.gz.sig
+          tar -czf Muninn.app.tar.gz Muninn.app
+          ditto -c -k --sequesterRsrc --keepParent Muninn.app "Muninn_${INPUT_VERSION}_macos-arm64.zip"
+          npx --yes @tauri-apps/cli@2.10.1 signer sign Muninn.app.tar.gz
+          test -s Muninn.app.tar.gz.sig
+          python3 - "$GITHUB_WORKSPACE/src-tauri/tauri.conf.json" <<'PY'
+          import base64, json, sys
+          encoded = json.load(open(sys.argv[1]))['plugins']['updater']['pubkey']
+          open('updater.pub', 'wb').write(base64.b64decode(encoded, validate=True))
+          signature = base64.b64decode(open('Muninn.app.tar.gz.sig', 'rb').read(), validate=True)
+          open('Muninn.app.tar.gz.sig.minisig', 'wb').write(signature)
+          PY
+          minisign -Vm Muninn.app.tar.gz -p updater.pub -x Muninn.app.tar.gz.sig.minisig
+          printf 'version=%s tag=%s commit=%s mapping_run=%s\n' "$INPUT_VERSION" "$INPUT_TAG" "$SOURCE_SHA" "$MAPPING_RUN_ID" > release-review.txt
+          shasum -a 256 Muninn.app.tar.gz Muninn.app.tar.gz.sig "Muninn_${INPUT_VERSION}_macos-arm64.zip" > SHA256SUMS
+      - name: Package corresponding sources and generate fixed-tag updater manifest
+        if: steps.plan.outputs.release_needed == 'true'
+        env:
+          INPUT_VERSION: ${{ steps.plan.outputs.version }}
+          INPUT_TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 build/release_sources.py prepare "$RUNNER_TEMP/muninn/corresponding-source"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${INPUT_TAG}/Muninn.app.tar.gz"
+          python3 build/updater_release.py generate "$INPUT_VERSION" "$url" "$(cat "$RUNNER_TEMP/muninn/Muninn.app.tar.gz.sig")" "$RUNNER_TEMP/muninn/latest.json"
+          python3 build/updater_release.py validate "$RUNNER_TEMP/muninn/latest.json"
+          bash build/package-dmg.sh "$RUNNER_TEMP/muninn/Muninn.app" "$RUNNER_TEMP/muninn/corresponding-source" "$RUNNER_TEMP/muninn/Muninn_${INPUT_VERSION}_macos-arm64.dmg"
+          python3 build/auto_preview_release.py verify-assets \
+            --directory "$RUNNER_TEMP/muninn" --version "$INPUT_VERSION" --tag "$INPUT_TAG" \
+            --sha "${{ steps.plan.outputs.source_sha }}" \
+            --mapping-run-id "${{ steps.plan.outputs.mapping_run_id }}"
+      - name: Retain review, signature, license and source evidence
+        if: steps.plan.outputs.release_needed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-auto-preview-${{ steps.plan.outputs.source_sha }}
+          path: |
+            ${{ runner.temp }}/muninn/Muninn.app.tar.gz
+            ${{ runner.temp }}/muninn/Muninn.app.tar.gz.sig
+            ${{ runner.temp }}/muninn/Muninn_*_macos-arm64.zip
+            ${{ runner.temp }}/muninn/Muninn_*_macos-arm64.dmg
+            ${{ runner.temp }}/muninn/latest.json
+            ${{ runner.temp }}/muninn/SHA256SUMS
+            ${{ runner.temp }}/muninn/release-review.txt
+            ${{ runner.temp }}/muninn/accepted-native.json
+            ${{ runner.temp }}/muninn/verify-macos.txt
+            ${{ runner.temp }}/muninn/signing-notarization-evidence.txt
+            ${{ runner.temp }}/muninn/corresponding-source/**
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: package
+    if: needs.package.outputs.release_needed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.package.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: muninn-auto-preview-${{ needs.package.outputs.source_sha }}
+          path: release-assets
+      - name: Create and publish only verified three-asset prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.package.outputs.source_sha }}
+          VERSION: ${{ needs.package.outputs.version }}
+          TAG: ${{ needs.package.outputs.tag }}
+          MAPPING_RUN_ID: ${{ needs.package.outputs.mapping_run_id }}
+        run: bash build/publish_auto_preview.sh

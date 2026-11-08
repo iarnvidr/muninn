@@ -63,6 +63,19 @@
       target.dispatchEvent(e); return e;
     };
     const settle = () => new Promise(resolve => setTimeout(resolve, 120));
+    const waitFor = async (predicate, label, timeoutMs=6000) => {
+      const deadline = Date.now() + timeoutMs;
+      do {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      const media = document.querySelector('video');
+      throw new Error(label + ' timed out: ' + JSON.stringify({
+        time:media?.currentTime, seeking:media?.seeking, readyState:media?.readyState,
+        activeTab:M.tabs.active?.id||M.tabs.active, page:M.page,
+        openDialogs:[...document.querySelectorAll('dialog[open]')].map(dialog=>dialog.id),
+      }));
+    };
     try {
       // Open real app tab via its native command; then activate the tab to mount watch.
       const tabId = await M.newTab('https://www.youtube.com/watch?v='+videoId+'&list='+encodeURIComponent(options.playlistId));
@@ -83,10 +96,30 @@
         video.addEventListener('loadedmetadata', () => {clearTimeout(timer);resolve();}, {once:true});
         video.addEventListener('error', () => {clearTimeout(timer);reject(new Error('local fixture media failed'));}, {once:true});
       });
-      video.currentTime = Math.min(12, Math.max(0, video.duration / 2)); await settle();
+      // WKWebView can expose metadata before its asynchronous seek operation
+      // has finished. Pause and establish a *real*
+      // completed seek before testing the keyboard handler, rather than racing
+      // a 120 ms timer against asynchronous WebKit media operations.
+      video.pause();
+      const firstSeek = Math.min(12, Math.max(0, video.duration / 2));
+      video.currentTime = firstSeek;
+      await waitFor(() => !video.seeking && Math.abs(video.currentTime-firstSeek)<0.15,
+        'fixture initial seek');
       const start = video.currentTime;
-      key('J'); await settle(); assert('J seeks backward 10 seconds', Math.abs(video.currentTime-Math.max(0,start-10))<1.5, video.currentTime);
-      const beforeL=video.currentTime; key('L'); await settle(); assert('L seeks forward 10 seconds', Math.abs(video.currentTime-Math.min(video.duration,beforeL+10))<1.5, video.currentTime);
+      const expectedJ = Math.max(0,start-10), jEvent = key('J');
+      assert('J reaches the production keyboard handler', jEvent.defaultPrevented,
+        {activeTab:M.tabs.active?.id||M.tabs.active,page:M.page,openDialogs:[...document.querySelectorAll('dialog[open]')].map(dialog=>dialog.id)});
+      await waitFor(() => !video.seeking && Math.abs(video.currentTime-expectedJ)<1.5,
+        'J native seek');
+      assert('J seeks backward 10 seconds', jEvent.defaultPrevented && Math.abs(video.currentTime-expectedJ)<1.5,
+        {time:video.currentTime,start,handled:jEvent.defaultPrevented,activeTab:M.tabs.active?.id||M.tabs.active,readyState:video.readyState});
+      const beforeL=video.currentTime, expectedL=Math.min(video.duration,beforeL+10), lEvent=key('L');
+      assert('L reaches the production keyboard handler', lEvent.defaultPrevented,
+        {activeTab:M.tabs.active?.id||M.tabs.active,page:M.page,openDialogs:[...document.querySelectorAll('dialog[open]')].map(dialog=>dialog.id)});
+      await waitFor(() => !video.seeking && Math.abs(video.currentTime-expectedL)<1.5,
+        'L native seek');
+      assert('L seeks forward 10 seconds', lEvent.defaultPrevented && Math.abs(video.currentTime-expectedL)<1.5,
+        {time:video.currentTime,beforeL,handled:lEvent.defaultPrevented,activeTab:M.tabs.active?.id||M.tabs.active,readyState:video.readyState});
       video.pause(); key('k'); await settle(); assert('K toggles playback through production handler', !video.paused, {paused:video.paused});
       video.pause();
       const theatre=document.querySelector('#view-watch');

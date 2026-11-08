@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from pathlib import Path
 import sys
+import urllib.error
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_sources as rs
 
@@ -43,6 +44,40 @@ class ReleaseSourcesTests(unittest.TestCase):
                     rs.prepare(dest, opener=lambda *a, **k: Response(b"bad"))
             self.assertFalse(dest.exists())
             self.assertEqual(list(Path(tmp).glob(".out.staging-*")), [])
+
+    def test_transient_network_resets_retry_without_skipping_checksum(self):
+        payload = b"pinned archive"
+        source = {"name": "dav1d", "url": "https://example.invalid/dav1d.tar.xz",
+                  "sha256": hashlib.sha256(payload).hexdigest()}
+        calls = []
+
+        def flaky_opener(request, timeout):
+            calls.append((request.full_url, timeout))
+            if len(calls) < 3:
+                raise ConnectionResetError("connection reset by peer")
+            return Response(payload)
+
+        with patch.object(rs.time, "sleep") as backoff:
+            self.assertEqual(rs._verified_download(source, opener=flaky_opener), payload)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual([call.args[0] for call in backoff.call_args_list], [1, 2])
+
+    def test_permanent_http_error_and_invalid_checksum_are_not_retried(self):
+        source = {"name": "ffmpeg", "url": "https://example.invalid/ffmpeg.tar.xz",
+                  "sha256": "0" * 64}
+        attempts = []
+
+        def not_found(request, timeout):
+            attempts.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+        with patch.object(rs.time, "sleep") as backoff:
+            with self.assertRaises(urllib.error.HTTPError):
+                rs._verified_download(source, opener=not_found)
+            self.assertEqual(len(attempts), 1)
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                rs._verified_download(source, opener=lambda *_args, **_kw: Response(b"wrong"))
+            backoff.assert_not_called()
 
     def test_second_archive_hash_failure_leaves_no_destination(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -36,6 +36,16 @@ can import the same PR's `pr-N` cache image or the latest green `main` image.
 macOS candidate ZIP/DMG packages are separate from Linux Cargo caches and from
 production releases. OCI cache tags never mean a check or release passed.
 
+After a **successful post-merge native mapping**, the trusted default-branch
+`Publish accepted Muninn preview` workflow can consume the exact accepted native
+artifact and check receipt to publish an ad-hoc-signed GitHub prerelease. It
+never recompiles a PR artifact or exposes updater signing secrets to PR jobs.
+The macOS packaging job has read-only repository access; only its downstream
+publisher has `contents: write`, creates a draft release and checks the three
+required assets before publishing. An unchanged published version is skipped.
+The separate `Protected DMG release` production workflow still requires manual
+dispatch, protected environment review and explicit publish approval.
+
 Keep the workflow/job identities (`Checks` / `test`, `Apple Silicon build` /
 `package`), check receipt path (`check-candidate.json`), retained candidate names,
 exact source-tree validation and release promotion policy intact when changing
