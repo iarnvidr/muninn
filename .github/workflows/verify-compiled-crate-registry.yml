@@ -1,0 +1,65 @@
+name: Verify independent Apple Silicon crate package reuse
+on:
+  # This one-off PR path lets the actual macOS GHCR restore be verified without
+  # rerunning the complete desktop build merely to bypass a warm Cargo cache.
+  pull_request:
+    paths:
+      - '.github/workflows/verify-compiled-crate-registry.yml'
+  # Keep the focused test reusable if the macOS SDK or compiler changes.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  restore-compiled-crates:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Select pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Fingerprint the matching native compiler and SDK
+        id: native-abi
+        run: |
+          set -euo pipefail
+          fingerprint="$(
+            {
+              rustc -vV
+              cargo -vV
+              xcodebuild -version
+              xcrun --sdk macosx --show-sdk-version
+              printf '%s\n' "$MACOSX_DEPLOYMENT_TARGET" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}"
+            } | shasum -a 256 | cut -d ' ' -f 1
+          )"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Install OCI artifact client
+        run: brew install oras
+      - name: Restore published crates into an empty target without Cargo cache
+        env:
+          GHCR_READ_TOKEN: ${{ github.token }}
+          MUNINN_MACOS_ABI: ${{ steps.native-abi.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_READ_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          target="$RUNNER_TEMP/muninn-independent-crates"
+          log="$RUNNER_TEMP/muninn-independent-crates.log"
+          python3 ci/dagger/check/crate_packages.py pull \
+            --root . --platform macos-arm64 --abi "$MUNINN_MACOS_ABI" \
+            --target "$target" | tee "$log"
+          # The desktop binary alone embeds its CI run ID and must be built
+          # for this new run. All twelve unchanged library crates must be
+          # downloaded by OCI identity and materialized as compiled objects.
+          hits="$(grep -c '^HIT muninn-' "$log" || true)"
+          test "$hits" -eq 12
+          grep -q '^MISS muninn (' "$log"
+          grep -q '^Reused 12/13 independently published Rust crates$' "$log"
+          test -n "$(find "$target" -name '*.rlib' -print -quit)"
+          test -n "$(find "$target" -name '*.rmeta' -print -quit)"
+          echo "Verified 12 independently published, unchanged Apple Silicon crate packages without any Cargo target cache"
