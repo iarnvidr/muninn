@@ -426,7 +426,9 @@
       setCls(t.el, cls);
       setHidden(t.state, !sleeping);
       const media = L.tabMediaIndicator(tab);
-      setHidden(t.media, !media);
+      const showProgress = media?.state === 'downloading' && /%$/.test(media.label);
+      setHidden(t.media, !showProgress);
+      setAttr(t.lead, 'data-cache', media?.state || null);
       if (media) {
         setCls(t.media, 'tab-media ' + media.state);
         setText(t.media, media.label);
@@ -622,7 +624,9 @@
     M.page = L.resolvePage(p === 'browse' ? null : p, M.settings);
     render();
   }
-  for (const b of $$('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
+  for (const b of $('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
+  // The wordmark is a real Browse shortcut, not inert branding.
+  $('#muninn-home').addEventListener('click', () => onSidebarClick($('#sidebar [data-page="browse"]')));
   /* Diagnostics is a developer-mode page: its button exists only while the mode is on. */
 // Diagnostics is reachable only from Settings; developer mode never adds a rail item.
   function syncDeveloperNav() {
