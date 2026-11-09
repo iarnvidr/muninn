@@ -19,7 +19,7 @@ const SHOTS = process.env.SHOTS || '';
 let chromium = null;
 try { ({ chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')); } catch (e) { /* skipped below */ }
 
-const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.woff2': 'font/woff2' };
+const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.woff2': 'font/woff2' };
 function serve() {
   const featured = { items: [{ video_id: 'bbbbbbbbbbb', title: 'Synthetic favourite video', channel: 'Synthetic channel', duration_seconds: 300 }] };
   const stub = {
@@ -326,4 +326,60 @@ test('tab media status appears only once per tab except numeric download progres
     assert.deepEqual(errors, []);
     await ctx.close();
   } finally { await browser.close(); srv.close(); }
+});
+
+
+test('dense Feeds graph uses offline Cytoscape and remains visually readable', {skip: !chromium && 'playwright is not installed'},async t=>{
+  const srv=await serve(),base='http://127.0.0.1:'+srv.address().port;
+  let browser;
+  try{browser=await chromium.launch();}
+  catch(error){srv.close();return t.skip('Chromium unavailable: '+String(error.message).split('\n')[0]);}
+  try{
+    const ctx=await browser.newContext({viewport:{width:1400,height:900},colorScheme:'dark'});
+    const page=await ctx.newPage(),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.goto(base+'/ui/index.html?mock=1#token=visual');
+    await page.waitForFunction(()=>typeof window.MuninnFeedGraph?.mount==='function');
+    const report=await page.evaluate(async()=>{
+      const host=document.createElement('div');
+      host.id='e2e-feed-network';
+      Object.assign(host.style,{position:'fixed',inset:'22px',padding:'22px',
+        zIndex:'99999',background:'var(--bg)',color:'var(--text)'});
+      document.body.append(host);
+      const items=Array.from({length:102},(_,i)=>({
+        video_id:String(i).padStart(11,'0'),title:'Captured video with a longer descriptive title '+i,
+        channel_id:'UC'+String(i%24).padStart(22,'x'),channel:'Recorded channel '+i%24
+      }));
+      window.__e2eNetwork=window.MuninnFeedGraph.mount(host);
+      await window.__e2eNetwork.render(
+        window.MuninnFeedGraph.build([{id:99,kind:'subscriptions',items,count:102,
+          captured_at:Date.now()/1000,source_url:'https://www.youtube.com/feed/subscriptions'}]),
+        'snapshot:99'
+      );
+      const canvas=host.querySelector('.feed-network-canvas');
+      return {description:host.querySelector('.feed-network-caption')?.textContent,
+        width:canvas.getBoundingClientRect().width,
+        height:canvas.getBoundingClientRect().height,
+        painted:canvas.querySelectorAll('canvas').length,
+        networkNodes:window.MuninnFeedGraph.prepareNetwork(
+          window.MuninnFeedGraph.build([{id:99,kind:'subscriptions',items}]),{
+            snapshotId:'snapshot:99'}).nodes.length};
+    });
+    assert.ok(report.painted>0,'vendor Cytoscape draws actual browser canvases');
+    assert.ok(report.width>600&&report.height>=390,JSON.stringify(report));
+    assert.equal(report.networkNodes,25,'24 channel bubbles and one capture hub');
+    assert.match(report.description,/102 unique videos/);
+    assert.match(report.description,/24 of 24 channel groups displayed/);
+    await page.locator('#e2e-feed-network .feed-network-search').fill('Recorded channel 23');
+    await page.waitForFunction(()=>
+      document.querySelector('#e2e-feed-network .feed-network-caption')?.textContent?.includes('1 of 1 channel'));
+    assert.equal(await page.locator('#e2e-feed-network .feed-network-inspector[hidden]').count(),1);
+    assert.deepEqual(errors,[],'No JavaScript runtime exceptions');
+    // Capture the actual browser canvas for review, rather than treating a green
+    // compilation check as a visual sign-off.
+    await page.locator('#e2e-feed-network .feed-network-search').fill('');
+    if(SHOTS)await page.screenshot({path:path.join(SHOTS,'muninn-feeds-cytoscape-dense.png')});
+    await page.evaluate(()=>window.__e2eNetwork.destroy());
+    await ctx.close();
+  }finally{await browser.close();srv.close();}
 });
