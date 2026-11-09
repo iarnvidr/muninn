@@ -111,7 +111,7 @@
     switch (media.state) {
       case 'cached': {
         const quality = media.variant === 'audio' ? 'audio only'
-          : /^\\d+$/.test(media.variant || '') ? media.variant + 'p' : 'unknown quality';
+          : /^\d+$/.test(media.variant || '') ? media.variant + 'p' : 'unknown quality';
         return {state:'cached', label:'✓', description:'Downloaded media available locally (' + quality + ')', icon:'play'};
       }
       case 'downloading': {
