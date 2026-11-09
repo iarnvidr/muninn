@@ -1174,7 +1174,7 @@
     const tab=M.tabs.list.find(t=>t.id===c.tabId);
     let p=tab&&tab.playlist;
     if(!p&&tab?.url){const u=new URL(tab.url);const list=u.searchParams.get('list');if(list)p={list_id:list,index:u.searchParams.has('index')?Number(u.searchParams.get('index')):null};}
-    c.queue=null; c.queueError=null; W.queue.hidden=true;
+    c.queue=null; c.queueError=null; c.queueEmpty=false; W.queue.hidden=true;
     if(!p||!p.list_id)return;
     try {
       const qs=new URLSearchParams({list:p.list_id});
@@ -1198,7 +1198,31 @@
     }
     catch(e){if(c===cur){c.queueError=e;renderQueue(c);}}
   }
-  function renderQueue(c){const q=c.queue; W.queue.hidden=!q&&!c.queueError&&!c.queueEmpty; if(W.queue.hidden)return; W.queue.replaceChildren(h('div',{class:'queue-head'},h('strong',{text:q?'Playlist':c.queueEmpty?'No available videos':'Playlist unavailable'}),h('span',{class:'muted',text:q?`${q.index+1} / ${q.items.length}${q.truncated?' · more items not loaded':''}`:c.queueEmpty?'This playlist has no available videos.':('Could not load playlist queue'+(c.queueError?': '+M.errText(c.queueError):''))})));if(q)W.queue.append(...q.items.map((it,i)=>h('button',{type:'button',class:'queue-item'+(i===q.index?' current':''),disabled:it.available===false,text:it.title||it.id,onclick:()=>selectQueue(i)},it.available===false?' · unavailable':'')));if(c.queueError||c.queueEmpty)W.queue.append(h('button',{type:'button',class:'primary',text:'Retry',onclick:()=>loadQueue(c)}));}
+  function renderQueue(c) {
+    const q = c.queue;
+    W.queue.hidden = !q && !c.queueError && !c.queueEmpty;
+    if (W.queue.hidden) return;
+    const title = q ? (q.warning ? 'Saved playlist' : 'Playlist') :
+      c.queueEmpty ? 'No available videos' : 'Playlist queue unavailable';
+    const status = q
+      ? `${q.index + 1} / ${q.items.length}${q.truncated ? ' · more items not loaded' : ''}`
+      : c.queueEmpty ? 'YouTube returned no playable videos.' :
+        'Could not load playlist queue. Current video playback is not affected.';
+    W.queue.replaceChildren(h('div', {class:'queue-head'},
+      h('strong', {text:title}), h('span', {class:'muted',text:status})));
+    if (q?.warning) {
+      W.queue.append(h('p', {class:'muted playlist-warning',text:q.warning}));
+    }
+    if (q) W.queue.append(...q.items.map((it,i) =>
+      h('button', {type:'button',class:'queue-item'+(i===q.index?' current':''),
+        disabled:it.available===false,text:it.title||it.id,onclick:()=>selectQueue(i)},
+        it.available===false?' · unavailable':'')));
+    if (c.queueError || c.queueEmpty || q?.warning) {
+      W.queue.append(h('div', {class:'playlist-actions'},
+        h('button', {type:'button',class:'small',text:'Retry',onclick:()=>loadQueue(c)}),
+        h('span', {class:'muted',text:c.queueError?M.errText(c.queueError).slice(0,160):''})));
+    }
+  }
   async function selectQueue(index){const c=cur,q=c&&c.queue,item=q&&q.items[index];if(!c||!item||item.available===false)return;try{await M.invoke('tab_open_video',{id:c.tabId,video_id:item.id,playlist:{list_id:q.list_id,index:index+1}});await M.refreshTabs();}catch(e){notice('Could not open playlist video: '+M.errText(e));}}
   function advanceQueue(direction, ended){const c=cur,q=c&&c.queue;if(!c||!q)return false;const i=window.MuninnQueue.next(q.items,q.index,direction);if(i==null){notice(ended?'End of available playlist items':'No more available playlist items');return false;}selectQueue(i);return true;}
 
