@@ -135,266 +135,418 @@
       more:start+size<all.length,previous:start>0,truncated:!!graph.truncated};
   }
 
+
+  // Chat Hub-style network presentation. Every aggregate edge is justified by
+  // snapshot -> video <- channel links; no inferred channel relationships.
+  function prepareNetwork(graph,{snapshotId=null,scope='selected',query='',focusId=null,maxChannels=42}={}) {
+    const rel=relationships(graph);
+    const snapshots=[...rel.nodes.values()].filter(n=>n.kind==='snapshot');
+    const selected=rel.nodes.get(snapshotId)||snapshots[0]||null;
+    const captures=scope==='all'?snapshots.slice(0,16):(selected?[selected]:[]);
+    const inScope=new Set();
+    for(const snap of captures)for(const id of rel.captureVideos.get(snap.id)||[])inScope.add(id);
+    const channelGroups=new Map();
+    for(const vid of inScope)for(const chId of rel.videoChannels.get(vid)||[]) {
+      const node=rel.nodes.get(chId);if(!node)continue;
+      if(!channelGroups.has(chId))channelGroups.set(chId,{node,videoIds:new Set(),captureIds:new Set()});
+      const g=channelGroups.get(chId);g.videoIds.add(vid);
+      for(const captureId of rel.videoCaptures.get(vid)||[])if(captures.some(s=>s.id===captureId))g.captureIds.add(captureId);
+    }
+    const q=String(query||'').toLocaleLowerCase().trim();
+    const ranked=[...channelGroups.values()].filter(g=>!q||g.node.label.toLocaleLowerCase().includes(q)||
+      [...g.videoIds].some(id=>rel.nodes.get(id)?.label.toLocaleLowerCase().includes(q)))
+      .sort((a,b)=>b.videoIds.size-a.videoIds.size||b.captureIds.size-a.captureIds.size||a.node.label.localeCompare(b.node.label));
+    const selectedGroup=ranked.find(g=>g.node.id===focusId)||
+      channelGroups.get(focusId);
+    let included=ranked.slice(0,Math.max(8,Math.min(100,maxChannels)));
+    if(selectedGroup&&!included.includes(selectedGroup))included=[...included.slice(0,Math.max(0,included.length-1)),selectedGroup];
+    const nodeMap=new Map(),edgeMap=new Map();
+    const add=(node,extra={})=>{if(!nodeMap.has(node.id))nodeMap.set(node.id,{...node,...extra});};
+    const edge=(source,target,basis,count,reason)=>{
+      if(!nodeMap.has(source)||!nodeMap.has(target))return;
+      const id=source+'|'+target+'|'+basis;
+      edgeMap.set(id,{id,source,target,basis,count,reason});
+    };
+    for(const snap of captures)add(snap,{degree:0,kind:'snapshot'});
+    for(const group of included)add(group.node,{degree:0,count:group.videoIds.size,kind:'channel'});
+    for(const group of included)for(const capture of group.captureIds){
+      let count=0;for(const vid of group.videoIds)if(rel.videoCaptures.get(vid)?.has(capture))count++;
+      if(count)edge(capture,group.node.id,'captured_in',count,count+' recorded video'+(count===1?'':'s')+' from this channel in this capture');
+    }
+    // Expand only an actual one-hop neighborhood on selection, never 100
+    // overlapping labels. The inspector still exposes every stored video.
+    let expansionVideos=[];
+    if(focusId?.startsWith('channel:')||focusId?.startsWith('channel-local:')) {
+      const ids=[...(channelGroups.get(focusId)?.videoIds||[])].sort((a,b)=>
+        (rel.videoCaptures.get(b)?.size||0)-(rel.videoCaptures.get(a)?.size||0)||
+        (rel.nodes.get(a)?.label||'').localeCompare(rel.nodes.get(b)?.label||''));
+      expansionVideos=ids.slice(0,24);
+    }else if(focusId?.startsWith('video:')&&inScope.has(focusId)){
+      expansionVideos=[focusId];
+      for(const id of rel.videoChannels.get(focusId)||[]) {
+        const ch=rel.nodes.get(id);if(ch)add(ch,{count:channelGroups.get(id)?.videoIds.size||1});
+      }
+    }
+    for(const vid of expansionVideos){
+      const v=rel.nodes.get(vid);if(!v)continue;
+      add(v,{degree:0,kind:'video'});
+      for(const ch of rel.videoChannels.get(vid)||[]) {
+        if(nodeMap.has(ch))edge(ch,vid,'published',1,'Channel published this recorded video');
+      }
+      for(const snap of rel.videoCaptures.get(vid)||[]) {
+        if(nodeMap.has(snap))edge(snap,vid,'contains',1,'Video appeared in this captured feed');
+      }
+    }
+    // Each visible cluster comes from observed capture-channel relationships.
+    const adjacency=new Map([...nodeMap.keys()].map(id=>[id,new Set()]));
+    for(const e of edgeMap.values()){adjacency.get(e.source).add(e.target);adjacency.get(e.target).add(e.source);}
+    const visited=new Set();let cluster=0;
+    for(const seed of nodeMap.keys()){
+      if(visited.has(seed))continue;
+      const queue=[seed],members=[];for(let i=0;i<queue.length;i++){
+        const id=queue[i];if(visited.has(id))continue;visited.add(id);members.push(id);
+        queue.push(...adjacency.get(id));
+      }
+      const sorted=members.sort((a,b)=>adjacency.get(b).size-adjacency.get(a).size||a.localeCompare(b));
+      const hub=sorted[0];const landmarks=new Set([hub]),reserved=new Set();
+      const reserve=id=>{reserved.add(id);for(const n of adjacency.get(id))reserved.add(n);};
+      reserve(hub);
+      for(const id of sorted){if(landmarks.size>=8)break;
+        if(!reserved.has(id)&&adjacency.get(id).size>1){landmarks.add(id);reserve(id);}
+      }
+      for(const id of members){const n=nodeMap.get(id);n.cluster=cluster;n.degree=adjacency.get(id).size;
+        n.hub=id===hub;n.landmark=landmarks.has(id)||(n.kind==='snapshot');
+      }cluster++;
+    }
+    const nodes=[...nodeMap.values()],edges=[...edgeMap.values()];
+    return {nodes,edges,focus_id:focusId,selected_id:selected?.id||null,clusterCount:cluster,
+      totalVideos:inScope.size,totalChannels:ranked.length,visibleChannels:included.length,
+      hiddenChannels:Math.max(0,ranked.length-included.length),captures:captures.length,
+      expandedVideos:expansionVideos.length,truncated:!!graph.truncated,
+      index:rel,selected,captureNodes:captures};
+  }
+
+  // A bounded lazy import; the exact same MIT-licensed ESM artifact is embedded
+  // by the Rust ui-assets crate. Rendering works fully offline.
+  let cytoscapeModule;
+  const graphEngine=()=>cytoscapeModule||=import('/ui/vendor/cytoscape.esm.min.mjs').then(m=>m.default);
+
   function mount(container,callbacks={}) {
     const doc=container.ownerDocument;
-    const html=(tag,klass,text)=>{
-      const el=doc.createElement(tag);if(klass)el.className=klass;
-      if(text!==undefined)el.textContent=String(text);return el;
+    const el=(tag,klass,text)=>{
+      const n=doc.createElement(tag);if(klass)n.className=klass;
+      if(text!==undefined)n.textContent=String(text);return n;
     };
-    const svgEl=(tag,attrs)=>{
-      const el=doc.createElementNS(NS,tag);
-      for(const [k,v] of Object.entries(attrs||{}))el.setAttribute(k,String(v));
-      return el;
-    };
-    const button=(label,fn,klass)=>{
-      const b=html('button',klass||'',label);b.type='button';b.addEventListener('click',fn);return b;
-    };
-    const toolbar=html('div','feed-explorer-toolbar');
-    const scopeLabel=html('label','feed-explorer-field','Scope');
-    const scopeSelect=html('select');
-    scopeSelect.setAttribute('aria-label','Connections scope');
+    const btn=(title,fn)=>{const n=el('button',null,title);n.type='button';n.addEventListener('click',fn);return n;};
+    const toolbar=el('div','feed-network-toolbar');
+    const scopeLabel=el('label','feed-network-scope','View');
+    const scopeControl=el('select');scopeControl.setAttribute('aria-label','Feed network scope');
     for(const [value,label] of [['selected','Selected capture'],['all','All loaded captures']]){
-      const option=html('option',null,label);option.value=value;scopeSelect.append(option);
+      const o=el('option',null,label);o.value=value;scopeControl.append(o);
     }
-    scopeLabel.append(scopeSelect);
-    const search=html('input');search.type='search';search.placeholder='Find a channel or video';
-    search.setAttribute('aria-label','Filter feed connections');
-    const back=button('All channels',()=>{focus=null;offset=0;draw();},'feed-explorer-back');
-    const previous=button('Previous',()=>{offset=Math.max(0,offset-PAGE_SIZE);draw();});
-    const next=button('Next',()=>{offset+=PAGE_SIZE;draw();});
-    const zoomOut=button('−',()=>zoomTo(zoom/1.2));zoomOut.setAttribute('aria-label','Zoom out');
-    const zoomIn=button('+',()=>zoomTo(zoom*1.2));zoomIn.setAttribute('aria-label','Zoom in');
-    const fit=button('Fit',()=>{zoom=1;panX=0;panY=0;setView();});
-    const pageStatus=html('span','feed-explorer-page');
-    toolbar.append(scopeLabel,search,back,previous,pageStatus,next,zoomOut,zoomIn,fit);
-    const layout=html('div','feed-explorer-layout');
-    const stage=html('div','feed-explorer-stage');
-    const heading=html('div','feed-explorer-heading');
-    const canvas=html('div','feed-explorer-canvas');
-    const svg=svgEl('svg',{viewBox:'0 0 1000 680',role:'group',
-      'aria-label':'Observed relationships between captures, channels and videos'});
-    svg.setAttribute('tabindex','0');
-    canvas.append(svg);stage.append(heading,canvas);
-    const inspector=html('aside','feed-explorer-inspector');
-    inspector.setAttribute('aria-label','Connection details');
-    const legend=html('p','feed-explorer-legend',
-      'Only observed data. Channel groups summarize captured videos; select a channel or video to expand its actual links.');
-    layout.append(stage,inspector);
-    container.replaceChildren(toolbar,layout,legend);
-
-    let graph={nodes:[],edges:[],snapshots:0},rel=relationships(graph);
-    let snapshotId=null,focus=null,scope='selected',offset=0,query='',zoom=1,panX=0,panY=0;
-    let viewHeight=680,viewWidth=1000;
-    const title=(parent,text,tag='h3')=>{const x=html(tag,'',text);parent.append(x);return x;};
-    const paragraph=(parent,text,cls='')=>{const el=html('p',cls,text);parent.append(el);return el;};
-    const line=(x1,y1,x2,y2)=>{
-      const m=Math.round((x1+x2)/2),p=svgEl('path',{
-        d:'M'+x1+' '+y1+' C'+m+' '+y1+' '+m+' '+y2+' '+x2+' '+y2,
-        class:'feed-explorer-edge'});svg.append(p);
+    scopeLabel.append(scopeControl);
+    const search=el('input','feed-network-search');search.type='search';
+    search.placeholder='Find channels or videos';search.setAttribute('aria-label','Search feed graph');
+    const more=btn('Show more nodes',()=>{limit=Math.min(100,limit+20);rebuild();});
+    const zoomOut=btn('−',()=>setZoom(.8));zoomOut.setAttribute('aria-label','Zoom graph out');
+    const zoomIn=btn('+',()=>setZoom(1.25));zoomIn.setAttribute('aria-label','Zoom graph in');
+    const fit=btn('Fit',()=>fitGraph());
+    toolbar.append(scopeLabel,search,more,zoomOut,zoomIn,fit);
+    const stage=el('div','feed-network-stage');
+    const canvas=el('div','feed-network-canvas');
+    const tooltip=el('div','feed-network-tooltip');tooltip.hidden=true;
+    const inspector=el('aside','feed-network-inspector');inspector.hidden=true;
+    inspector.setAttribute('aria-label','Selected feed connection');
+    const close=btn('×',()=>{inspector.hidden=true;focused=null;rebuild();});
+    close.className='feed-network-inspector-close';close.setAttribute('aria-label','Close connection details');
+    const detail=el('div','feed-network-detail');
+    inspector.append(close,detail);
+    stage.append(canvas,tooltip,inspector);
+    const caption=el('p','feed-network-caption');caption.setAttribute('role','status');
+    const legend=el('div','feed-network-legend');
+    for(const [kind,text] of [['snapshot','Capture'],['channel','Channel'],['video','Video']]){
+      const item=el('span','feed-network-legend-'+kind,text);legend.append(item);
+    }
+    container.replaceChildren(toolbar,stage,caption,legend);
+    let cy=null,prepared=null,graph={nodes:[],edges:[]},captureId=null,scope='selected',
+      focused=null,limit=42,query='',disposed=false,generation=0,labelsFrame=null,resizeFrame=null;
+    const views=new Map(),MAX_VIEWS=6;
+    const cacheKey=()=>JSON.stringify([scope,captureId,focused,query,limit]);
+    let currentKey=null;
+    const css=(variable,fallback)=>{
+      const value=doc.defaultView?.getComputedStyle?.(doc.documentElement)?.getPropertyValue(variable);
+      return value?.trim()||fallback;
     };
-    const card=(node,x,y,width,height,label,sub,onClick,onOpen,kind='item')=>{
-      const group=svgEl('g',{class:'feed-explorer-node '+kind,role:'button',tabindex:'0',
-        'aria-label':label+(sub?' · '+sub:'')});
-      group.setAttribute('transform','translate('+x+','+y+')');
-      const rect=svgEl('rect',{x:0,y:0,width,height,rx:11});
-      const text=svgEl('text',{x:16,y:height/2-3,class:'feed-explorer-label'});
-      text.textContent=shorten(label,width>340?46:28);
-      const small=svgEl('text',{x:16,y:height/2+17,class:'feed-explorer-sub'});
-      small.textContent=shorten(sub,width>340?61:34);
-      const tooltip=svgEl('title');tooltip.textContent=label+(sub?' · '+sub:'');
-      group.append(rect,text,small,tooltip);
-      group.addEventListener('click',onClick);
-      if(onOpen)group.addEventListener('dblclick',onOpen);
-      group.addEventListener('keydown',e=>{
-        if(e.key==='Enter'||e.key===' '){e.preventDefault();onClick();}
-      });
-      svg.append(group);return group;
-    };
-    function setView(){
-      const w=viewWidth/zoom,h=viewHeight/zoom;
-      const x=(viewWidth-w)/2+panX,y=(viewHeight-h)/2+panY;
-      svg.setAttribute('viewBox',[x,y,w,h].join(' '));
-    }
-    function zoomTo(value){zoom=Math.max(.8,Math.min(2.5,value));setView();}
-    function capturedDate(ts){
-      const numeric=Number(ts),date=Number.isFinite(numeric)&&numeric>0
-        ? new Date(numeric>1e12?numeric:numeric*1000):new Date(ts);
-      return Number.isNaN(date.getTime())?'Unknown date':date.toLocaleDateString();
-    }
-    function sourceSummary(node){
-      return node.source_url?'Recorded source: '+node.source_url:'Source URL was not recorded for this capture.';
-    }
-    function openCapture(s){
-      if(!s)return;
-      if(snapshotId!==s.id){snapshotId=s.id;callbacks.onSelect?.(s);}
-      focus=null;offset=0;scope='selected';scopeSelect.value=scope;draw();
-    }
-    function inspectorButton(label,fn){
-      inspector.append(button(label,fn,'feed-explorer-action'));
-    }
-    function detailList(name,items,callback,max=18){
-      title(inspector,name,'h4');
-      const list=html('ul','feed-explorer-inspector-list');
-      for(const row of items.slice(0,max)){
-        const li=html('li');const b=button(row.label,()=>callback(row));
-        b.title=row.label;li.append(b);list.append(li);
-      }
-      inspector.append(list);
-      if(items.length>max)paragraph(inspector,(items.length-max)+' additional items not listed here. Use graph pagination.');
-    }
-    const getVideo=id=>rel.nodes.get(id);
-    const captureIdsOf=id=>[...(rel.videoCaptures.get(id)||[])];
-    function inspectOverview(model) {
-      title(inspector,scope==='all'?'Loaded feed captures':'Selected capture');
-      if(model.selected){
-        paragraph(inspector,model.selected.label,'feed-explorer-strong');
-        paragraph(inspector,sourceSummary(model.selected));
-        paragraph(inspector,'Captured '+capturedDate(model.selected.captured_at));
-      }
-      paragraph(inspector,model.active.length+' capture'+(model.active.length===1?'':'s')+
-        ' · '+model.videoCount+' unique videos · '+model.totalGroups+' channel groups');
-      if(graph.truncated)paragraph(inspector,'Some older captures or items were excluded to keep the explorer responsive.','feed-explorer-warning');
-      if(scope==='selected'&&model.selected)
-        inspectorButton('View snapshot cards',()=>callbacks.onOpen?.(model.selected));
-      paragraph(inspector,'Choose a channel group to inspect the videos and the other captures containing them.');
-      if(!model.totalGroups)paragraph(inspector,query?'No channel or video matches this filter.':'No recorded video/channel connections for this capture.');
-    }
-    function inspectChannel(ch,videos) {
-      title(inspector,ch.label);
-      paragraph(inspector,ch.verified_id?'Verified channel ID in recorded metadata.':'Channel name only; its identity across captures is not verified.');
-      paragraph(inspector,videos.length+' recorded video'+(videos.length===1?'':'s')+
-        ' across '+new Set(videos.flatMap(v=>captureIdsOf(v.id))).size+' capture(s)');
-      if(ch.channel_id)inspectorButton('Open channel',()=>callbacks.onOpen?.(ch));
-      detailList('Videos',videos.map(v=>({id:v.id,label:v.label})),r=>{focus={kind:'video',id:r.id};offset=0;draw();},24);
-    }
-    function inspectVideo(v) {
-      title(inspector,v.label);
-      paragraph(inspector,'Observed video · '+v.video_id);
-      inspectorButton('Play in Muninn',()=>callbacks.onOpen?.(v));
-      const channels=[...(rel.videoChannels.get(v.id)||[])].map(id=>rel.nodes.get(id)).filter(Boolean);
-      detailList('Recorded channels',channels.map(ch=>({id:ch.id,label:ch.label})),row=>{
-        focus={kind:'channel',id:row.id};offset=0;draw();
-      });
-      const snapshots=captureIdsOf(v.id).map(id=>rel.nodes.get(id)).filter(Boolean);
-      detailList('Captured in',snapshots.map(s=>({id:s.id,label:s.label+' · '+capturedDate(s.captured_at)})),row=>{
-        const snapshot=rel.nodes.get(row.id);openCapture(snapshot);
-      });
-    }
-    function rowsForChannel(ch){
-      const q=query.toLocaleLowerCase();
-      return [...(rel.channelVideos.get(ch.id)||[])].map(id=>getVideo(id)).filter(Boolean)
-        .filter(v=>!q||ch.label.toLocaleLowerCase().includes(q)||v.label.toLocaleLowerCase().includes(q))
-        .sort((a,b)=>captureIdsOf(b.id).length-captureIdsOf(a.id).length||a.label.localeCompare(b.label));
-    }
-    function buildFrame(rootNode,rootLabel,rootSubtitle,rows,actions,kind) {
-      svg.replaceChildren();
-      const h=Math.max(630,70+rows.length*73);
-      viewHeight=h;viewWidth=1000;svg.style.height=Math.min(h,710)+'px';
-      // Source/snapshot chain is described in the inspector, not drawn twice.
-      const rootY=h/2-43;
-      for(let i=0;i<rows.length;i++)line(275,rootY+43,398,78+i*73);
-      card(rootNode,24,rootY,251,86,rootLabel,rootSubtitle,actions?.root||(()=>{}),actions?.openRoot,'root');
-      rows.forEach((row,i)=>{
-        card(row.node,398,47+i*73,568,62,row.label,row.sub,row.click,row.open,kind);
-      });
-      setView();
-    }
-    function draw() {
-      rel=relationships(graph);inspector.replaceChildren();
-      const captures=[...rel.nodes.values()].filter(n=>n.kind==='snapshot');
-      if(!rel.nodes.get(snapshotId))snapshotId=captures[0]?.id||null;
-      const selected=rel.nodes.get(snapshotId);
-      let rows=[],rootNode=null,rootLabel='',rootSub='',kind='channel';
-      let actions=null,caption='';
-      if(focus?.kind==='channel'&&rel.nodes.get(focus.id)){
-        const ch=rel.nodes.get(focus.id),videos=rowsForChannel(ch);
-        const shown=videos.slice(offset,offset+PAGE_SIZE);
-        rootNode=ch;rootLabel=ch.label;rootSub=videos.length+' videos';
-        rows=shown.map(v=>({node:v,label:v.label,sub:'Seen in '+captureIdsOf(v.id).length+' capture(s)',
-          click:()=>{focus={kind:'video',id:v.id};offset=0;draw();},
-          open:()=>callbacks.onOpen?.(v)}));
-        actions={root:()=>{focus=null;offset=0;draw();},openRoot:ch.channel_id?()=>callbacks.onOpen?.(ch):null};
-        caption='Channel → recorded videos';inspectChannel(ch,videos);
-        pageStatus.textContent=(offset+1)+'–'+Math.min(offset+PAGE_SIZE,videos.length)+' of '+videos.length;
-        previous.disabled=offset===0;next.disabled=offset+PAGE_SIZE>=videos.length;
-      }else if(focus?.kind==='video'&&rel.nodes.get(focus.id)){
-        const v=rel.nodes.get(focus.id);rootNode=v;rootLabel=v.label;rootSub='Video · '+v.video_id;
-        const linked=[
-          ...[...(rel.videoChannels.get(v.id)||[])].map(id=>rel.nodes.get(id)).filter(Boolean),
-          ...captureIdsOf(v.id).map(id=>rel.nodes.get(id)).filter(Boolean)
-        ];const shown=linked.slice(offset,offset+PAGE_SIZE);
-        rows=shown.map(n=>({node:n,label:n.label,
-          sub:n.kind==='snapshot'?'Captured '+capturedDate(n.captured_at):'Recorded channel',
-          click:()=>{if(n.kind==='snapshot')openCapture(n);else{focus={kind:'channel',id:n.id};offset=0;draw();}},
-          open:()=>callbacks.onOpen?.(n)}));
-        actions={root:()=>callbacks.onOpen?.(v),openRoot:()=>callbacks.onOpen?.(v)};
-        caption='Video → channel and captured snapshots';inspectVideo(v);kind='context';
-        pageStatus.textContent=(offset+1)+'–'+Math.min(offset+PAGE_SIZE,linked.length)+' of '+linked.length;
-        previous.disabled=offset===0;next.disabled=offset+PAGE_SIZE>=linked.length;
-      }else{
-        focus=null;
-        const m=overview(graph,{snapshotId,scope,query,offset});
-        if(m.start!==offset)offset=m.start;
-        rootNode=selected||{id:'empty',kind:'snapshot',label:'No captures'};
-        rootLabel=scope==='all'?'Loaded captures':(selected?.label||'No captures');
-        rootSub=scope==='all'?m.active.length+' captures · '+m.videoCount+' videos'
-          :m.videoCount+' videos · '+m.totalGroups+' channels';
-        rows=m.visible.map(g=>({node:g.node,label:g.node.label,
-          sub:g.count+' video'+(g.count===1?'':'s')+' · '+g.sharedCaptures+' capture(s)',
-          click:()=>{focus={kind:'channel',id:g.id};offset=0;draw();},
-          open:g.node.channel_id?()=>callbacks.onOpen?.(g.node):null}));
-        actions={root:()=>{if(selected)callbacks.onOpen?.(selected);}};
-        caption=scope==='all'?'Channels grouped across loaded captures':'Channels in '+(selected?.label||'capture');
-        inspectOverview(m);
-        pageStatus.textContent=m.totalGroups?m.start+1+'–'+m.end+' of '+m.totalGroups:'0 channels';
-        previous.disabled=!m.previous;next.disabled=!m.more;
-      }
-      back.hidden=!focus;
-      heading.textContent=caption;
-      scopeSelect.disabled=!captures.length;
-      search.disabled=!captures.length;
-      if(!rows.length){
-        svg.replaceChildren();
-        const empty=svgEl('text',{x:500,y:270,'text-anchor':'middle',class:'feed-explorer-empty'});
-        empty.textContent=query?'No matches — try another search':'No connections to display in this view';
-        svg.append(empty);viewHeight=630;svg.style.height='530px';setView();
-      }else buildFrame(rootNode,rootLabel,rootSub,rows,actions,kind);
-    }
-    scopeSelect.addEventListener('change',()=>{scope=scopeSelect.value;offset=0;focus=null;draw();});
-    search.addEventListener('input',()=>{query=search.value.trim();offset=0;draw();});
-    let drag=null;
-    svg.addEventListener('pointerdown',e=>{
-      if(e.target.closest?.('.feed-explorer-node'))return;
-      drag={x:e.clientX,y:e.clientY,px:panX,py:panY};
-      svg.setPointerCapture?.(e.pointerId);
+    const palette=()=>({
+      bg:css('--bg','#101116'),text:css('--text','#e9e9ee'),
+      muted:css('--muted','#9ca6b0'),accent:css('--accent','#e36b78'),
+      channel:css('--ok','#4ca4b5'),video:css('--warn','#d5a061')
     });
-    svg.addEventListener('pointermove',e=>{
-      if(!drag)return;
-      const r=svg.getBoundingClientRect();
-      panX=drag.px-(e.clientX-drag.x)*(viewWidth/zoom)/(r.width||1000);
-      panY=drag.py-(e.clientY-drag.y)*(viewHeight/zoom)/(r.height||680);
-      setView();
-    });
-    svg.addEventListener('pointerup',()=>{drag=null;});
-    svg.addEventListener('pointercancel',()=>{drag=null;});
-    svg.addEventListener('wheel',e=>{e.preventDefault();zoomTo(zoom*(e.deltaY>0?.89:1.12));},{passive:false});
+    function saveView(){
+      if(!cy||!currentKey)return;
+      const positions=Object.fromEntries(cy.nodes().map(n=>[n.id(),n.position()]));
+      views.delete(currentKey);
+      views.set(currentKey,{positions,zoom:cy.zoom(),pan:cy.pan()});
+      while(views.size>MAX_VIEWS)views.delete(views.keys().next().value);
+    }
+    function clearCanvas(){if(cy){saveView();cy.destroy();cy=null;}canvas.replaceChildren();tooltip.hidden=true;}
+    function setZoom(factor){if(!cy)return;const z=Math.max(.25,Math.min(4,cy.zoom()*factor));
+      cy.zoom({level:z,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});updateLabels();}
+    function fitGraph(){if(!cy)return;cy.fit(undefined,54);
+      if(cy.zoom()>1.45){cy.zoom(1.45);cy.center();}updateLabels();}
+    let updateLabels=()=>{};
+    function list(parent,title,items,click,cap=18){
+      const h=el('h4',null,title);parent.append(h);
+      const ul=el('ul','feed-network-detail-list');
+      for(const n of items.slice(0,cap)){
+        const li=el('li');const b=btn(n.label,()=>click(n));b.title=n.label;
+        li.append(b);ul.append(li);
+      }
+      parent.append(ul);
+      if(items.length>cap)parent.append(el('p','feed-network-excess',
+        (items.length-cap)+' more. Search or select a connection to explore them.'));
+    }
+    const message=(text,klass)=>detail.append(el('p',klass||'',text));
+    function inspect(node,edge=null) {
+      detail.replaceChildren();inspector.hidden=false;
+      if(edge){
+        detail.append(el('h3',null,'Recorded connection'));
+        message(edge.reason||'Recorded connection in a captured feed.');
+        const a=prepared?.index.nodes.get(edge.source),b=prepared?.index.nodes.get(edge.target);
+        message((a?.label||edge.source)+' ↔ '+(b?.label||edge.target),'feed-network-emphasis');
+        return;
+      }
+      if(!node)return;
+      detail.append(el('h3',null,node.label));
+      if(node.kind==='snapshot'){
+        message('Captured feed · '+(node.count||0)+' recorded videos');
+        message(node.source_url?'Source: '+node.source_url:'The original source URL was not recorded.');
+        if(node.captured_at){
+          const raw=Number(node.captured_at),d=new Date(raw>1e12?raw:raw*1000);
+          if(!Number.isNaN(d.valueOf()))message('Captured '+d.toLocaleString());
+        }
+        detail.append(btn('View video cards',()=>callbacks.onOpen?.(node)));
+        const matches=prepared?.nodes.filter(n=>n.kind==='channel')||[];
+        list(detail,'Channels in this view',matches.slice(0,40),n=>focusNode(n.id),20);
+      }else if(node.kind==='channel'){
+        message(node.channel_id?'Channel ID: '+node.channel_id:
+          'Channel ID not recorded; name-only grouping is limited to its source capture.');
+        const vids=[...(prepared?.index.channelVideos.get(node.id)||[])].map(id=>prepared.index.nodes.get(id)).filter(Boolean);
+        const relevant=vids.filter(v=>prepared?.index.videoCaptures.get(v.id)?.size>0);
+        message(relevant.length+' recorded videos linked to this channel.');
+        if(node.channel_id)detail.append(btn('Open channel',()=>callbacks.onOpen?.(node)));
+        list(detail,'Recorded videos',relevant.sort((a,b)=>a.label.localeCompare(b.label)),
+          n=>focusNode(n.id),40);
+      }else if(node.kind==='video'){
+        message('Recorded video · '+node.video_id);
+        detail.append(btn('Play in Muninn',()=>callbacks.onOpen?.(node)));
+        list(detail,'Appears in captured feeds',
+          [...(prepared?.index.videoCaptures.get(node.id)||[])].map(id=>prepared.index.nodes.get(id)).filter(Boolean),
+          n=>focusNode(n.id),20);
+        list(detail,'Recorded channel',
+          [...(prepared?.index.videoChannels.get(node.id)||[])].map(id=>prepared.index.nodes.get(id)).filter(Boolean),
+          n=>focusNode(n.id),20);
+      }
+    }
+    function readableLabels(){
+      if(!cy)return;
+      const z=cy.zoom(),width=cy.width(),height=cy.height(),theme=palette();
+      cy.nodes().style({'font-size':11/z,'text-max-width':150/z,
+        'text-outline-width':1.5/z,'text-margin-y':7/z});
+      cy.nodes().removeClass('label-visible');
+      const priority=cy.nodes().filter(n=>n.hasClass('active')||n.hasClass('adjacent')||
+        n.data('landmark')||(z>1.45&&n.data('degree')>1))
+        .sort((a,b)=>Number(b.hasClass('active'))-Number(a.hasClass('active'))||
+          Number(b.hasClass('adjacent'))-Number(a.hasClass('adjacent'))||
+          Number(b.data('hub'))-Number(a.data('hub'))||
+          (b.data('degree')||0)-(a.data('degree')||0));
+      const boxes=[];let shown=0;
+      for(const n of priority){
+        if(shown>=18)break;
+        const label=String(n.data('label')||'');
+        const p=n.renderedPosition(),r=Math.max(6,n.renderedOuterWidth()/2),
+          w=Math.min(150,Math.max(32,label.length*6.3)),h=17;
+        const candidates=[
+          {x:p.x-w/2,y:p.y+r+7,v:'bottom',a:'center',dx:0,dy:8},
+          {x:p.x-w/2,y:p.y-r-7-h,v:'top',a:'center',dx:0,dy:-7},
+          {x:p.x+r+9,y:p.y-h/2,v:'center',a:'right',dx:9,dy:0},
+          {x:p.x-r-9-w,y:p.y-h/2,v:'center',a:'left',dx:-9,dy:0}
+        ];
+        const chosen=candidates.find(p=>p.x>4&&p.y>4&&p.x+w<width-4&&p.y+h<height-4&&
+          !boxes.some(b=>p.x<b.x+b.w+6&&p.x+w+6>b.x&&p.y<b.y+b.h+5&&p.y+h+5>b.y));
+        if(chosen){
+          boxes.push({...chosen,w,h});shown++;n.addClass('label-visible');
+          n.style({'text-valign':chosen.v,'text-halign':chosen.a,
+            'text-margin-x':chosen.dx/z,'text-margin-y':chosen.dy/z});
+        }
+      }
+    }
+    updateLabels=readableLabels;
+    function chooseNode(node){
+      if(!cy||!node?.length)return;
+      cy.elements().removeClass('muted active adjacent');
+      const near=node.closedNeighborhood();
+      cy.elements().difference(near).addClass('muted');
+      node.addClass('active');near.nodes().difference(node).addClass('adjacent');
+      near.edges().addClass('active');updateLabels();
+    }
+    function focusNode(id){
+      const record=prepared?.index.nodes.get(id);
+      if(!record)return;
+      focused=id;
+      if(record.kind==='snapshot'&&captureId!==id){
+        captureId=id;scope='selected';scopeControl.value=scope;
+        callbacks.onSelect?.(record);
+      }
+      rebuild();
+      inspect(record);
+    }
+    function showDetails(record){if(!record)return;inspect(record);}
+    function copyContext(){
+      const snap=prepared?.selected;
+      caption.textContent=(prepared?.totalVideos||0)+' unique videos · '+
+        (prepared?.captures||0)+' capture(s) · '+(prepared?.visibleChannels||0)+' of '+
+        (prepared?.totalChannels||0)+' channel groups displayed'+
+        (prepared?.hiddenChannels?' · Search or show more to explore the rest':'')+
+        (prepared?.truncated?' · Some historical items were capped':'');
+      more.hidden=!prepared?.hiddenChannels||limit>=100;
+    }
+    function layoutGraph(cytoscape,model,key,token){
+      const prior=views.get(key),theme=palette();
+      const colors={snapshot:theme.accent,channel:theme.channel,video:theme.video};
+      const elements=model.nodes.map(n=>({data:{...n,fullLabel:n.label,
+        label:n.label.length>43?n.label.slice(0,42)+'…':n.label,
+        color:colors[n.kind],size:n.kind==='snapshot'?28:n.kind==='video'?11:Math.min(28,13+Math.sqrt(n.count||1)*3)},
+        position:prior?.positions[n.id],
+        classes:[n.kind,n.hub?'hub':'',n.landmark?'landmark':''].join(' ')}));
+      for(const edge of model.edges)elements.push({data:edge,classes:edge.basis});
+      cy=cytoscape({container:canvas,elements,minZoom:.25,maxZoom:4,
+        wheelSensitivity:.23,selectionType:'single',
+        style:[
+          {selector:'node',style:{shape:'ellipse',width:'data(size)',height:'data(size)',
+            'background-color':'data(color)','border-width':1.7,'border-color':theme.bg,
+            label:'','font-family':'sans-serif','font-size':11,color:theme.muted,
+            'text-valign':'bottom','text-halign':'center','text-margin-y':7,
+            'text-wrap':'ellipsis','text-max-width':150,
+            'text-outline-color':theme.bg,'text-outline-width':2,'overlay-padding':10,
+            'text-events':'yes'}},
+          {selector:'node.snapshot',style:{shape:'diamond',width:28,height:28}},
+          {selector:'node.video',style:{shape:'round-rectangle',width:13,height:12}},
+          {selector:'node.hub',style:{'border-width':2.5,'border-color':theme.text}},
+          {selector:'node.label-visible,node.hovered',style:{label:'data(label)'}},
+          {selector:'node.active',style:{label:'data(label)','border-width':3.5,
+            'border-color':theme.accent,color:theme.text,'font-weight':600,
+            'text-background-color':theme.bg,'text-background-opacity':.96,
+            'text-background-padding':4}},
+          {selector:'node.adjacent',style:{color:theme.text}},
+          {selector:'edge',style:{width:'mapData(count,1,20,1,3)','line-color':theme.muted,
+            'curve-style':'bezier',opacity:.29,'overlay-padding':6}},
+          {selector:'edge.captured_in',style:{'line-color':theme.channel,opacity:.35}},
+          {selector:'edge.published',style:{'line-color':theme.video,opacity:.6}},
+          {selector:'.muted',style:{opacity:.10}},
+          {selector:'edge.active',style:{width:2.8,'line-color':theme.accent,opacity:.93}}
+        ],layout:{name:'preset',fit:false}});
+      currentKey=key;
+      cy.on('tap','node',event=>focusNode(event.target.id()));
+      cy.on('dbltap','node',event=>{
+        const record=prepared?.index.nodes.get(event.target.id());
+        if(record)callbacks.onOpen?.(record);
+      });
+      cy.on('tap','edge',event=>{
+        cy.elements().removeClass('muted active adjacent');event.target.addClass('active');
+        inspect(null,event.target.data());updateLabels();
+      });
+      cy.on('tap',event=>{if(event.target!==cy)return;
+        cy.elements().removeClass('muted active adjacent');inspector.hidden=true;focused=null;updateLabels();});
+      cy.on('mouseover','node',event=>{
+        const n=event.target,p=n.renderedPosition();n.addClass('hovered');
+        tooltip.textContent=n.data('fullLabel');tooltip.hidden=false;
+        tooltip.style.left=Math.max(8,Math.min(stage.clientWidth-240,p.x+16))+'px';
+        tooltip.style.top=Math.max(8,p.y-32)+'px';
+      });
+      cy.on('mouseout','node',event=>{event.target.removeClass('hovered');tooltip.hidden=true;});
+      cy.on('viewport',()=>{
+        if(labelsFrame)cancelAnimationFrame(labelsFrame);
+        labelsFrame=requestAnimationFrame(readableLabels);
+      });
+      canvas.setAttribute('role','application');canvas.tabIndex=0;
+      canvas.setAttribute('aria-label','Feed connections map. Arrow keys inspect, Enter expands the selected node, double-click opens it.');
+      canvas.onkeydown=e=>{
+        if(!cy||!['ArrowRight','ArrowDown','ArrowLeft','ArrowUp','Enter'].includes(e.key))return;
+        const nodes=cy.nodes().sort((a,b)=>a.id().localeCompare(b.id()));
+        if(!nodes.length)return;e.preventDefault();
+        const current=nodes.findIndex(n=>n.hasClass('active'));
+        if(e.key==='Enter'){focusNode(nodes[Math.max(0,current)].id());return;}
+        const d=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1;
+        const next=nodes[(current+d+nodes.length)%nodes.length];
+        focusNode(next.id());cy.animate({center:{eles:next}},{duration:180});
+      };
+      cy.resize();
+      if(prior){cy.viewport({zoom:prior.zoom,pan:prior.pan});
+        if(focused){const target=cy.getElementById(focused);if(target.length)chooseNode(target);}
+        updateLabels();return;
+      }
+      const instance=cy;
+      const layout=cy.layout({name:'cose',animate:false,randomize:false,padding:52,
+        nodeRepulsion:()=>12500,idealEdgeLength:()=>125,edgeElasticity:()=>85,
+        gravity:.65,componentSpacing:100,numIter:360,nodeDimensionsIncludeLabels:false});
+      layout.one('layoutstop',()=>{if(disposed||cy!==instance||generation!==token)return;
+        fitGraph();if(focused){const n=cy.getElementById(focused);if(n.length)chooseNode(n);}
+        updateLabels();});
+      layout.run();
+    }
+    async function rebuild(){
+      if(disposed)return;
+      const token=++generation;
+      prepared=prepareNetwork(graph,{snapshotId:captureId,scope,query,focusId:focused,maxChannels:limit});
+      copyContext();
+      clearCanvas();
+      if(!prepared.nodes.length){canvas.append(el('p','feed-network-empty','No recorded connections for this capture.'));return;}
+      canvas.append(el('p','feed-network-loading','Arranging captured connections…'));
+      try{
+        const cytoscape=await graphEngine();
+        if(disposed||token!==generation)return;
+        canvas.replaceChildren();
+        const key=cacheKey();
+        layoutGraph(cytoscape,prepared,key,token);
+      }catch(error){
+        if(disposed||token!==generation)return;
+        canvas.replaceChildren(el('p','feed-network-error','Graph could not load. Your captured feeds are still available in Cards.'));
+        caption.textContent='Graph engine unavailable; nothing was changed in your saved captures.';
+      }
+    }
+    scopeControl.addEventListener('change',()=>{scope=scopeControl.value;focused=null;limit=42;rebuild();});
+    search.addEventListener('input',()=>{query=search.value;focused=null;rebuild();});
+    const observer=typeof ResizeObserver==='function'?new ResizeObserver(()=>{
+      if(resizeFrame)cancelAnimationFrame(resizeFrame);
+      resizeFrame=requestAnimationFrame(()=>{cy?.resize();updateLabels();});
+    }):null;
+    observer?.observe(canvas);
     return {
-      render(data,id){
-        graph=data||{nodes:[],edges:[],snapshots:0};const selected=rel.nodes.get(id);
-        if(id&&graph.nodes?.some(n=>n.id===id&&n.kind==='snapshot'))snapshotId=id;
-        else if(!graph.nodes?.some(n=>n.id===snapshotId))snapshotId=graph.nodes?.find(n=>n.kind==='snapshot')?.id||null;
-        focus=null;offset=0;draw();
+      render(data,initialId){
+        graph=data||{nodes:[],edges:[]};
+        if(initialId&&graph.nodes?.some(n=>n.id===initialId&&n.kind==='snapshot'))captureId=initialId;
+        else if(!graph.nodes?.some(n=>n.id===captureId))captureId=graph.nodes?.find(n=>n.kind==='snapshot')?.id||null;
+        focused=null;return rebuild();
       },
       select(id){
-        if(!id||id===snapshotId)return;
+        if(!id||id===captureId)return;
         if(graph.nodes?.some(n=>n.id===id&&n.kind==='snapshot')){
-          snapshotId=id;focus=null;offset=0;draw();
+          captureId=id;focused=null;rebuild();
         }
       },
-      destroy(){container.replaceChildren();}
+      search(value){search.value=String(value||'');query=search.value;rebuild();},
+      zoom:setZoom,fit:fitGraph,
+      destroy(){
+        disposed=true;generation++;observer?.disconnect();
+        if(labelsFrame)cancelAnimationFrame(labelsFrame);
+        if(resizeFrame)cancelAnimationFrame(resizeFrame);
+        clearCanvas();container.replaceChildren();
+      }
     };
   }
-  const api={build,positions,overview,relationships,mount};
+
+  const api={build,positions,overview,relationships,prepareNetwork,mount};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root)root.MuninnFeedGraph=api;
 })(typeof window!=='undefined'?window:null);
