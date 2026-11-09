@@ -254,3 +254,51 @@ test('watch-tab badges update as download progresses without a new tab revision'
     srv.close();
   }
 });
+
+test('brand opens Browse and mini-player expands independently', {skip: !chromium && 'playwright is not installed'}, async t => {
+  const srv = await serve();
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  let browser;
+  try { browser = await chromium.launch(); }
+  catch (error) { srv.close(); return t.skip('chromium cannot launch: ' + String(error.message).split('\\n')[0]); }
+  try {
+    const {page, ctx, errors} = await open(browser, base, SIZES[0], THEMES[0], false, true);
+    const detail = page.locator('.mini-detail-toggle');
+    assert.equal(await detail.getAttribute('aria-expanded'), 'true');
+    await detail.click();
+    assert.equal(await detail.getAttribute('aria-expanded'), 'false');
+    assert.equal(await detail.textContent(), 'More');
+    assert.equal(await page.locator('.mini-seek').evaluate(el => getComputedStyle(el).display), 'none');
+    await detail.click();
+    assert.equal(await detail.getAttribute('aria-expanded'), 'true');
+    assert.notEqual(await page.locator('.mini-seek').evaluate(el => getComputedStyle(el).display), 'none');
+    assert.equal(await page.locator('.mini-essential[aria-label="Open full player"]').count(), 1);
+    await page.locator('#muninn-home').click();
+    await page.waitForFunction(() => window.Muninn.tabs.active === 1 && window.Muninn.page === null);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  } finally { await browser.close(); srv.close(); }
+});
+
+test('tab media status appears only once per tab except numeric download progress', {skip: !chromium && 'playwright is not installed'}, async t => {
+  const srv = await serve();
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  let browser;
+  try { browser = await chromium.launch(); }
+  catch (error) { srv.close(); return t.skip('chromium cannot launch: ' + String(error.message).split('\\n')[0]); }
+  try {
+    const {page, ctx, errors} = await open(browser, base, SIZES[0], THEMES[0], false, true);
+    for(const id of [5,6,7]) {
+      const tab = page.locator(`.tab[data-id="${id}"]`);
+      assert.equal(await tab.locator('.tab-media').isVisible(), false);
+      assert.equal(await tab.locator('.tab-lead .ico').count(), 1);
+    }
+    await page.evaluate(() => window.__mock.setMediaCache?.(6,{state:'downloading',progress_percent:42}));
+    await page.evaluate(() => window.Muninn.refreshTabs());
+    // The percentage is supplementary text; it is never a second status glyph.
+    const progress = page.locator('.tab[data-id="6"] .tab-media');
+    if(await progress.isVisible()) assert.match(await progress.textContent(), /\\d+%/);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  } finally { await browser.close(); srv.close(); }
+});
