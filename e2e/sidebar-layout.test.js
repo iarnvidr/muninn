@@ -191,3 +191,32 @@ test('sidebar and native pane layout across themes, sizes, collapse and mini-pla
   }
   assert.ok(checked > 60, 'ran ' + checked + ' states');
 });
+
+test('selected tab remains discoverable in a scrolling vertical tab list', {skip: !chromium && 'playwright is not installed'}, async (tctx) => {
+  const srv = await serve();
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  let browser;
+  try { browser = await chromium.launch(); } catch (e) { srv.close(); return tctx.skip('chromium cannot launch: ' + String(e.message).split('\\n')[0]); }
+  try {
+    const ctx = await browser.newContext({viewport: {width: 1100, height: 640}});
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(`${base}/ui/index.html?mock=1&tabs=many&active=1#token=t`);
+    await page.waitForSelector('.tab[data-id="65"]');
+    await page.evaluate(() => { Muninn.settings.tab_layout = 'vertical'; Muninn.applyAppearance(); });
+    await page.evaluate(() => { const strip = document.querySelector('#tabstrip'); strip.scrollTop = strip.scrollHeight; });
+    await page.waitForFunction(() => !document.querySelector('#tab-active-jump').hidden);
+    const direction = await page.locator('#tab-active-jump').getAttribute('aria-label');
+    assert.match(direction, /Jump to selected tab:.*\\(up\\)/);
+    assert.equal(await page.locator('.tab.sleeping').count(), 38);
+    assert.equal(await page.locator('.tab.watch.sleeping').count(), 0);
+    await page.locator('#tab-active-jump').click();
+    await page.waitForFunction(() => document.querySelector('#tab-active-jump').hidden);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  } finally {
+    await browser.close();
+    srv.close();
+  }
+});
