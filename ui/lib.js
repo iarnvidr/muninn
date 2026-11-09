@@ -104,11 +104,34 @@
   /** Watch tabs have no browser webview; their identity should never be a sleep icon. */
   function tabLeadKind(tab) {
     if (!tab) return 'dot';
-    if (tab.face === 'watch') return 'play';
+    if (tab.face === 'watch') {
+      if (tab.cache_state === 'downloading' || tab.cache_state === 'queued') return 'download';
+      if (tab.cache_state === 'cached') return 'play';
+      return 'play-outline';
+    }
     if (tab.state === 'loading' || tab.state === 'restoring') return 'spin';
     if (tab.kind === 'search') return 'search';
     if (tab.kind === 'channel') return 'channel';
     return 'browse';
+  }
+
+  /** Badge text and accessible explanation of persistent media availability. */
+  function tabCacheIndicator(tab) {
+    if (!tab || tab.face !== 'watch') return null;
+    const info = {
+      cached: ['✓', 'Cached video available on disk'],
+      downloading: ['↓', 'Downloading video into cache'],
+      queued: ['…', 'Video download queued'],
+      failed: ['!', 'Video download failed; not cached'],
+      uncached: ['○', 'Not cached; opening requires a download'],
+    }[tab.cache_state || 'uncached'];
+    return {symbol: info[0], label: info[1], state: tab.cache_state || 'uncached'};
+  }
+
+  /** The tab list's structural revision is independent of media-download progress. */
+  function tabCacheSignature(tabs) {
+    return JSON.stringify((tabs || []).filter(t => t.face === 'watch')
+      .map(t => [t.id, t.video_id, t.cache_state || 'uncached']));
   }
 
   /** Locate a selected tab that the user has scrolled outside the visible list. */
@@ -889,7 +912,7 @@
   return {
     observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
-    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
+    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, tabCacheIndicator, tabCacheSignature, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
