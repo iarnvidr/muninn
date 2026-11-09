@@ -99,6 +99,8 @@ struct TabView {
     video_id: Option<String>,
     playlist: Option<tabs::PlaylistContext>,
     state: &'static str,
+    /// On-disk video availability, not the browser tab's hibernation state.
+    cache_state: Option<String>,
     live: bool,
     kind: &'static str,
     query: Option<String>,
@@ -237,6 +239,12 @@ impl Shell {
 
     pub fn tabs_state(&self) -> Value {
         let settings = self.core.video.settings();
+        let video_ids: Vec<String> = {
+            let inner = self.lock();
+            inner.tabs.iter().filter(|tab| tab.face() == Face::Watch)
+                .filter_map(|tab| tab.video_id.clone()).collect()
+        };
+        let media = self.core.video.cache_states_for_videos(&video_ids).unwrap_or_default();
         let inner = self.lock();
         let tabs: Vec<TabView> = inner
             .tabs
@@ -279,6 +287,10 @@ impl Shell {
                     video_id: t.video_id.clone(),
                     playlist: t.playlist.clone(),
                     state,
+                    cache_state: if t.face() == Face::Watch {
+                        Some(t.video_id.as_ref().and_then(|id| media.get(id)).cloned()
+                            .unwrap_or_else(|| "uncached".to_string()))
+                    } else { None },
                     live: t.live && !t.restoring,
                     kind: t.kind_str(),
                     query,
