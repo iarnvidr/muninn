@@ -101,6 +101,29 @@
   /** Whether the tab's page can be hibernated by hand (a sleeping or watch tab has nothing to free). */
   function canHibernate(tab) { return !!tab && tab.face === 'yt' && (tab.state === 'live' || tab.state === 'loading') && !!tab.live; }
 
+  /** Watch tabs have no browser webview; their identity should never be a sleep icon. */
+  function tabLeadKind(tab) {
+    if (!tab) return 'dot';
+    if (tab.face === 'watch') return 'play';
+    if (tab.state === 'loading' || tab.state === 'restoring') return 'spin';
+    if (tab.kind === 'search') return 'search';
+    if (tab.kind === 'channel') return 'channel';
+    return 'browse';
+  }
+
+  /** Locate a selected tab that the user has scrolled outside the visible list. */
+  function offscreenTabDirection(viewport, tabRect, vertical) {
+    if (!viewport || !tabRect || !viewport.width || !viewport.height || !tabRect.width || !tabRect.height) return null;
+    if (vertical) {
+      if (tabRect.bottom <= viewport.top + 2) return 'up';
+      if (tabRect.top >= viewport.bottom - 2) return 'down';
+    } else {
+      if (tabRect.right <= viewport.left + 2) return 'left';
+      if (tabRect.left >= viewport.right - 2) return 'right';
+    }
+    return null;
+  }
+
   /** Window-level shortcut for a keydown event description ({key, metaKey, ctrlKey, altKey, shiftKey}). */
   function shortcutAction(e) {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
@@ -685,7 +708,8 @@
     { group: 'Downloads', key: 'prefetch_bandwidth_kbps', label: 'Prefetch bandwidth', unit: 'kbps', kind: 'int', min: 0, hint: '0 = unlimited' },
     { group: 'Downloads', key: 'auto_prefetch', label: 'Auto-prefetch by rules', kind: 'bool', hint: 'Cache videos in the background when a rule says so' },
     { group: 'Watching', key: 'watch_height', label: 'Watch quality', kind: 'select', options: [[360, '360p'], [480, '480p'], [720, '720p'], [1080, '1080p']], hint: 'Quality for videos that are not cached yet' },
-    { group: 'Browsing', key: 'warm_tabs', label: 'Warm tabs', kind: 'int', min: 1, max: 12, hint: 'Tabs that keep a live page; others sleep' },
+    { group: 'Browsing', key: 'auto_hibernate_tabs', label: 'Automatically unload background tabs', kind: 'bool', hint: 'Save memory by unloading inactive YouTube webviews while tabs stay open. Cached pages and downloaded videos are retained. Disable to keep tabs live (offline mode still suspends remote pages).' },
+    { group: 'Browsing', key: 'warm_tabs', label: 'Warm tabs', kind: 'int', min: 1, max: 12, hint: 'Maximum live webviews when automatic unloading is enabled' },
     { group: 'Browsing', key: 'hibernate_after_secs', label: 'Hibernate after', unit: 'seconds', kind: 'int', min: 5, hint: 'Background time before a tab may sleep' },
     { group: 'Freshness', key: 'feed_refresh_minutes', label: 'Feed refresh', unit: 'minutes', kind: 'int', min: 5 },
     { group: 'Freshness', key: 'channel_list_ttl_hours', label: 'Channel video lists', unit: 'hours', kind: 'int', min: 1, max: 720, hint: 'Stale lists stay visible while refreshing. Cached pages remain available offline.' },
@@ -854,7 +878,7 @@
   return {
     observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
-    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, shortcutAction,
+    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, offscreenTabDirection, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
