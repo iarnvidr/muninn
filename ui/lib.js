@@ -105,6 +105,7 @@
   function tabLeadKind(tab) {
     if (!tab) return 'dot';
     if (tab.face === 'watch') {
+      if (!tab.video_id) return 'play';
       if (tab.cache_state === 'downloading' || tab.cache_state === 'queued') return 'download';
       if (tab.cache_state === 'cached') return 'play';
       return 'play-outline';
@@ -117,7 +118,7 @@
 
   /** Badge text and accessible explanation of persistent media availability. */
   function tabCacheIndicator(tab) {
-    if (!tab || tab.face !== 'watch') return null;
+    if (!tab || tab.face !== 'watch' || !tab.video_id) return null;
     const info = {
       cached: ['✓', 'Cached video available on disk'],
       downloading: ['↓', 'Downloading video into cache'],
