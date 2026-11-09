@@ -254,3 +254,28 @@ test('watch-tab badges update as download progresses without a new tab revision'
     srv.close();
   }
 });
+
+test('custom Browse keeps original YouTube available and lets source order change', {skip: !chromium && 'playwright is not installed'}, async t => {
+  const srv=await serve(),base='http://127.0.0.1:'+srv.address().port;
+  let browser;
+  try{browser=await chromium.launch();}catch(error){srv.close();return t.skip('no Chromium: '+String(error.message).split('\n')[0]);}
+  try{
+    const {page,ctx,errors}=await open(browser,base,SIZES[0],THEMES[0],false,false);
+    await page.evaluate(()=>{
+      Muninn.settings.browse_mode='muninn';
+      Muninn.settings.browse_sections=['related','home'];
+    });
+    await page.locator('#sidebar [data-page="browse"]').click();
+    await page.waitForSelector('.browse-native .browse-native-section');
+    assert.equal(await page.locator('.browse-native-section').count(),2);
+    assert.equal(await page.evaluate(()=>Muninn.page),'browse_custom');
+    await page.locator('.browse-native-actions button').filter({hasText:'Customize'}).click();
+    assert.equal(await page.locator('.browse-native-edit-row').count(),2);
+    await page.locator('.browse-native-edit-row').first().getByRole('button',{name:'Move Related down'}).click();
+    await page.waitForFunction(()=>document.querySelector('.browse-native-section .h2')?.textContent==='Home');
+    await page.getByRole('button',{name:'Open original YouTube'}).click();
+    await page.waitForFunction(()=>Muninn.page===null);
+    assert.deepEqual(errors,[]);
+    await ctx.close();
+  } finally {await browser.close();srv.close();}
+});
