@@ -909,10 +909,12 @@
     }
     function renderTabs() {
       const s = S.settings || {};
-      setText(tabsNote, `Warm tabs: ${s.warm_tabs == null ? M.tabs.warm : s.warm_tabs}. A tab in the background for ${s.hibernate_after_secs == null ? '?' : s.hibernate_after_secs} seconds may go to sleep; sleeping tabs show their cached content until you wake them. Change this in Settings.`);
+      setText(tabsNote, s.auto_hibernate_tabs === false
+        ? 'Automatic tab unloading is off. Open browser tabs stay live until you sleep them manually. Offline mode suspends remote pages. Downloaded media is unaffected.'
+        : `Up to ${s.warm_tabs == null ? M.tabs.warm : s.warm_tabs} live browser tabs. Background YouTube tabs may unload after ${s.hibernate_after_secs == null ? '?' : s.hibernate_after_secs} seconds. Reopening restores the cached page state; watch tabs are not browser webviews.`);
       tabsBody.replaceChildren(...M.tabs.list.map((t) => row([
         L.tabTitle(t) + (t.id === M.tabs.active ? '  (active)' : ''),
-        badge(t.state === 'sleeping' ? 'sleeping' : (t.state === 'live' ? 'live' : t.state), t.state === 'live' ? 'ok' : (t.state === 'sleeping' ? '' : 'warn')),
+        badge(t.face === 'watch' ? 'watch' : (t.state === 'sleeping' ? 'unloaded' : (t.state === 'live' ? 'live' : t.state)), t.face === 'watch' || t.state === 'live' ? 'ok' : (t.state === 'sleeping' ? '' : 'warn')),
         t.face === 'watch' ? 'watch' : t.kind, t.last_active_ms ? L.relTime(t.last_active_ms) : DASH,
         L.canHibernate(t) ? h('button', { type: 'button', class: 'small', text: 'Put to sleep', onclick: () => M.hibernateTab(t.id) }) : '',
       ])));

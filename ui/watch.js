@@ -87,7 +87,9 @@
   const sidebar=document.querySelector('#sidebar');sidebar.insertBefore(nowPlaying,sidebar.querySelector('.sidebar-note'));
   function returnToPlayer(){if(cur)M.activateTab(cur.tabId);}
   function placeMiniVideo(){
-    if(cur?.background){
+    // A source still loading is not a mini-player. Never promote it to a
+    // fixed-position video overlay when leaving its tab before the first frame.
+    if(L.miniVideoVisible(cur, video.readyState, inPip())){
       const rect=nowPreview.getBoundingClientRect();
       Object.assign(video.style,{position:'fixed',left:rect.left+'px',top:rect.top+'px',width:rect.width+'px',height:rect.height+'px',zIndex:'20',visibility:'visible',pointerEvents:'none',objectFit:'cover',borderRadius:'3px'});
     } else {
@@ -341,8 +343,14 @@
       if (video.ended && cur.win && L.windowOffset(cur.win) > 0) { commitSeek(0); return; }   // replay needs a window at 0
       if (video.ended) video.currentTime = 0;
       cur.needsClick = false;
+      const c = cur, selection = c.sourceGeneration || 0, source = c.sourceKey;
       const p = video.play();
-      if (p && p.catch) p.catch(() => { cur.needsClick = true; updateOverlay(); });
+      if (p && p.catch) p.catch(() => {
+        // An old rejected play promise cannot update a newly selected video.
+        if (c === cur && (c.sourceGeneration || 0) === selection && c.sourceKey === source) {
+          c.needsClick = true; updateOverlay();
+        }
+      });
     } else {cur.playIntent=false;video.pause();}
   }
   function commitSeek(t) {
@@ -428,9 +436,16 @@
       if (automatic && !c.background && M.settings.pip_return_to_inline !== false) await exitPip();
     } catch (e) {
       if (c === cur) {
+        if (c.background && (!c.sourceSet || !c.started)) {
+          // Automatic PiP may be denied before video playback is ready.
+          // Do not leave an unfinished player alive behind another page.
+          M.flash('info', 'Picture in picture was unavailable; reopen the video to play.', 6000);
+          leave();
+          return;
+        }
         const fallback = c.background && M.settings.background_playback ? ' Continuing audio in the background.' : (c.background ? ' Playback paused.' : '');
         M.flash('info', M.errText(e) + fallback, 7000);
-        if (c.background && !M.settings.background_playback) video.pause();
+        if (c.background && !M.settings.background_playback) { c.playIntent = false; video.pause(); }
       }
     } finally { c.pipPending = false; updateNowPlaying(); }
   }
@@ -1256,10 +1271,20 @@
       if (!tab) {
         if (!cur) return;
         prepareBackground();
-        if (cur.sourceSet || inPip() || cur.pipPending || cur.background || M.settings.background_playback) {
-          cur.background = true; updateNowPlaying(); return;
+        const policy = L.watchLeavePolicy(cur, M.settings, video.readyState, inPip(), cur.pipPending);
+        if (policy === 'discard-loading') {
+          // The backend may continue filling the cache; only the unfinished UI
+          // player is discarded. Returning to this tab joins the saved work.
+          leave(); return;
         }
-        leave(); return;
+        if (policy === 'pause') {
+          // The default is NOT silent background playback when changing tabs.
+          cur.playIntent = false;
+          video.pause();
+        }
+        cur.background = true;
+        updateNowPlaying();
+        return;
       }
       const key = tab.id + ':' + tab.video_id;
       if (cur && cur.videoId === tab.video_id) {

@@ -34,6 +34,14 @@
     mk(4, 'Rust Programming', 'https://www.youtube.com/@rustlang', { kind: 'channel', state: 'sleeping', last_active_ms: now - 1800000 }),
     mk(5, 'Watching: Seeded video', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', { face: 'watch', video_id: 'aaaaaaaaaaa', state: 'live', kind: 'other' }),
   ];
+  if (q.get('tabs') === 'many') {
+    for (let n = 0; n < 36; n++) {
+      const kind = n % 3 === 0 ? 'search' : (n % 3 === 1 ? 'channel' : 'home');
+      tabs.push(mk(30 + n, 'Stored page ' + (n + 1), 'https://www.youtube.com/', {
+        kind, state: 'sleeping', last_active_ms: now - (n + 1) * 60000,
+      }));
+    }
+  }
   if (q.get('active')) active = Number(q.get('active'));
   if (!tabs.length) active = null;
 
