@@ -17,6 +17,9 @@ pub enum Accent { #[default] Blue, Red, Amber, Teal }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all="snake_case")]
 pub enum TabLayout { #[default] Horizontal, Vertical }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum BrowseMode { #[default] Native, Muninn }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -31,6 +34,10 @@ pub struct Settings {
     pub theme: Theme,
     pub accent: Accent,
     pub tab_layout: TabLayout,
+    /// Original YouTube webview or Muninn-captured, customisable Browse start page.
+    pub browse_mode: BrowseMode,
+    /// Saved ordering of visible sources in Muninn Browse; no ranking is invented.
+    pub browse_sections: Vec<String>,
     pub pip_mode: PipMode,
     pub background_playback: bool,
     pub pip_return_to_inline: bool,
@@ -75,6 +82,8 @@ impl Default for Settings {
             theme: Theme::System,
             accent: Accent::Blue,
             tab_layout: TabLayout::Horizontal,
+            browse_mode: BrowseMode::Native,
+            browse_sections: vec!["home".into(), "subscriptions".into(), "favourites".into(), "related".into()],
             pip_mode: PipMode::Manual,
             background_playback: false,
             pip_return_to_inline: true,
@@ -109,6 +118,15 @@ impl Settings {
         self.metadata_ttl_days = self.metadata_ttl_days.clamp(1, 365);
         self.max_disk_bytes = self.max_disk_bytes.max(GB / 4);
         self.watch_height = self.watch_height.clamp(144, 2160);
+        let mut sections = Vec::new();
+        for name in std::mem::take(&mut self.browse_sections) {
+            if matches!(name.as_str(), "home" | "subscriptions" | "favourites" | "related")
+                && !sections.contains(&name) {
+                sections.push(name);
+            }
+        }
+        if sections.is_empty() { sections.push("home".into()); }
+        self.browse_sections = sections;
         self.warm_tabs = self.warm_tabs.clamp(1, 12);
         self.hibernate_after_secs = self.hibernate_after_secs.clamp(5, 7 * 86400);
         self
@@ -129,6 +147,8 @@ mod tests {
         assert_eq!((s.warm_tabs, s.watch_height), (3, 720));
         assert!(s.auto_hibernate_tabs);
         assert_eq!(s.pip_mode,PipMode::Manual);
+        assert_eq!(s.browse_mode,BrowseMode::Native);
+        assert_eq!(s.browse_sections.len(),4);
         assert!(!s.background_playback);
         assert!(s.pip_return_to_inline && s.pause_when_pip_closes);
         assert!(!s.developer_mode);
@@ -159,6 +179,19 @@ mod tests {
     }
 
     #[test]
+    fn browse_mode_and_source_order_round_trip_from_older_settings() {
+        let existing: Settings=serde_json::from_str(r#"{"watch_height":720}"#).unwrap();
+        assert_eq!(existing.browse_mode,BrowseMode::Native);
+        assert_eq!(existing.browse_sections.len(),4);
+        let custom:Settings=serde_json::from_str(r#"{"browse_mode":"muninn","browse_sections":["related","home","related","unknown","subscriptions"]}"#).unwrap();
+        let sanitized=custom.sanitized();
+        assert_eq!(sanitized.browse_mode,BrowseMode::Muninn);
+        assert_eq!(sanitized.browse_sections,vec!["related","home","subscriptions"]);
+        assert_eq!(serde_json::from_str::<Settings>(&serde_json::to_string(&sanitized).unwrap()).unwrap(),sanitized);
+        assert!(serde_json::from_str::<Settings>(r#"{"browse_mode":"unrecognized"}"#).is_err());
+    }
+
+    #[test]
     fn partial_json_fills_defaults() {
         let s: Settings = serde_json::from_str(r#"{"download_concurrency":4}"#).unwrap();
         assert_eq!(s.download_concurrency, 4);
@@ -166,6 +199,7 @@ mod tests {
         assert!(s.auto_hibernate_tabs, "old settings must retain existing defaults");
         assert_eq!(s.pip_mode,PipMode::Manual);
         assert_eq!(s.tab_layout, TabLayout::Horizontal);
+        assert_eq!(s.browse_mode,BrowseMode::Native);
         let vertical: Settings = serde_json::from_str(r#"{"tab_layout":"vertical"}"#).unwrap();
         assert_eq!(vertical.tab_layout, TabLayout::Vertical);
         assert_eq!(serde_json::from_value::<Settings>(serde_json::to_value(vertical.clone()).unwrap()).unwrap(), vertical);
