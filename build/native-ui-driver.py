@@ -40,6 +40,9 @@ def screenshot(name):
 try:
     session = send({'op':'youtube_cookie_fixture'})
     check('native downloader reads shared cookies before page observation and follows rotation/sign-out', session.get('ok') is True, session)
+    # Hide the separate native YouTube WKWebView before painting an HTML overlay.
+    click('#sidebar [data-page="library"]')
+    time.sleep(.35)
     # Native visual acceptance fixture: 102 videos, 24 recorded channels.
     # Import the same embedded offline Cytoscape engine as the real Feeds page.
     # The screenshot is retained with the PR artifact for human inspection.
@@ -84,7 +87,6 @@ return await (async()=>{
           and feed_evidence.get('height',0)>=390,feed_evidence)
     screenshot('feed-network-102-videos')
     ev("(()=>{window.__muninnNativeFeeds?.destroy();document.querySelector('#muninn-native-feeds-fixture')?.remove();return true})()")
-    click('#sidebar [data-page="library"]')
     ev("(()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}));return true})()")
     opened=ev("window.Muninn.page")=='settings'
     # Wait for a pending native tab-state handoff to settle before judging the
