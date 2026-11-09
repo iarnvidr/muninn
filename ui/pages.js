@@ -386,7 +386,12 @@
     }
     async function renderGraph() {
       if(S.view!=='graph' || !graph) return;
-      const snapshots = S.list.slice(0,16);
+      // The selected snapshot can be older than the 16 most recent captures.
+      // Always include it, or the graph silently opens an unrelated capture.
+      const selectedSnapshot = S.list.find(s=>s.id===S.selected);
+      const snapshots = selectedSnapshot
+        ? [selectedSnapshot,...S.list.filter(s=>s.id!==S.selected).slice(0,15)]
+        : S.list.slice(0,16);
       const key = S.kind+'|'+snapshots.map(s=>s.id+':'+s.count).join(',');
       if(S.graphKey!==key || !S.graphData) {
         const full = await Promise.all(snapshots.map(s=>
