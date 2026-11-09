@@ -179,6 +179,25 @@
     return !!(c && c.background && c.sourceSet && c.started && readyState >= 2 && !pipActive);
   }
 
+  /** Captured source provenance; do not invent an origin URL when none was stored. */
+  function feedProvenance(snapshot) {
+    const s = snapshot || {};
+    const kinds = {home:'Home', subscriptions:'Subscriptions', search:'Search',
+      related:'Related videos', channel:'Channel', other:'Other'};
+    const kind = Object.prototype.hasOwnProperty.call(kinds,s.kind) ? s.kind : 'other';
+    const label = kinds[kind]+(s.query ? ': '+String(s.query).slice(0,100) : '');
+    let origin = 'Origin URL not recorded';
+    if(typeof s.source_url === 'string' && s.source_url) {
+      try {
+        const u = new URL(s.source_url);
+        if(u.protocol === 'https:' && (u.hostname==='youtube.com'||u.hostname.endsWith('.youtube.com'))) {
+          origin = u.hostname+u.pathname+(u.searchParams.has('search_query') ? ' · query '+String(u.searchParams.get('search_query')).slice(0,90):'');
+        }
+      } catch (_) { /* stored source is not a usable YouTube URL */ }
+    } else if(kind==='related') origin='Captured from a video watch page (specific origin not recorded)';
+    return {label, origin, hasSource:origin!=='Origin URL not recorded'};
+  }
+
   /** Window-level shortcut for a keydown event description ({key, metaKey, ctrlKey, altKey, shiftKey}). */
   function shortcutAction(e) {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
@@ -933,7 +952,7 @@
   return {
     observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
-    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, tabMediaIndicator, tabMediaFingerprint, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
+    chooseView, tabTitle, addressText, channelUrl, extractVideoId, feedProvenance, canHibernate, tabLeadKind, tabMediaIndicator, tabMediaFingerprint, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
