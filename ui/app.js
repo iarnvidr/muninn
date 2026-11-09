@@ -610,6 +610,7 @@
     M.watch?.prepareBackground();
     const p = b.dataset.page;
     if (p==='browse') {
+      if(M.settings.browse_mode==='muninn') { M.page='browse_custom';render();return; }
       const tab=M.tabs.list.find(t=>t.id===M.lastBrowseTab && t.face!=='watch') || M.tabs.list.find(t=>t.face!=='watch');
       if(tab) M.activateTab(tab.id); else M.newTab('https://www.youtube.com/');
       return;
@@ -634,7 +635,7 @@
     const tab=activeTab();
     if(tab?.face!=='watch' && tab) M.lastBrowseTab=tab.id;
     for (const b of $$('#sidebar [data-page]')) {
-      const on = (M.page || (tab?.face==='watch'?'player':'browse')) === b.dataset.page;
+      const on = (M.page==='browse_custom'?'browse':(M.page || (tab?.face==='watch'?'player':'browse'))) === b.dataset.page;
       setAttr(b, 'aria-current', on ? 'page' : null);
     }
     $('#app').dataset.pageOpen = M.page ? '1' : '0';
