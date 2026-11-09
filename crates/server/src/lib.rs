@@ -201,6 +201,8 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/ui", get(|| async { Redirect::permanent("/ui/") }))
         .route("/ui/", get(ui_index))
         .route("/ui/{file}", get(ui_file))
+        // Bundled offline graph engine is namespaced; keep normal UI routing unchanged.
+        .route("/ui/vendor/{file}", get(ui_vendor_file))
         .merge(protected)
         .layer(DefaultBodyLimit::max(80 * 1024 * 1024))
         .layer(middleware::from_fn(outer))
@@ -329,6 +331,12 @@ async fn ui_index() -> Response {
 
 async fn ui_file(Path(file): Path<String>) -> Response {
     ui_response(&file)
+}
+
+async fn ui_vendor_file(Path(file): Path<String>) -> Response {
+    // One path segment only. Every served asset still requires an explicit entry
+    // in muninn-ui-assets, so traversal and arbitrary local files are impossible.
+    ui_response(&format!("vendor/{file}"))
 }
 
 // --- handlers: ingest ------------------------------------------------------------------------------
@@ -826,6 +834,11 @@ mod tests {
         assert!(headers[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/html"));
         assert!(String::from_utf8_lossy(&body).to_lowercase().contains("<html"));
         assert_eq!(h.send(h.req("GET", "/ui/app.js", None, "")).await.0, StatusCode::OK);
+        let (engine_status,engine_headers,engine_js)=h.send(h.req("GET","/ui/vendor/cytoscape.esm.min.mjs",None,"")).await;
+        assert_eq!(engine_status,StatusCode::OK);
+        assert!(engine_js.len()>100_000);
+        assert!(engine_headers.get(header::CONTENT_TYPE).is_some_and(|v|v.to_str().unwrap_or("").starts_with("text/javascript")));
+        assert_eq!(h.send(h.req("GET","/ui/vendor/unknown.mjs",None,"")).await.0,StatusCode::NOT_FOUND);
         let (font_status,font_headers,font_bytes)=h.send(h.req("GET","/ui/Cinzel.ttf",None,"")).await;
         assert_eq!(font_status,StatusCode::OK);
         assert_eq!(font_headers[header::CONTENT_TYPE],"font/ttf");
