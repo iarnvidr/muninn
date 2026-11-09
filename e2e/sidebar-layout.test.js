@@ -220,3 +220,37 @@ test('selected tab remains discoverable in a scrolling vertical tab list', {skip
     srv.close();
   }
 });
+
+test('watch-tab badges update as download progresses without a new tab revision', {skip: !chromium && 'playwright is not installed'}, async t => {
+  const srv = await serve();
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  let browser;
+  try { browser = await chromium.launch(); } catch (e) {
+    srv.close();
+    return t.skip('chromium cannot launch: ' + String(e.message).split('\\n')[0]);
+  }
+  try {
+    const ctx = await browser.newContext({viewport:{width:1100,height:640}});
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(`${base}/ui/index.html?mock=1&active=5&watch=file#token=t`);
+    const badge = page.locator('.tab[data-id="5"] .tab-media');
+    await page.waitForFunction(() => document.querySelector('.tab[data-id="5"] .tab-media')?.textContent === '↓');
+    const rev = await page.evaluate(() => window.Muninn.tabs.rev);
+    assert.equal(await badge.getAttribute('title'), 'Video not downloaded; opening requires a media download');
+    await page.evaluate(() => window.__mock.setMediaCache(5,{state:'downloading',progress_percent:42}));
+    await page.evaluate(() => window.Muninn.refreshTabs());
+    await page.waitForFunction(() => document.querySelector('.tab[data-id="5"] .tab-media')?.textContent === '42%');
+    assert.equal(await page.evaluate(() => window.Muninn.tabs.rev), rev);
+    await page.evaluate(() => window.__mock.setMediaCache(5,{state:'cached',variant:'720'}));
+    await page.evaluate(() => window.Muninn.refreshTabs());
+    await page.waitForFunction(() => document.querySelector('.tab[data-id="5"] .tab-media')?.textContent === '✓');
+    assert.match(await badge.getAttribute('title'), /720p/);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  } finally {
+    await browser.close();
+    srv.close();
+  }
+});
