@@ -31,6 +31,7 @@
       toggle.setAttribute('aria-label',label); toggle.title=label;
     }
     M.scheduleLayout?.();
+    M.updateActiveJump?.();
     try { localStorage.setItem('muninn.appearance',JSON.stringify({theme,accent,tab_layout})); } catch(e) { /* private storage may be disabled */ }
   };
   try { const saved=JSON.parse(localStorage.getItem('muninn.appearance')||'null'); if(saved){M.settings={...M.settings,...saved};M.applyAppearance();} } catch(e) { /* ignore stale preferences */ }
@@ -369,24 +370,17 @@
   function buildTab(id) {
     const lead = h('span', { class: 'tab-lead' });
     const title = h('span', { class: 'tab-title' });
-    const main = h('button', { type: 'button', class: 'tab-main', role: 'tab', onclick: () => M.activateTab(id), onauxclick: (ev) => { if (ev.button === 1) { ev.preventDefault(); M.closeTab(id); } } }, lead, title);
+    const state = h('span', { class: 'tab-state', hidden: true, 'aria-hidden': 'true', text: 'Zz' });
+    const main = h('button', { type: 'button', class: 'tab-main', role: 'tab', onclick: () => M.activateTab(id), onauxclick: (ev) => { if (ev.button === 1) { ev.preventDefault(); M.closeTab(id); } } }, lead, title, state);
     const zzz = h('button', { type: 'button', class: 'tab-zzz', tabindex: '-1', onclick: (ev) => { ev.stopPropagation(); M.hibernateTab(id); } });
     zzz.append(icon('moon'));
     const close = h('button', { type: 'button', class: 'tab-close', tabindex: '-1', onclick: (ev) => { ev.stopPropagation(); M.closeTab(id); } });
     close.append(icon('close'));
     const el = h('div', { class: 'tab', 'data-id': id, oncontextmenu: (ev) => { ev.preventDefault(); M.hibernateTab(id); } }, main, zzz, close);
     M.dragTab(el,id); M.dropTabs(el,()=>M.tabGroup(id),()=>String(id));
-    return { id, el, main, lead, title, zzz, close, leadKind: '' };
+    return { id, el, main, lead, title, state, zzz, close, leadKind: '' };
   }
 
-  function leadKind(tab) {
-    if (tab.state === 'loading' || tab.state === 'restoring') return 'spin';
-    if (tab.state === 'sleeping') return 'moon';
-    if (tab.face === 'watch') return 'play';
-    if (tab.kind === 'search') return 'search';
-    if (tab.kind === 'channel') return 'channel';
-    return 'dot';
-  }
 
   function renderTabs() {
     const strip = $('#tabstrip');
@@ -415,14 +409,16 @@
       const active = tab.id === M.tabs.active;
       const title = L.tabTitle(tab);
       setText(t.title, title);
-      const cls = 'tab' + (active ? ' active' : '') + (tab.state === 'sleeping' ? ' sleeping' : '') + (tab.face === 'watch' ? ' watch' : '') + ((tab.state === 'loading' || tab.state === 'restoring') ? ' busy' : '');
+      const sleeping = tab.face === 'yt' && tab.state === 'sleeping';
+      const cls = 'tab' + (active ? ' active' : '') + (sleeping ? ' sleeping' : '') + (tab.face === 'watch' ? ' watch' : '') + ((tab.state === 'loading' || tab.state === 'restoring') ? ' busy' : '');
       setCls(t.el, cls);
-      const stateWord = tab.state === 'sleeping' ? ' (sleeping)' : (tab.state === 'restoring' ? ' (waking)' : '');
+      setHidden(t.state, !sleeping);
+      const stateWord = sleeping ? ' (browser view unloaded; page state cached)' : (tab.state === 'restoring' ? ' (waking)' : '');
       setAttr(t.el, 'title', title + stateWord);
       setAttr(t.main, 'aria-selected', active ? 'true' : 'false');
       setAttr(t.main, 'tabindex', active ? '0' : '-1');
       setAttr(t.main, 'aria-label', title + stateWord);
-      const lk = leadKind(tab);
+      const lk = L.tabLeadKind(tab);
       if (lk !== t.leadKind) {
         t.leadKind = lk;
         t.lead.replaceChildren(lk === 'spin' ? h('span', { class: 'spinner' }) : icon(lk));
@@ -442,7 +438,35 @@
       strip.dataset.active = String(M.tabs.active);
       tabEls.get(M.tabs.active)?.el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
+    requestAnimationFrame(updateActiveJump);
   }
+
+  // Show where the active tab is if a long scrolling list no longer contains it.
+  // The jump control is pinned, so scrolling never hides the only way back.
+  const activeJump = $('#tab-active-jump');
+  function updateActiveJump() {
+    const selected = tabEls.get(M.tabs.active)?.el;
+    const strip = $('#tabstrip');
+    const vertical = $('#app').dataset.tabsLayout === 'vertical';
+    const direction = selected && !selected.hidden
+      ? L.offscreenTabDirection(strip.getBoundingClientRect(), selected.getBoundingClientRect(), vertical) : null;
+    setHidden(activeJump, !direction);
+    if (!direction) return;
+    const tab = activeTab();
+    const title = tab ? L.tabTitle(tab) : 'selected tab';
+    const arrow = { up: '↑', down: '↓', left: '←', right: '→' }[direction];
+    setText(activeJump, arrow + ' ' + title);
+    setAttr(activeJump, 'title', 'Selected tab is ' + direction + ': ' + title + '. Jump to it');
+    setAttr(activeJump, 'aria-label', 'Jump to selected tab: ' + title + ' (' + direction + ')');
+  }
+  M.updateActiveJump = updateActiveJump;
+  activeJump.addEventListener('click', () => {
+    tabEls.get(M.tabs.active)?.el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    requestAnimationFrame(updateActiveJump);
+  });
+  $('#tabstrip').addEventListener('scroll', () => requestAnimationFrame(updateActiveJump), { passive: true });
+  window.addEventListener('resize', () => requestAnimationFrame(updateActiveJump));
+  if (window.ResizeObserver) new ResizeObserver(updateActiveJump).observe($('#tabstrip'));
 
   // Only Ctrl+Tab cycles tabs. Plain arrows/Home/End/Delete/Backspace belong to
   // the player, native YouTube page, or focused control, never the tab strip.
