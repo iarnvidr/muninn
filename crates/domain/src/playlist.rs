@@ -5,7 +5,21 @@ pub const MAX_ITEMS: usize = 200;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlaylistItem { pub id: String, pub title: String, pub available: bool }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Playlist { pub list_id: String, pub items: Vec<PlaylistItem>, pub active_index: Option<usize>, pub truncated: bool }
+pub struct Playlist {
+    pub list_id: String,
+    pub items: Vec<PlaylistItem>,
+    pub active_index: Option<usize>,
+    pub truncated: bool,
+    /// Displayed only when a previously verified queue is used after extraction fails.
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub warning: Option<String>,
+}
+impl Playlist {
+    pub fn select(&mut self, current_video: Option<&str>, requested_index: Option<usize>) {
+        self.active_index = current_video.and_then(|id| self.items.iter().position(|x| x.id == id))
+            .or_else(|| requested_index.and_then(|i| i.checked_sub(1)).filter(|i| *i < self.items.len()));
+    }
+}
 
 pub fn valid_list_id(s: &str) -> bool {
     !s.is_empty() && s.len() <= 256 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
@@ -22,7 +36,7 @@ pub fn parse_flat_json(raw: &str, list_id: &str, current_video: Option<&str>, re
         Some(PlaylistItem { id: id.into(), title: v.get("title").and_then(|x| x.as_str()).filter(|t| !t.trim().is_empty()).unwrap_or("Unavailable video").chars().take(500).collect(), available: !unavailable })
     }).collect();
     let active_index = current_video.and_then(|id| items.iter().position(|x| x.id == id)).or_else(|| requested_index.and_then(|i| i.checked_sub(1)).filter(|i| *i < items.len()));
-    Ok(Playlist { list_id: list_id.into(), items, active_index, truncated })
+    Ok(Playlist { list_id: list_id.into(), items, active_index, truncated, warning: None })
 }
 
 #[cfg(test)] mod tests {
@@ -31,7 +45,19 @@ pub fn parse_flat_json(raw: &str, list_id: &str, current_video: Option<&str>, re
   let raw = r#"{"entries":[{"id":"aaaaaaaaaaa","title":"First"},{"id":"bad id","title":"bad"},{"id":"bbbbbbbbbbb","title":"Members","availability":"subscriber_only"},{"id":"ccccccccccc"}]}"#;
   let p=parse_flat_json(raw,"PL_123",Some("bbbbbbbbbbb"),Some(1)).unwrap();
   assert_eq!(p.items.iter().map(|x|x.id.as_str()).collect::<Vec<_>>(),vec!["aaaaaaaaaaa","bbbbbbbbbbb","ccccccccccc"]);
-  assert_eq!(p.active_index,Some(1)); assert!(!p.items[1].available); assert_eq!(p.items[2].title,"Unavailable video");
+  assert_eq!(p.active_index,Some(1)); assert_eq!(p.warning, None); assert!(!p.items[1].available); assert_eq!(p.items[2].title,"Unavailable video");
+ }
+ #[test] fn restored_queue_reselects_current_video_instead_of_previous_selection() {
+   let raw=r#"{"entries":[{"id":"aaaaaaaaaaa","title":"First"},{"id":"bbbbbbbbbbb","title":"Second"}]}"#;
+   let mut p=parse_flat_json(raw,"PLtest",Some("aaaaaaaaaaa"),None).unwrap();
+   p.warning=Some("Using saved playlist".into());
+   let saved=serde_json::to_string(&p).unwrap();
+   let mut restored:Playlist=serde_json::from_str(&saved).unwrap();
+   restored.select(Some("bbbbbbbbbbb"),None);
+   assert_eq!(restored.active_index, Some(1));
+   assert!(restored.warning.is_some());
+   restored.select(None,Some(1));
+   assert_eq!(restored.active_index,Some(0));
  }
  #[test] fn rejects_unsafe_list_id_and_caps_results() {
   assert!(parse_flat_json("{}","../x",None,None).is_err());
