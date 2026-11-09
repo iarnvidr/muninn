@@ -51,7 +51,10 @@ pub struct Settings {
     /// Height Muninn's player asks for when a video is not cached yet (watch
     /// quality). Independent of the rules' cache quality.
     pub watch_height: u32,
-    /// Browser tabs that keep a live web view; the rest hibernate.
+    /// Whether background YouTube tabs unload automatically while still open.
+    /// Manual hibernation remains possible; offline mode still suspends remote pages.
+    pub auto_hibernate_tabs: bool,
+    /// Browser tabs that keep a live web view when automatic unloading is enabled.
     pub warm_tabs: u32,
     /// Seconds a tab must stay in the background before it may hibernate.
     pub hibernate_after_secs: u32,
@@ -86,6 +89,7 @@ impl Default for Settings {
             search_ttl_hours: 2,
             metadata_ttl_days: 21,
             watch_height: 720,
+            auto_hibernate_tabs: true,
             warm_tabs: 3,
             hibernate_after_secs: 120,
             developer_mode: false,
@@ -123,6 +127,7 @@ mod tests {
         assert!((30..=60).contains(&s.feed_refresh_minutes));
         assert!(s.metadata_ttl_days >= 14);
         assert_eq!((s.warm_tabs, s.watch_height), (3, 720));
+        assert!(s.auto_hibernate_tabs);
         assert_eq!(s.pip_mode,PipMode::Manual);
         assert!(!s.background_playback);
         assert!(s.pip_return_to_inline && s.pause_when_pip_closes);
@@ -158,6 +163,7 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"download_concurrency":4}"#).unwrap();
         assert_eq!(s.download_concurrency, 4);
         assert_eq!(s.search_ttl_hours, 2);
+        assert!(s.auto_hibernate_tabs, "old settings must retain existing defaults");
         assert_eq!(s.pip_mode,PipMode::Manual);
         assert_eq!(s.tab_layout, TabLayout::Horizontal);
         let vertical: Settings = serde_json::from_str(r#"{"tab_layout":"vertical"}"#).unwrap();
@@ -166,6 +172,10 @@ mod tests {
         let configured:Settings=serde_json::from_value(serde_json::json!({"pip_mode":"automatic","background_playback":true})).unwrap();
         assert_eq!(configured.pip_mode,PipMode::Automatic);
         assert!(configured.background_playback);
+        let disabled: Settings = serde_json::from_str(r#"{"auto_hibernate_tabs":false}"#).unwrap();
+        assert!(!disabled.auto_hibernate_tabs);
+        assert_eq!(serde_json::to_value(disabled.clone()).unwrap()["auto_hibernate_tabs"], false);
+        assert_eq!(serde_json::from_value::<Settings>(serde_json::to_value(disabled.clone()).unwrap()).unwrap(), disabled);
         assert!(serde_json::from_value::<Settings>(serde_json::json!({"pip_mode":"invalid"})).is_err());
     }
 }
