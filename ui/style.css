@@ -268,6 +268,16 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .tab.sleeping .tab-title { opacity:.75; }
 .tab-state { flex:none; min-width:20px; text-align:center; font:650 10px/1.5 var(--font); color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:5px; }
 .tab-state[hidden] { display:none!important; }
+.tab-cache { flex:none; width:20px; height:19px; display:inline-flex; justify-content:center; align-items:center;
+  border-radius:5px; border:1px solid var(--border); background:var(--panel2); color:var(--muted);
+  font:700 12px/1 var(--font); }
+.tab-cache[hidden] { display:none!important; }
+.tab-cache[data-cache="cached"] { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 70%,var(--border)); background:color-mix(in srgb,var(--ok) 12%,var(--panel)); }
+.tab-cache[data-cache="downloading"], .tab-cache[data-cache="queued"] { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 70%,var(--border)); background:color-mix(in srgb,var(--warn) 10%,var(--panel)); }
+.tab-cache[data-cache="failed"] { color:var(--err); border-color:var(--err); }
+.tab.watch:has(.tab-cache[data-cache="uncached"]) .tab-lead { opacity:.68; }
+.tab.watch:has(.tab-cache[data-cache="cached"]) .tab-lead { color:var(--ok); }
+
 .tab.active .tab-state { border-color:var(--accent); color:var(--accent); }
 .tab-zzz, .tab-close { position: absolute; top: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
 .tab-close { right: 4px; }
