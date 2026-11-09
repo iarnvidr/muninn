@@ -705,6 +705,7 @@ test('watch tabs distinguish real media cache states, not webview hibernation', 
     assert.equal(indicator.state,state);
   }
   assert.equal(L.tabCacheIndicator({face:'yt',state:'sleeping'}),null);
+  assert.equal(L.tabCacheIndicator({face:'watch',video_id:null,playlist:{list_id:'PLtest'}}),null);
   assert.equal(L.tabLeadKind({face:'yt',state:'sleeping',kind:'channel'}),'channel');
 });
 
