@@ -124,6 +124,17 @@
     return null;
   }
 
+  /** Background playback is a user choice; unfinished sources must not become ghost players. */
+  function watchLeavePolicy(c, settings, readyState, pipActive, pipPending) {
+    if (!c) return 'none';
+    if (!pipActive && !pipPending && (!c.sourceSet || (!c.started && readyState < 2))) return 'discard-loading';
+    if (!pipActive && !pipPending && settings?.background_playback !== true) return 'pause';
+    return 'continue';
+  }
+  function miniVideoVisible(c, readyState, pipActive) {
+    return !!(c && c.background && c.sourceSet && c.started && readyState >= 2 && !pipActive);
+  }
+
   /** Window-level shortcut for a keydown event description ({key, metaKey, ctrlKey, altKey, shiftKey}). */
   function shortcutAction(e) {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
@@ -878,7 +889,7 @@
   return {
     observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
-    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, offscreenTabDirection, shortcutAction,
+    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
