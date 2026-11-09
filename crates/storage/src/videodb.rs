@@ -244,6 +244,24 @@ impl VideoDb {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// Look up all open-video tabs in bounded, parameterized batches. A single
+    /// query per batch avoids opening one SQLite statement per tab on every poll.
+    pub fn entries_for_videos(&self, video_ids: &[String]) -> Result<Vec<EntryRow>> {
+        if video_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock();
+        let mut out = Vec::new();
+        for ids in video_ids.chunks(200) {
+            let placeholders = vec!["?"; ids.len()].join(",");
+            let sql = format!("SELECT {ENTRY_COLS} FROM entries WHERE video_id IN ({placeholders}) ORDER BY video_id, id");
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), entry_from)?;
+            out.extend(rows.collect::<std::result::Result<Vec<_>, _>>()?);
+        }
+        Ok(out)
+    }
+
     pub fn entries_with_status(&self, status: &str) -> Result<Vec<EntryRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(&format!("SELECT {ENTRY_COLS} FROM entries WHERE status = ?1 ORDER BY created_at, id"))?;
@@ -394,6 +412,21 @@ mod tests {
         db.put_settings(&s).unwrap();
         db.seed().unwrap();
         assert_eq!(db.settings().download_concurrency, 3, "re-seeding must not reset user edits");
+    }
+
+    #[test]
+    fn batched_tab_media_query_is_scoped_and_parameterized() {
+        let db = VideoDb::in_memory().unwrap();
+        for (video, variant) in [("aaaaaaaaaaa", "360"), ("aaaaaaaaaaa", "720"),
+                                  ("bbbbbbbbbbb", "audio"), ("ccccccccccc", "480")] {
+            db.insert_entry(&EntryRow::new(video, variant, variant, "test", 1)).unwrap();
+        }
+        assert!(db.entries_for_videos(&[]).unwrap().is_empty());
+        let ids = vec!["aaaaaaaaaaa".to_string(), "bbbbbbbbbbb".to_string()];
+        let rows = db.entries_for_videos(&ids).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.video_id != "ccccccccccc"));
+        assert!(db.entries_for_videos(&["a') OR 1=1 --".into()]).unwrap().is_empty());
     }
 
     #[test]
