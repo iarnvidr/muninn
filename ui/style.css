@@ -917,3 +917,34 @@ dialog.modal::backdrop { background: rgba(0,0,0,.45); }
 
 /* Playlist queue is intentionally bounded to the API's returned window. */
 .playlist-queue{display:flex;gap:.4rem;align-items:center;overflow:auto;padding:.45rem .6rem;margin:0 0 .5rem;border:1px solid var(--line,#333);border-radius:8px}.queue-head{display:flex;flex-direction:column;flex:0 0 auto;font-size:.8rem}.queue-item{flex:0 0 auto;max-width:15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-item.current{outline:2px solid var(--accent,#58a6ff)}
+
+/* Opt-in Muninn Browse page: familiar video discovery from local captured feeds. */
+.browse-native { max-width:1600px; margin:0 auto; min-width:0; }
+.browse-native-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin:0 0 18px; }
+.browse-native-header .h1 { font-size:27px; letter-spacing:-.02em; }
+.browse-native-sub { max-width:80ch; line-height:1.5; margin:6px 0 0; font-size:12.5px; }
+.browse-native-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:7px; flex:none; }
+.browse-native-actions button { min-height:34px; font-size:12px; }
+.browse-native-filters { position:sticky; top:-18px; display:flex; flex-wrap:nowrap; gap:8px; padding:12px 0;
+  margin:6px 0 16px; background:var(--bg); overflow-x:auto; z-index:2; }
+.browse-native-filters button { border-radius:16px; white-space:nowrap; background:var(--panel2); font:600 12px var(--font); }
+.browse-native-filters button[aria-pressed=true] { background:var(--text); color:var(--bg); border-color:var(--text); }
+.browse-native-section { margin:0 0 38px; }
+.browse-native-section-head { display:flex; align-items:end; justify-content:space-between; padding-bottom:12px; margin-bottom:16px;
+  border-bottom:1px solid var(--border); }
+.browse-native-section-head .h2 { font-size:18px; margin:0 0 5px; }
+.browse-native-section-head .muted { font-size:11px; }
+.browse-native-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:22px 16px; align-items:start; }
+.browse-native-grid .vcard { min-width:0; }
+.browse-native-editor { margin:12px 0 20px; padding:14px; border:1px solid var(--border); border-radius:9px; background:var(--panel); }
+.browse-native-editor[hidden] { display:none!important; }
+.browse-native-editor>p { margin:0 0 12px; font-size:12px; }
+.browse-native-edit-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); }
+.browse-native-edit-row strong { min-width:0; flex:1; }
+.browse-native-edit-row button { min-width:30px; }
+.browse-native-add { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+@media(max-width:850px) {
+  .browse-native-header { flex-direction:column; align-items:stretch; }
+  .browse-native-actions { justify-content:flex-start; }
+  .browse-native-grid { grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
+}
