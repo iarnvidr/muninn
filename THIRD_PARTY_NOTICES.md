@@ -6,6 +6,7 @@ satisfied. See the [release checklist](docs/PUBLICATION.md).
 
 | Component | Shipped form | License / provenance |
 | --- | --- | --- |
+| Cytoscape.js (same embedded engine as Chat Hub) | `ui/vendor/cytoscape.esm.min.mjs`, loaded locally and offline for Feeds network view | MIT; full attribution and terms in `ui/vendor/CYTOSCAPE-LICENSE`, distributed as `Contents/Resources/licenses/CYTOSCAPE-LICENSE`; sourced from `iarnvidr/chat-hub` at 2026-11-09, original upstream https://js.cytoscape.org/ |
 | hls.js 1.6.15 | `ui/hls.min.js`, embedded in Muninn | Apache-2.0; copyright and attribution in `licenses/hls.js-LICENSE`, full text in `licenses/Apache-2.0.txt`; https://github.com/video-dev/hls.js/tree/v1.6.15 |
 | Cinzel | bundled font | SIL OFL-1.1, `ui/fonts/Cinzel-OFL.txt` |
 | Inter | bundled font | SIL OFL-1.1, `ui/fonts/Inter-OFL.txt` |

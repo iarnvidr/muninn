@@ -40,7 +40,53 @@ def screenshot(name):
 try:
     session = send({'op':'youtube_cookie_fixture'})
     check('native downloader reads shared cookies before page observation and follows rotation/sign-out', session.get('ok') is True, session)
+    # Hide the separate native YouTube WKWebView before painting an HTML overlay.
     click('#sidebar [data-page="library"]')
+    time.sleep(.35)
+    # Native visual acceptance fixture: 102 videos, 24 recorded channels.
+    # Import the same embedded offline Cytoscape engine as the real Feeds page.
+    # The screenshot is retained with the PR artifact for human inspection.
+    dense_graph_js = r"""
+return await (async()=>{
+    const host=document.createElement('section');
+    host.id='muninn-native-feeds-fixture';
+    Object.assign(host.style,{position:'fixed',inset:'18px',padding:'16px',
+        zIndex:'100000',background:'var(--bg)',color:'var(--text)'});
+    document.body.append(host);
+    const items=Array.from({length:102},(_,i)=>({
+        video_id:String(i).padStart(11,'0'),
+        title:'Recorded feed video '+i+' — preview of a realistic long title',
+        channel_id:'UC'+String(i%24).padStart(22,'x'),
+        channel:'Recorded channel '+(i%24)
+    }));
+    const model=window.MuninnFeedGraph.build([{
+        id:827,kind:'subscriptions',
+        captured_at:Math.round(Date.now()/1000),count:102,
+        source_url:'https://www.youtube.com/feed/subscriptions',items
+    }]);
+    window.__muninnNativeFeeds=window.MuninnFeedGraph.mount(host);
+    await window.__muninnNativeFeeds.render(model,'snapshot:827');
+    const network=window.MuninnFeedGraph.prepareNetwork(model,{snapshotId:'snapshot:827'});
+    const canvas=host.querySelector('.feed-network-canvas');
+    return {actualCanvasCount:canvas?.querySelectorAll('canvas').length||0,
+        width:canvas?.getBoundingClientRect().width||0,
+        height:canvas?.getBoundingClientRect().height||0,
+        nodes:network.nodes.length,
+        videos:network.totalVideos,
+        channelCount:network.totalChannels,
+        summary:host.querySelector('.feed-network-caption')?.textContent||'',
+        hasOfflineModule:!!document.querySelector('#muninn-native-feeds-fixture')};
+})()
+"""
+    feed_evidence=send({'op':'eval','target':'chrome','js':dense_graph_js},timeout=60)
+    check('native 102-video offline Cytoscape graph renders without a hairball',
+          isinstance(feed_evidence,dict) and feed_evidence.get('actualCanvasCount',0)>0
+          and feed_evidence.get('videos')==102
+          and feed_evidence.get('channelCount')==24
+          and feed_evidence.get('nodes')==25
+          and feed_evidence.get('height',0)>=390,feed_evidence)
+    screenshot('feed-network-102-videos')
+    ev("(()=>{window.__muninnNativeFeeds?.destroy();document.querySelector('#muninn-native-feeds-fixture')?.remove();return true})()")
     ev("(()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}));return true})()")
     opened=ev("window.Muninn.page")=='settings'
     # Wait for a pending native tab-state handoff to settle before judging the
