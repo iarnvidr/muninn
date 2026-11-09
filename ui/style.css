@@ -241,7 +241,11 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .tabrow { grid-area:tabs; display:flex; align-items:flex-end; gap:4px; padding:2px 6px 0; height:34px; background:var(--chrome); min-width:0; }
 .tabstrip { display:flex; align-items:flex-end; gap:2px; min-width:0; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; height:100%; flex:1; }
 .tabstrip::-webkit-scrollbar { display:none; }
-.tab-tools { display:flex; flex:none; align-items:center; gap:2px; }
+.tab-tools { display:flex; flex:none; align-items:center; gap:2px; min-width:0; }
+.tab-active-jump { max-width:160px; min-width:0; padding:4px 7px; font-size:11px; font-weight:650; color:var(--accent); background:var(--accent-soft); border:1px solid var(--accent); border-radius:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tab-active-jump[hidden] { display:none!important; }
+.tab-active-jump:hover:not(:disabled) { background:var(--active); }
+.app[data-tabs-layout="vertical"] .tab-active-jump { flex:1 1 auto; max-width:none; font-size:10px; }
 .app[data-tabs-layout="vertical"] { --tabs-w:clamp(144px,18vw,210px); grid-template-columns:var(--side-w) var(--tabs-w) minmax(0,1fr); grid-template-rows:38px minmax(0,1fr); grid-template-areas:"side tabs toolbar" "side tabs content"; }
 .app[data-tabs-layout="vertical"] .tabrow { height:auto; min-height:0; flex-direction:column; align-items:stretch; padding:4px; border-right:1px solid var(--border); }
 .app[data-tabs-layout="vertical"] .tabstrip { flex-direction:column; align-items:stretch; overflow-y:auto; overflow-x:hidden; height:auto; min-height:0; scrollbar-width:thin; }
@@ -252,7 +256,8 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .app[data-tabs-layout="vertical"] .tab-ungroup { overflow:hidden; font-size:10px; padding:4px; }
 .tab { position:relative; display:flex; align-items:center; flex:0 0 170px; min-width:130px; max-width:210px; height:30px; border-radius:4px 4px 0 0; color:var(--muted); }
 .tab:hover { background: var(--hover); color: var(--text); }
-.tab.active { background: var(--toolbar); color: var(--text); }
+.tab.active { background:var(--accent-soft); color:var(--text); box-shadow:inset 0 -3px var(--accent),0 0 0 1px color-mix(in srgb,var(--accent) 60%,transparent); font-weight:650; }
+.app[data-tabs-layout="vertical"] .tab.active { box-shadow:inset 3px 0 var(--accent),0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent); }
 .tab-main { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 48px 0 10px; border: 0; background: none; border-radius: 9px 9px 0 0; text-align: left; color: inherit; }
 .tab-main:hover:not(:disabled), .tab-main:active:not(:disabled) { background: none; }
 .tab-main:focus-visible { outline-offset: -2px; }
@@ -260,8 +265,10 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .tab-lead .ico { width: 14px; height: 14px; }
 .tab-lead svg { width: 14px; height: 14px; }
 .tab-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; }
-.tab.sleeping .tab-lead, .tab.sleeping .tab-title { opacity: .5; }
-.tab.sleeping .tab-title { font-style: italic; }
+.tab.sleeping .tab-title { opacity:.75; }
+.tab-state { flex:none; min-width:20px; text-align:center; font:650 10px/1.5 var(--font); color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:5px; }
+.tab-state[hidden] { display:none!important; }
+.tab.active .tab-state { border-color:var(--accent); color:var(--accent); }
 .tab-zzz, .tab-close { position: absolute; top: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
 .tab-close { right: 4px; }
 .tab-zzz { right: 26px; opacity: 0; }
@@ -306,7 +313,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 #side-toggle { color: var(--muted); }
 .app[data-sidebar="collapsed"] .side-label { display: none; }
 .app[data-sidebar="collapsed"] .side-item { justify-content: center; padding: 0; }
-.app[data-page-open="1"] .tab.active:not(:hover) { background: color-mix(in srgb, var(--toolbar) 60%, transparent); }
+.app[data-page-open="1"] .tab.active:not(:hover) { background:var(--accent-soft); }
 
 /* ------------------------------------------------------------------ views */
 .view { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
