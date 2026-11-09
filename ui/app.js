@@ -625,7 +625,7 @@
     M.page = L.resolvePage(p === 'browse' ? null : p, M.settings);
     render();
   }
-  for (const b of $('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
+  for (const b of $$('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
   // The wordmark is a real Browse shortcut, not inert branding.
   $('#muninn-home').addEventListener('click', () => onSidebarClick($('#sidebar [data-page="browse"]')));
   /* Diagnostics is a developer-mode page: its button exists only while the mode is on. */
