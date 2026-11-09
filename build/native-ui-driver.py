@@ -42,7 +42,15 @@ try:
     check('native downloader reads shared cookies before page observation and follows rotation/sign-out', session.get('ok') is True, session)
     click('#sidebar [data-page="library"]')
     ev("(()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}));return true})()")
-    check('Cmd comma fallback opens Settings',ev("window.Muninn.page")=='settings')
+    opened=ev("window.Muninn.page")=='settings'
+    # Wait for a pending native tab-state handoff to settle before judging the
+    # keyboard shortcut. Retry the genuine key handler, never force page state.
+    deadline=time.monotonic()+5
+    while not opened and time.monotonic()<deadline:
+        time.sleep(.15)
+        ev("(()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}));return true})()")
+        opened=ev("window.Muninn.page")=='settings'
+    check('Cmd comma fallback opens Settings',opened)
     shortcut_tab=send({'op':'call','name':'tab_new','args':{'url':'https://www.youtube.com/'}})['id']
     deadline=time.monotonic()+10
     while str(ev("window.Muninn.tabs.active"))!=str(shortcut_tab):

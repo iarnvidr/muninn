@@ -355,9 +355,9 @@
   /* ================================================================== Feeds */
 
   function feedsPage() {
-    const S = { kind: '', list: [], selected: null, data: null, listSig: '', sig: '', refreshing: null, attempted: new Set() };
+    const S = { kind: '', list: [], selected: null, data: null, listSig: '', sig: '', refreshing: null, attempted: new Set(), view: 'cards', graphKey: '', graphData: null };
     let pol = null;
-    const kind = h('select', { 'aria-label': 'Feed kind', onchange: (ev) => { S.kind = ev.target.value; S.selected = null; S.listSig = ''; S.sig = ''; pol.kick(); } },
+    const kind = h('select', { 'aria-label': 'Feed kind', onchange: (ev) => { S.kind = ev.target.value; S.selected = null; S.listSig = ''; S.sig = ''; S.graphKey = ''; syncRefresh(); pol.kick(); } },
       [['', 'All kinds'], ['home', 'Home'], ['subscriptions', 'Subscriptions'], ['search', 'Search'], ['channel', 'Channel'], ['related', 'Related'], ['other', 'Other']].map(([v, t]) => h('option', { value: v, text: t })));
     const list = h('ul', { class: 'snaplist' });
     const listEmpty = h('p', { class: 'muted small-note', hidden: true, text: 'No snapshots yet. Browse YouTube and Muninn keeps what it sees.' });
@@ -366,13 +366,53 @@
     const stale = h('span', { class: 'badge warn', text: 'stale', hidden: true });
     const grid = h('div', { class: 'vgrid' });
     const note = h('p', { class: 'empty-note', hidden: true });
+    const sourceNote = h('p', { class: 'feed-source muted', role: 'note' });
+    const graphHost = h('div', { class: 'feed-graph', hidden: true });
+    const cardsButton = h('button', {type:'button',text:'Cards', 'aria-pressed':'true',
+      onclick:()=>setView('cards')});
+    const graphButton = h('button', {type:'button',text:'Connections', 'aria-pressed':'false',
+      onclick:()=>setView('graph')});
+    const views = h('div', {class:'feed-view-toggle',role:'group','aria-label':'Feed display'},
+      cardsButton, graphButton);
+    let graph = null;
+    function setView(next) {
+      S.view = next;
+      setAttr(cardsButton,'aria-pressed',String(next==='cards'));
+      setAttr(graphButton,'aria-pressed',String(next==='graph'));
+      setHidden(grid,next!=='cards');
+      setHidden(graphHost,next!=='graph');
+      setHidden(note,next==='graph'||!!S.data?.items?.length);
+      if(next==='graph') pol?.kick();
+    }
+    async function renderGraph() {
+      if(S.view!=='graph' || !graph) return;
+      const snapshots = S.list.slice(0,16);
+      const key = S.kind+'|'+snapshots.map(s=>s.id+':'+s.count).join(',');
+      if(S.graphKey!==key || !S.graphData) {
+        const full = await Promise.all(snapshots.map(s=>
+          M.api('GET','/api/feeds/'+encodeURIComponent(s.id)).catch(()=>null)));
+        S.graphData = window.MuninnFeedGraph.build(full.filter(Boolean).map(d=>({
+          ...d,count:(d.items||[]).length
+        })));
+        S.graphKey = key;
+        graph.render(S.graphData,'snapshot:'+S.selected);
+      } else graph.select('snapshot:'+S.selected);
+    }
 
     const refreshNote = h('p', { class: 'muted small-note', role: 'status' });
     const refreshButton = h('button', { text: 'Refresh from YouTube', onclick: () => refreshFeed().catch(M.flashError) });
+    function syncRefresh() {
+      const allowed = !S.kind || S.kind==='home' || S.kind==='subscriptions';
+      refreshButton.disabled=!!S.refreshing || !allowed;
+      setAttr(refreshButton,'title',allowed ? 'Refresh Home or Subscriptions' :
+        'Search, Related, and Channel snapshots are captured by browsing the original YouTube page');
+      if(!allowed) setText(refreshNote,'This source updates when you browse its original YouTube page.');
+    }
     async function refreshFeed() {
       if (S.refreshing) return;
+      if(S.kind && S.kind!=='home' && S.kind!=='subscriptions') {syncRefresh();return;}
       const feedKind = S.kind === 'home' ? 'home' : 'subscriptions';
-      S.kind = feedKind; kind.value = feedKind; S.selected = null;
+      S.kind = feedKind; kind.value = feedKind; S.selected = null; S.graphKey='';
       S.attempted.add(feedKind); refreshButton.disabled = true;
       setText(refreshNote, 'Loading ' + feedKind + ' using your signed-in YouTube session…');
       try {
@@ -390,23 +430,29 @@
       const sig = JSON.stringify(S.list.map((s) => [s.id, s.count, s.captured_at])) + '|' + S.selected;
       if (sig === S.listSig) return;
       S.listSig = sig;
-      list.replaceChildren(...S.list.map((s) => h('li', null, h('button', { type: 'button', 'aria-current': s.id === S.selected ? 'true' : 'false', onclick: () => { S.selected = s.id; S.sig = ''; renderList(); pol.kick(); } },
-        h('span', { class: 'k', text: s.kind + (s.query ? ': ' + s.query : '') }),
-        h('span', { class: 'n', text: s.count + ' videos' }),
-        h('span', { class: 's', text: L.relTime(s.captured_at) })))));
+      list.replaceChildren(...S.list.map((s) => h('li', null, h('button', {
+        type:'button', 'aria-current':s.id===S.selected?'true':'false',
+        title:L.feedProvenance(s).origin,
+        onclick:()=>{S.selected=s.id; S.sig='';renderList();pol.kick();}
+      },
+        h('span', {class:'k',text:L.feedProvenance(s).label}),
+        h('span', {class:'n',text:s.count+' videos'}),
+        h('span', {class:'s',text:L.relTime(s.captured_at)}),
+        h('span', {class:'feed-list-origin',text:L.feedProvenance(s).origin})))));
       setHidden(listEmpty, S.list.length > 0);
     }
     function renderFeed() {
       const d = S.data;
-      if (!d) { setText(title, 'Feed'); setText(meta, ''); setHidden(stale, true); grid.replaceChildren(); S.sig = ''; setText(note, 'Nothing to show yet.'); setHidden(note, false); return; }
+      if (!d) { setText(title,'Feed'); setText(meta,'');setText(sourceNote,'No captured source selected.');setHidden(stale,true);grid.replaceChildren(); S.sig='';setText(note,'Nothing to show yet.');setHidden(note,S.view==='graph');return; }
       const items = d.items || [];
-      setText(title, d.kind + (d.query ? ': ' + d.query : ''));
+      setText(title,L.feedProvenance(d).label);
+      setText(sourceNote,'Captured from: '+L.feedProvenance(d).origin);
       setText(meta, `${items.length} videos, captured ${L.relTime(d.captured_at)}`);
       setHidden(stale, !d.stale);
       const sig = d.id + '|' + items.map((i) => i.video_id + ':' + (i.cached ? i.cached.state + i.cached.progress : '')).join(',');
       if (sig !== S.sig) { S.sig = sig; grid.replaceChildren(...items.map((it) => M.videoCard(it, (x) => M.openVideo(x.video_id)))); }
       setText(note, 'This snapshot has no videos.');
-      setHidden(note, items.length > 0);
+      setHidden(note, items.length > 0 || S.view==='graph');
     }
     async function tick() {
       const q = new URLSearchParams({ limit: '60' });
@@ -415,7 +461,7 @@
       if (S.refreshing) {
         const fresh = S.list.find((s) => s.kind === S.refreshing.kind && s.captured_at >= S.refreshing.since);
         if (fresh || Date.now() > S.refreshing.deadline) {
-          S.refreshing = null; refreshButton.disabled = false;
+          S.refreshing = null; syncRefresh();
           if (fresh) { S.selected = fresh.id; setText(refreshNote, 'Refreshed from your YouTube session.'); }
           else setText(refreshNote, 'No new feed was captured. Open the subscriptions tab in Muninn to check for a sign-in, consent or network prompt, then retry.');
         }
@@ -423,21 +469,35 @@
       if (S.selected != null && !S.list.some((s) => s.id === S.selected)) S.selected = null;
       if (S.selected == null && S.list.length) S.selected = S.list[0].id;
       S.data = S.selected == null ? null : await M.api('GET', '/api/feeds/' + encodeURIComponent(S.selected)).catch(() => null);
-      renderList(); renderFeed();
+      renderList(); renderFeed(); await renderGraph();
       if (S.kind === 'subscriptions' && !S.list.length && !S.refreshing && !S.attempted.has(S.kind)) {
         refreshFeed().catch(M.flashError);
       }
     }
     return {
       mount(el) {
-        el.append(pageHead('Feeds', 'Snapshots of the pages you browsed, kept in the content cache. Click a video to watch it in Muninn.'),
+        el.append(pageHead('Feeds', 'See where captures came from and how snapshots, videos and channels connect. Every connection comes from recorded YouTube data.'),
           h('div', { class: 'split' },
             h('aside', { class: 'side-box', 'aria-label': 'Feed snapshots' }, h('label', { class: 'field' }, h('span', { text: 'Kind' }), kind), refreshButton, refreshNote, list, listEmpty),
-            h('div', { class: 'feed-main' }, h('div', { class: 'feed-head' }, title, stale, meta), note, grid)));
+            h('div', { class:'feed-main' }, h('div', {class:'feed-head'},title,stale,meta),
+              sourceNote, views, note, grid, graphHost)));
+        graph = window.MuninnFeedGraph.mount(graphHost,{
+          onSelect(node) {
+            if(node.snapshot_id!=null) {
+              S.selected=node.snapshot_id; S.sig='';renderList();pol?.kick();
+            }
+          },
+          onOpen(node) {
+            if(node.video_id) M.openVideo(node.video_id);
+            else if(node.channel_id) M.openChannel(node.channel_id);
+            else if(node.snapshot_id!=null) { S.selected=node.snapshot_id;setView('cards');pol?.kick(); }
+          }
+        });
+        syncRefresh();
         pol = poller(tick, () => S.refreshing ? 1000 : ((S.data && (S.data.items || []).some((i) => i.cached && i.cached.progress < 1)) ? 2500 : 15000));
         pol.kick();
       },
-      unmount() { if (pol) pol.stop(); },
+      unmount() { if (pol) pol.stop(); graph?.destroy(); graph=null; S.graphKey=''; },
     };
   }
 

@@ -426,7 +426,9 @@
       setCls(t.el, cls);
       setHidden(t.state, !sleeping);
       const media = L.tabMediaIndicator(tab);
-      setHidden(t.media, !media);
+      const showProgress = media?.state === 'downloading' && /%$/.test(media.label);
+      setHidden(t.media, !showProgress);
+      setAttr(t.lead, 'data-cache', media?.state || null);
       if (media) {
         setCls(t.media, 'tab-media ' + media.state);
         setText(t.media, media.label);
@@ -610,6 +612,7 @@
     M.watch?.prepareBackground();
     const p = b.dataset.page;
     if (p==='browse') {
+      if(M.settings.browse_mode==='muninn') { M.page='browse_custom';render();return; }
       const tab=M.tabs.list.find(t=>t.id===M.lastBrowseTab && t.face!=='watch') || M.tabs.list.find(t=>t.face!=='watch');
       if(tab) M.activateTab(tab.id); else M.newTab('https://www.youtube.com/');
       return;
@@ -623,6 +626,8 @@
     render();
   }
   for (const b of $$('#sidebar [data-page]')) b.addEventListener('click', () => onSidebarClick(b));
+  // The wordmark is a real Browse shortcut, not inert branding.
+  $('#muninn-home').addEventListener('click', () => onSidebarClick($('#sidebar [data-page="browse"]')));
   /* Diagnostics is a developer-mode page: its button exists only while the mode is on. */
 // Diagnostics is reachable only from Settings; developer mode never adds a rail item.
   function syncDeveloperNav() {
@@ -634,7 +639,7 @@
     const tab=activeTab();
     if(tab?.face!=='watch' && tab) M.lastBrowseTab=tab.id;
     for (const b of $$('#sidebar [data-page]')) {
-      const on = (M.page || (tab?.face==='watch'?'player':'browse')) === b.dataset.page;
+      const on = (M.page==='browse_custom'?'browse':(M.page || (tab?.face==='watch'?'player':'browse'))) === b.dataset.page;
       setAttr(b, 'aria-current', on ? 'page' : null);
     }
     $('#app').dataset.pageOpen = M.page ? '1' : '0';

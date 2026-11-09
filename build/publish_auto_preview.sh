@@ -91,6 +91,11 @@ payload is separately signed and verified. Select Stable and previews in Muninn
 to receive this version; stable-only installations are unaffected.
 
 $marker"
+  # Show authored user-facing notes before the immutable source/CI receipt.
+  changelog_file="build/release-notes/$VERSION.md"
+  if [[ -f "$changelog_file" ]]; then
+    notes="$(cat "$changelog_file")"$'\n\n'"$notes"
+  fi
   gh api --method POST "repos/$GH_REPO/releases" \
     -f "tag_name=$TAG" -f "target_commitish=$SOURCE_SHA" \
     -f "name=Muninn $VERSION" -f "body=$notes" \

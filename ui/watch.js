@@ -78,12 +78,22 @@
   const miniButton=(name,iconName,action,essential)=>h('button',{type:'button',class:'mini-control '+(essential?'mini-essential':'mini-secondary'),'aria-label':name,title:name,onclick:action},icon(iconName));
   const nowToggle=miniButton('Pause background video','pause',()=>togglePlay(),true);
   const nowPip=miniButton('Picture in picture','fullscreen',()=>togglePip());
-  const nowReturn=miniButton('Return to video','expand',()=>returnToPlayer(),true);
+  const nowReturn=miniButton('Open full player','fullscreen',()=>returnToPlayer(),true);
+  const nowDetail=h('button',{type:'button',class:'mini-detail-toggle',text:'Less','aria-label':'Collapse mini player','aria-expanded':'true',onclick:()=>toggleMiniDetail()});
   const nowStop=miniButton('Stop playback','close',()=>leave());
   const nowSeek=h('input',{type:'range',class:'mini-seek',min:'0',max:'1',step:'any',value:'0','aria-label':'Seek background video',onchange:()=>commitSeek(Number(nowSeek.value))});
   const nowPlaying=h('section',{class:'now-playing',hidden:true,'aria-label':'Background player'},
-    h('div',{class:'mini-head'},nowPreview,h('div',{class:'mini-copy'},nowTitle,nowChannel)),
+    h('div',{class:'mini-head'},nowPreview,h('div',{class:'mini-copy'},nowTitle,nowChannel),nowDetail),
     nowSeek,h('div',{class:'mini-bottom'},nowTime,h('div',{class:'mini-controls'},nowToggle,nowPip,nowReturn,nowStop)));
+  nowPlaying.dataset.detail = 'expanded';
+  function toggleMiniDetail() {
+    const expanded = nowPlaying.dataset.detail === 'compact';
+    nowPlaying.dataset.detail = expanded ? 'expanded' : 'compact';
+    setText(nowDetail, expanded ? 'Less' : 'More');
+    setAttr(nowDetail, 'aria-expanded', String(expanded));
+    setAttr(nowDetail, 'aria-label', expanded ? 'Collapse mini player' : 'Expand mini player');
+    setAttr(nowDetail, 'title', expanded ? 'Collapse mini player controls' : 'Expand mini player controls');
+  }
   const sidebar=document.querySelector('#sidebar');sidebar.insertBefore(nowPlaying,sidebar.querySelector('.sidebar-note'));
   function returnToPlayer(){if(cur)M.activateTab(cur.tabId);}
   function placeMiniVideo(){
