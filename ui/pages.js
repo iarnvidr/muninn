@@ -395,7 +395,7 @@
           ...d,count:(d.items||[]).length
         })));
         S.graphKey = key;
-        graph.render(S.graphData,'snapshot:'+S.selected);
+        await graph.render(S.graphData,'snapshot:'+S.selected);
       } else graph.select('snapshot:'+S.selected);
     }
 
