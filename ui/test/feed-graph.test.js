@@ -118,40 +118,91 @@ test('feed list explains real provenance and missing origins without fabricating
  assert.equal(L.feedProvenance({kind:'home'}).origin,'Origin URL not recorded');
 });
 
-// A small DOM stand-in exercises the *real* renderer's default complexity and
-// prevents reverting to the unbounded node-label display, even without Chromium.
-test('mounted explorer draws at most eight legible channel cards plus a summary root',()=>{
- class FakeElement {
-  constructor(name){this.name=name;this.children=[];this.attrs={};this.listeners={};this.style={};this.textContent='';}
-  setAttribute(k,v){this.attrs[k]=String(v);}
-  addEventListener(k,fn){this.listeners[k]=fn;}
-  append(...nodes){this.children.push(...nodes);}
-  replaceChildren(...nodes){this.children=nodes;}
-  setPointerCapture(){}
- }
- const document={
-  createElement:(name)=>new FakeElement(name),
-  createElementNS:(_,name)=>new FakeElement(name)
- };
- const host=new FakeElement('host');host.ownerDocument=document;
+// The Chat Hub layout is shared rather than a fabricated four-column diagram.
+test('network contains one capture hub and bounded actual channel nodes by default',()=>{
  const items=Array.from({length:102},(_,i)=>({
-  video_id:String(i).padStart(11,'0'),title:'Real test video '+i,
-  channel_id:'UC'+String(i%12).padStart(22,'x'),channel:'Creator '+(i%12)
+   video_id:String(i).padStart(11,'0'),title:'Video '+i,
+   channel_id:'UC'+String(i%12).padStart(22,'x'),channel:'Creator '+(i%12)
  }));
- const graph=G.build([{id:21,kind:'subscriptions',count:102,items}]);
- const explorer=G.mount(host);
- explorer.render(graph,'snapshot:21');
- const flat=(node)=>[node,...node.children.flatMap(flat)];
- let elements=flat(host);
- assert.equal(elements.filter(n=>n.name==='g'&&n.attrs.class?.includes('feed-explorer-node')).length,9);
- const buttons=elements.filter(n=>n.name==='button');
- assert.ok(buttons.some(n=>n.textContent==='Next'));
- assert.ok(elements.some(n=>n.name==='aside'));
- assert.ok(elements.some(n=>n.name==='text'&&n.textContent.includes('Creator')));
- // A programmatic refresh/selection of the same capture keeps the focused graph.
- explorer.select('snapshot:21');
- elements=flat(host);
- assert.equal(elements.filter(n=>n.name==='g'&&n.attrs.class?.includes('feed-explorer-node')).length,9);
- explorer.destroy();
- assert.equal(host.children.length,0);
+ const g=G.build([{id:21,kind:'subscriptions',items,count:102}]);
+ const network=G.prepareNetwork(g,{snapshotId:'snapshot:21'});
+ assert.equal(network.totalVideos,102);
+ assert.equal(network.totalChannels,12);
+ assert.equal(network.visibleChannels,12);
+ assert.equal(network.nodes.filter(n=>n.kind==='video').length,0,
+   'individual video labels must not flood the overview');
+ assert.equal(network.nodes.filter(n=>n.kind==='snapshot').length,1,
+   'source/snapshot duplicate nodes obscure the real relationships');
+ assert.equal(network.nodes.filter(n=>n.kind==='channel').length,12);
+ assert.equal(network.edges.filter(e=>e.basis==='captured_in').length,12);
+ assert.equal(network.edges.reduce((sum,e)=>sum+e.count,0),102);
+ assert.ok(network.nodes.some(n=>n.landmark));
+ assert.ok(network.nodes.every(n=>Number.isFinite(n.degree)));
+});
+
+test('one selected channel expands only its observed videos, with bounded satellites',()=>{
+ const id='UC'+String(0).padStart(22,'x');
+ const items=Array.from({length:102},(_,i)=>({
+   video_id:String(i).padStart(11,'0'),title:'Video '+i,
+   channel_id:'UC'+String(i%3).padStart(22,'x'),channel:'Creator '+i%3
+ }));
+ const g=G.build([{id:21,kind:'subscriptions',items,count:102}]);
+ const focused=G.prepareNetwork(g,{snapshotId:'snapshot:21',focusId:'channel:'+id});
+ assert.equal(focused.expandedVideos,24);
+ assert.equal(focused.nodes.filter(n=>n.kind==='video').length,24);
+ assert.ok(focused.edges.filter(e=>e.basis==='published').length>=24);
+ for(const e of focused.edges) {
+   assert.ok(focused.nodes.some(n=>n.id===e.source));
+   assert.ok(focused.nodes.some(n=>n.id===e.target));
+ }
+});
+
+test('search highlights matching channels and does not invent shared identity',()=>{
+ const a={id:1,kind:'subscriptions',items:[{video_id:A,title:'Creative review',channel:'Studio'},
+  {video_id:B,title:'Computer tips',channel:'Workroom'}]};
+ const b={id:2,kind:'home',items:[{video_id:'ccccccccccc',title:'Other',channel:'Studio'}]};
+ const graph=G.build([a,b]);
+ const n=G.prepareNetwork(graph,{scope:'all',query:'Creative'});
+ assert.equal(n.totalChannels,1);
+ assert.equal(n.nodes.filter(x=>x.kind==='channel').length,1);
+ assert.equal(n.edges.filter(e=>e.basis==='captured_in').length,1);
+ assert.equal(G.prepareNetwork(graph,{scope:'all'}).totalChannels,3,
+   'same display name without channel ID must stay capture-scoped');
+});
+
+test('search and more-nodes controls cap graph complexity without dropping stored data',()=>{
+ const items=Array.from({length:102},(_,i)=>({
+   video_id:String(i).padStart(11,'0'),title:'Unique video '+i,
+   channel_id:'UC'+String(i).padStart(22,'x'),channel:'Channel '+i
+ }));
+ const g=G.build([{id:9,kind:'subscriptions',items}]);
+ const n=G.prepareNetwork(g,{snapshotId:'snapshot:9'});
+ assert.equal(n.totalVideos,102);
+ assert.equal(n.totalChannels,102);
+ assert.equal(n.visibleChannels,42);
+ assert.equal(n.hiddenChannels,60);
+ const larger=G.prepareNetwork(g,{snapshotId:'snapshot:9',maxChannels:70});
+ assert.equal(larger.visibleChannels,70);
+ assert.equal(larger.hiddenChannels,32);
+ assert.equal(G.prepareNetwork(g,{snapshotId:'snapshot:9',query:'Channel 99'}).visibleChannels,1);
+});
+
+test('actual Chat Hub Cytoscape engine spreads 60 nodes with finite coordinates',async()=>{
+ const {default:cytoscape}=await import('../vendor/cytoscape.esm.min.mjs');
+ const elements=[];
+ for(let i=0;i<60;i++)elements.push({data:{id:'node'+i}});
+ for(let i=1;i<60;i++)elements.push({data:{id:'edge'+i,source:'node'+i,target:'node'+Math.floor((i-1)/2)}});
+ const cy=cytoscape({headless:true,elements});
+ try{
+   let stopped=false;
+   const layout=cy.layout({name:'cose',animate:false,randomize:false,padding:45,
+      nodeRepulsion:()=>11000,idealEdgeLength:()=>110,gravity:.7,numIter:250});
+   layout.one('layoutstop',()=>{stopped=true;});layout.run();
+   const points=cy.nodes().map(n=>n.position());
+   assert.equal(stopped,true);
+   assert.equal(points.length,60);
+   assert.ok(points.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)));
+   assert.ok(Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x))>100);
+   assert.ok(Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y))>100);
+ } finally {cy.destroy();}
 });
