@@ -11,7 +11,7 @@
     origin: location.origin,
     isMock: false,
     page: null,                       // internal page name, or null = Browse
-    tabs: { rev: -1, active: null, warm: 3, list: [] },
+    tabs: { rev: -1, active: null, warm: 3, mediaSignature: '', list: [] },
     setup: null, tools: null, trust: null, offline: false,
     pages: {},                        // filled by pages.js: name -> { title, mount(el), unmount() }
     organization: { tab_groups: {}, collections: {}, tags: {} },
@@ -262,13 +262,14 @@
     clearTimeout(tabPollTimer);
     try {
       const s = await invoke('tabs_state');
-      if (s && s.rev !== M.tabs.rev) {
+      if (s && (s.rev !== M.tabs.rev || L.tabCacheSignature(s.tabs) !== M.tabs.mediaSignature)) {
         if ((s.handoff_rev || 0) > lastHandoffRev) {
           lastHandoffRev = s.handoff_rev;
           M.watch?.prepareBackground(s.active);
           M.page = null;
         }
         M.tabs.rev = s.rev;
+        M.tabs.mediaSignature = L.tabCacheSignature(s.tabs);
         M.tabs.active = s.active == null ? null : s.active;
         M.tabs.warm = s.warm_tabs || M.tabs.warm;
         M.tabs.list = s.tabs || [];
@@ -371,14 +372,15 @@
     const lead = h('span', { class: 'tab-lead' });
     const title = h('span', { class: 'tab-title' });
     const state = h('span', { class: 'tab-state', hidden: true, 'aria-hidden': 'true', text: 'Zz' });
-    const main = h('button', { type: 'button', class: 'tab-main', role: 'tab', onclick: () => M.activateTab(id), onauxclick: (ev) => { if (ev.button === 1) { ev.preventDefault(); M.closeTab(id); } } }, lead, title, state);
+    const cache = h('span', { class: 'tab-cache', hidden: true, 'aria-hidden': 'true' });
+    const main = h('button', { type: 'button', class: 'tab-main', role: 'tab', onclick: () => M.activateTab(id), onauxclick: (ev) => { if (ev.button === 1) { ev.preventDefault(); M.closeTab(id); } } }, lead, title, state, cache);
     const zzz = h('button', { type: 'button', class: 'tab-zzz', tabindex: '-1', onclick: (ev) => { ev.stopPropagation(); M.hibernateTab(id); } });
     zzz.append(icon('moon'));
     const close = h('button', { type: 'button', class: 'tab-close', tabindex: '-1', onclick: (ev) => { ev.stopPropagation(); M.closeTab(id); } });
     close.append(icon('close'));
     const el = h('div', { class: 'tab', 'data-id': id, oncontextmenu: (ev) => { ev.preventDefault(); M.hibernateTab(id); } }, main, zzz, close);
     M.dragTab(el,id); M.dropTabs(el,()=>M.tabGroup(id),()=>String(id));
-    return { id, el, main, lead, title, state, zzz, close, leadKind: '' };
+    return { id, el, main, lead, title, state, cache, zzz, close, leadKind: '' };
   }
 
 
@@ -413,7 +415,15 @@
       const cls = 'tab' + (active ? ' active' : '') + (sleeping ? ' sleeping' : '') + (tab.face === 'watch' ? ' watch' : '') + ((tab.state === 'loading' || tab.state === 'restoring') ? ' busy' : '');
       setCls(t.el, cls);
       setHidden(t.state, !sleeping);
-      const stateWord = sleeping ? ' (browser view unloaded; page state cached)' : (tab.state === 'restoring' ? ' (waking)' : '');
+      const cache = L.tabCacheIndicator(tab);
+      setHidden(t.cache, !cache);
+      if (cache) {
+        setText(t.cache, cache.symbol);
+        setAttr(t.cache, 'data-cache', cache.state);
+        setAttr(t.cache, 'title', cache.label);
+      } else setAttr(t.cache, 'data-cache', null);
+      const stateWord = (sleeping ? ' (browser view unloaded; page state cached)' : (tab.state === 'restoring' ? ' (waking)' : '')) +
+        (cache ? ' · ' + cache.label : '');
       setAttr(t.el, 'title', title + stateWord);
       setAttr(t.main, 'aria-selected', active ? 'true' : 'false');
       setAttr(t.main, 'tabindex', active ? '0' : '-1');
