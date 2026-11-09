@@ -134,6 +134,35 @@ mod tests {
         assert!(!anonymous[0].1);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn playlist_falls_back_to_watch_extraction_then_saved_metadata() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, core) = test_core(None, None);
+        let tool = core.paths.bin_dir.join("yt-dlp");
+        std::fs::create_dir_all(&core.paths.bin_dir).unwrap();
+        let script = r#"#!/bin/sh
+case "$*" in
+  *"watch?v=aaaaaaaaaaa&list=PLsynthetic"*)
+    printf '%s' '{"entries":[{"id":"aaaaaaaaaaa","title":"First"},{"id":"bbbbbbbbbbb","title":"Second"}]}'
+    ;;
+  *) exit 1 ;;
+esac
+"#;
+        std::fs::write(&tool, script).unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let queue = core.playlist_metadata("PLsynthetic", Some("aaaaaaaaaaa"), None).await.unwrap();
+        assert_eq!(queue.items.len(), 2);
+        assert_eq!(queue.active_index, Some(0));
+        assert!(queue.warning.is_none());
+        std::fs::write(&tool, "#!/bin/sh\nexit 1\n").unwrap();
+        let cached = core.playlist_metadata("PLsynthetic", Some("bbbbbbbbbbb"), None).await.unwrap();
+        assert_eq!(cached.active_index, Some(1));
+        assert_eq!(cached.items.len(), 2);
+        assert!(cached.warning.is_some());
+        assert!(core.video.list_entries().unwrap().is_empty(), "metadata lookup must not download video");
+    }
+
     #[tokio::test]
     async fn playlist_adapter_reports_missing_helper_without_network() {
         let (_dir, core) = test_core(None, None);
