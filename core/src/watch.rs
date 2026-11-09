@@ -9,9 +9,100 @@ use crate::stream::playlist_progress;
 use crate::util::valid_video_id;
 use crate::videodb::EntryRow;
 use serde_json::{json, Value};
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// Independently reports on-disk MEDIA availability for a video tab. This is
+/// not the cached YouTube page, tab hibernation, or a playable streaming URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TabMediaCache {
+    pub state: &'static str, // cached | downloading | queued | failed | missing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_percent: Option<u8>,
+}
+
+impl TabMediaCache {
+    fn missing() -> Self {
+        Self { state: "missing", variant: None, progress_percent: None }
+    }
+    fn progress(value: f64) -> Option<u8> {
+        (value.is_finite() && value > 0.0).then(|| (value * 100.0).clamp(0.0, 99.0) as u8)
+    }
+    fn entry(entry: &EntryRow) -> Option<Self> {
+        match entry.status.as_str() {
+            "complete" => entry.file_path.as_deref().filter(|path| {
+                std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+            }).map(|_| Self { state: "cached", variant: Some(entry.variant.clone()), progress_percent: None }),
+            "downloading" => Some(Self { state: "downloading", variant: None, progress_percent: Self::progress(entry.progress) }),
+            "queued" => Some(Self { state: "queued", variant: None, progress_percent: None }),
+            "failed" | "canceled" => Some(Self { state: "failed", variant: None, progress_percent: None }),
+            _ => None,
+        }
+    }
+    fn priority(&self) -> u8 {
+        match self.state { "cached" => 4, "downloading" => 3, "queued" => 2, "failed" => 1, _ => 0 }
+    }
+    fn quality(&self) -> u32 {
+        self.variant.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0)
+    }
+    fn prefer(&self, other: &Self) -> bool {
+        self.priority() > other.priority() ||
+          (self.priority() == other.priority() && self.quality() > other.quality()) ||
+          (self.state == "downloading" && other.state == "downloading" && self.progress_percent > other.progress_percent)
+    }
+}
+
+
 impl Core {
+    /// Read all open watch tabs in one SQLite batch. A complete entry only
+    /// counts as cached when the actual media file exists and is non-empty.
+    /// The download status changes independently from the tab list revision.
+    pub fn tab_media_caches(&self, video_ids: &[String]) -> Result<HashMap<String, TabMediaCache>> {
+        let mut unique = Vec::new();
+        let mut seen = HashSet::new();
+        for id in video_ids {
+            if valid_video_id(id) && seen.insert(id.as_str()) {
+                unique.push(id.clone());
+            }
+        }
+        let rows = self.video.entries_for_videos(&unique)?;
+        let mut statuses: HashMap<String, TabMediaCache> =
+            unique.iter().map(|id| (id.clone(), TabMediaCache::missing())).collect();
+        for row in rows {
+            if let Some(candidate) = TabMediaCache::entry(&row) {
+                let current = statuses.entry(row.video_id).or_insert_with(TabMediaCache::missing);
+                if candidate.prefer(current) { *current = candidate; }
+            }
+        }
+        // An HLS stream can be resolving before its disk entry exists. Display
+        // this as pending rather than incorrectly claiming it is not downloading.
+        for id in unique {
+            if let Some(job) = self.stream_job(&id) {
+                let st = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                let candidate = match st.phase.as_str() {
+                    "resolving" | "starting" => Some(TabMediaCache {
+                        state: "queued", variant: None, progress_percent: None,
+                    }),
+                    "caching" | "done" => Some(TabMediaCache {
+                        state: "downloading", variant: None, progress_percent: TabMediaCache::progress(st.progress),
+                    }),
+                    "failed" | "canceled" => Some(TabMediaCache {
+                        state: "failed", variant: None, progress_percent: None,
+                    }),
+                    _ => None,
+                };
+                if let Some(candidate) = candidate {
+                    let current = statuses.entry(id).or_insert_with(TabMediaCache::missing);
+                    if candidate.prefer(current) { *current = candidate; }
+                }
+            }
+        }
+        Ok(statuses)
+    }
+
     /// Persist an explicit background-tab acquisition without starting playback.
     /// The ordinary scheduler admits this queue entry into the local HLS/cache
     /// pipeline when capacity is available; opening many tabs never drops work
@@ -171,6 +262,32 @@ mod tests {
     use super::*;
     use crate::engine::testutil::test_core;
     use crate::videodb::STATUS_COMPLETE;
+
+    #[test]
+    fn tab_media_status_checks_the_disk_and_tracks_partial_work() {
+        let (dir, core) = test_core(None, None);
+        let video = "aaaaaaaaaaa".to_string();
+        assert_eq!(core.tab_media_caches(&[video.clone()]).unwrap()[&video].state, "missing");
+        let mut cached = EntryRow::new(&video, "360", "360", "test", 1);
+        cached.status = STATUS_COMPLETE.into();
+        cached.file_path = Some(dir.path().join("not-present.mp4").to_string_lossy().into_owned());
+        core.video.insert_entry(&cached).unwrap();
+        assert_eq!(core.tab_media_caches(&[video.clone()]).unwrap()[&video].state, "missing",
+                   "a completed DB row without a file is not cached media");
+        std::fs::write(cached.file_path.as_ref().unwrap(), b"downloaded").unwrap();
+        let state = &core.tab_media_caches(&[video.clone()]).unwrap()[&video];
+        assert_eq!((state.state, state.variant.as_deref()), ("cached", Some("360")));
+        let mut queued = EntryRow::new("bbbbbbbbbbb", "720", "720", "test", 1);
+        core.video.insert_entry(&queued).unwrap();
+        assert_eq!(core.tab_media_caches(&["bbbbbbbbbbb".into()]).unwrap()["bbbbbbbbbbb"].state, "queued");
+        queued.status = "downloading".into();
+        queued.progress = 0.47;
+        core.video.set_status(&queued.id, "downloading", None, 2).unwrap();
+        core.video.set_progress(&queued.id, 47, Some(100), 0.47, None).unwrap();
+        let status = core.tab_media_caches(&["bbbbbbbbbbb".into()]).unwrap();
+        assert_eq!(status["bbbbbbbbbbb"].state, "downloading");
+        assert_eq!(status["bbbbbbbbbbb"].progress_percent, Some(47));
+    }
 
     #[test]
     fn background_intents_are_durable_beyond_four_tabs_and_never_report_playback() {

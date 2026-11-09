@@ -715,3 +715,42 @@ test('leaving a playing tab pauses unless background playback or PiP was allowed
   assert.equal(L.watchLeavePolicy(started, {background_playback:false}, 4, true, false), 'continue');
   assert.equal(L.watchLeavePolicy(started, {background_playback:false}, 0, false, true), 'continue');
 });
+
+test('video-tab cache indicators reflect actual download availability, not tab sleep', () => {
+  const tab = {face:'watch', video_id:'abcdefghijk', state:'watch'};
+  let indicator = L.tabMediaIndicator({...tab, media_cache:{state:'missing'}});
+  assert.deepEqual([indicator.label, indicator.icon, indicator.state], ['↓','download','missing']);
+  assert.match(indicator.description, /not downloaded/i);
+  assert.equal(L.tabLeadKind({...tab, media_cache:{state:'missing'}}), 'download');
+
+  indicator = L.tabMediaIndicator({...tab, media_cache:{state:'queued'}});
+  assert.deepEqual([indicator.label, indicator.icon], ['…','download']);
+
+  indicator = L.tabMediaIndicator({...tab, media_cache:{state:'downloading', progress_percent:47}});
+  assert.deepEqual([indicator.label, indicator.icon], ['47%','download']);
+  indicator = L.tabMediaIndicator({...tab, media_cache:{state:'downloading', progress_percent:0}});
+  assert.equal(indicator.label, 'DL');
+
+  indicator = L.tabMediaIndicator({...tab, media_cache:{state:'cached', variant:'720'}});
+  assert.deepEqual([indicator.label, indicator.icon], ['✓','play']);
+  assert.match(indicator.description, /720p/);
+  indicator = L.tabMediaIndicator({...tab, media_cache:{state:'cached', variant:'audio'}});
+  assert.deepEqual([indicator.label,indicator.icon,indicator.state], ['A','music','audio']);
+  assert.match(indicator.description, /Only audio is cached/);
+
+  indicator = L.tabMediaIndicator({...tab, media_cache:{state:'failed'}});
+  assert.deepEqual([indicator.label,indicator.icon], ['!','alert']);
+  assert.equal(L.tabMediaIndicator({...tab, video_id:null}), null);
+  assert.equal(L.tabMediaIndicator({face:'yt',state:'sleeping',video_id:'abcdefghijk'}), null);
+  assert.equal(L.tabLeadKind({face:'yt',state:'sleeping',kind:'channel'}), 'channel');
+});
+
+test('media availability is refreshed even when tab revision does not change', () => {
+  const tab = {id:5,face:'watch',video_id:'abcdefghijk',media_cache:{state:'missing'}};
+  const snapshot = L.tabMediaFingerprint([tab]);
+  assert.notEqual(snapshot,L.tabMediaFingerprint([{...tab,media_cache:{state:'queued'}}]));
+  assert.notEqual(snapshot,L.tabMediaFingerprint([{...tab,media_cache:{state:'downloading',progress_percent:12}}]));
+  assert.notEqual(snapshot,L.tabMediaFingerprint([{...tab,media_cache:{state:'cached',variant:'720'}}]));
+  assert.equal(snapshot,L.tabMediaFingerprint([tab]));
+  assert.equal(L.tabMediaFingerprint([{id:4,face:'yt',state:'sleeping'}]), '');
+});

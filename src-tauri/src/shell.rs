@@ -99,6 +99,8 @@ struct TabView {
     video_id: Option<String>,
     playlist: Option<tabs::PlaylistContext>,
     state: &'static str,
+    /// Cached media state is distinct from browser-view hibernation.
+    media_cache: Option<muninn_core::watch::TabMediaCache>,
     live: bool,
     kind: &'static str,
     query: Option<String>,
@@ -238,6 +240,11 @@ impl Shell {
     pub fn tabs_state(&self) -> Value {
         let settings = self.core.video.settings();
         let inner = self.lock();
+        let video_ids: Vec<String> = inner.tabs.iter()
+            .filter(|tab| tab.face() == Face::Watch)
+            .filter_map(|tab| tab.video_id.clone())
+            .collect();
+        let media = self.core.tab_media_caches(&video_ids).unwrap_or_default();
         let tabs: Vec<TabView> = inner
             .tabs
             .iter()
@@ -279,6 +286,9 @@ impl Shell {
                     video_id: t.video_id.clone(),
                     playlist: t.playlist.clone(),
                     state,
+                    media_cache: if t.face() == Face::Watch {
+                        t.video_id.as_deref().and_then(|id| media.get(id).cloned())
+                    } else { None },
                     live: t.live && !t.restoring,
                     kind: t.kind_str(),
                     query,

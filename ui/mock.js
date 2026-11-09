@@ -49,6 +49,7 @@
   function tabView(t) {
     return {
       id: t.id, title: t.title, url: t.url, face: t.face, video_id: t.video_id, state: t.state,
+      media_cache: t.face === 'watch' ? (t.media_cache || { state: 'missing' }) : null,
       live: t.state === 'live' || t.state === 'loading', kind: t.kind, query: t.query,
       can_back: t.hi > 0, can_forward: t.hi < t.hist.length - 1, last_active_ms: t.last_active_ms,
     };
@@ -147,7 +148,9 @@
       try { return Promise.resolve(f(args || {})); } catch (e) { return Promise.reject(String(e)); }
     },
   };
-  window.__mock = { calls, watchPosts: [], native, tabs: () => tabs.map(tabView), get trust() { return trust; }, set trust(v) { trust = v; } };
+  window.__mock = { calls, watchPosts: [], native, tabs: () => tabs.map(tabView),
+    setMediaCache(id, cache) { const tab = find(id); if (tab) tab.media_cache = cache; },
+    get trust() { return trust; }, set trust(v) { trust = v; } };
 
   /* A stand-in for the native YouTube web view, drawn exactly where Rust would put it. */
   let nativeEl = null;

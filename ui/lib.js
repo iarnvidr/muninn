@@ -101,10 +101,54 @@
   /** Whether the tab's page can be hibernated by hand (a sleeping or watch tab has nothing to free). */
   function canHibernate(tab) { return !!tab && tab.face === 'yt' && (tab.state === 'live' || tab.state === 'loading') && !!tab.live; }
 
+  /** Media availability and webview hibernation are separate concepts. */
+  function tabMediaIndicator(tab) {
+    if (!tab || tab.face !== 'watch' || !tab.video_id) return null;
+    const media = tab.media_cache;
+    if (!media || typeof media.state !== 'string') {
+      return {state:'unknown', label:'?', description:'Media cache status unavailable', icon:'play'};
+    }
+    switch (media.state) {
+      case 'cached': {
+        // An audio-only copy is local media, but NOT a cached video frame.
+        if (media.variant === 'audio') {
+          return {state:'audio', label:'A', description:'Only audio is cached; video requires a download', icon:'music'};
+        }
+        const quality = media.variant === 'audio' ? 'audio only'
+          : /^\d+$/.test(media.variant || '') ? media.variant + 'p' : 'unknown quality';
+        return {state:'cached', label:'✓', description:'Downloaded media available locally (' + quality + ')', icon:'play'};
+      }
+      case 'downloading': {
+        const value = Number(media.progress_percent);
+        const progress = Number.isFinite(value) && value > 0 && value <= 99
+          ? Math.floor(value) : null;
+        return {state:'downloading', label:progress == null ? 'DL' : progress + '%',
+          description:'Downloading video' + (progress == null ? '' : ' (' + progress + '%)'), icon:'download'};
+      }
+      case 'queued':
+        return {state:'queued', label:'…', description:'Media download queued; not available locally yet', icon:'download'};
+      case 'failed':
+        return {state:'failed', label:'!', description:'Media download failed; no complete local copy', icon:'alert'};
+      case 'missing':
+        return {state:'missing', label:'↓', description:'Video not downloaded; opening requires a media download', icon:'download'};
+      default:
+        return {state:'unknown', label:'?', description:'Media cache status unavailable', icon:'play'};
+    }
+  }
+
+  /** A cache-state change can happen without any tab change or native revision. */
+  function tabMediaFingerprint(tabs) {
+    return (tabs || []).filter(tab => tab.face === 'watch').map(tab => {
+      const media = tab.media_cache || {};
+      return [tab.id, tab.video_id || '', media.state || '', media.variant || '',
+        media.progress_percent ?? ''].join(':');
+    }).join('|');
+  }
+
   /** Watch tabs have no browser webview; their identity should never be a sleep icon. */
   function tabLeadKind(tab) {
     if (!tab) return 'dot';
-    if (tab.face === 'watch') return 'play';
+    if (tab.face === 'watch') return tabMediaIndicator(tab)?.icon || 'play';
     if (tab.state === 'loading' || tab.state === 'restoring') return 'spin';
     if (tab.kind === 'search') return 'search';
     if (tab.kind === 'channel') return 'channel';
@@ -889,7 +933,7 @@
   return {
     observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
-    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
+    chooseView, tabTitle, addressText, channelUrl, extractVideoId, canHibernate, tabLeadKind, tabMediaIndicator, tabMediaFingerprint, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,
