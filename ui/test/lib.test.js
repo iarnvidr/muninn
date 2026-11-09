@@ -678,3 +678,21 @@ test('the start watchdog outlasts the service worst case and follows the reporte
   assert.equal(L.startStalled(now - 70_000, now, budgeted), false);
   assert.equal(L.startStalled(now - 95_000, now, budgeted), true);
 });
+
+test('watch tabs keep player identity instead of a hibernation moon', () => {
+  assert.equal(L.tabLeadKind({face:'watch', state:'sleeping', kind:'other'}), 'play');
+  assert.equal(L.tabLeadKind({face:'watch', state:'watch', kind:'other'}), 'play');
+  assert.equal(L.tabLeadKind({face:'yt', state:'sleeping', kind:'channel'}), 'channel');
+  assert.equal(L.tabLeadKind({face:'yt', state:'sleeping', kind:'search'}), 'search');
+  assert.equal(L.tabLeadKind({face:'yt', state:'restoring', kind:'home'}), 'spin');
+  assert.equal(L.tabLeadKind({face:'yt', state:'live', kind:'home'}), 'browse');
+});
+
+test('offscreen active tab direction follows both layout orientations', () => {
+  const view = {top:10, bottom:210, left:10, right:260, width:250, height:200};
+  assert.equal(L.offscreenTabDirection(view, {top:-40,bottom:9,left:20,right:160,width:140,height:49}, true), 'up');
+  assert.equal(L.offscreenTabDirection(view, {top:212,bottom:245,left:20,right:160,width:140,height:33}, true), 'down');
+  assert.equal(L.offscreenTabDirection(view, {top:20,bottom:53,left:-30,right:11,width:41,height:33}, false), 'left');
+  assert.equal(L.offscreenTabDirection(view, {top:20,bottom:53,left:261,right:300,width:39,height:33}, false), 'right');
+  assert.equal(L.offscreenTabDirection(view, {top:20,bottom:53,left:20,right:160,width:140,height:33}, true), null);
+});
