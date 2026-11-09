@@ -110,6 +110,10 @@
     }
     switch (media.state) {
       case 'cached': {
+        // An audio-only copy is local media, but NOT a cached video frame.
+        if (media.variant === 'audio') {
+          return {state:'audio', label:'A', description:'Only audio is cached; video requires a download', icon:'music'};
+        }
         const quality = media.variant === 'audio' ? 'audio only'
           : /^\d+$/.test(media.variant || '') ? media.variant + 'p' : 'unknown quality';
         return {state:'cached', label:'✓', description:'Downloaded media available locally (' + quality + ')', icon:'play'};

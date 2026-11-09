@@ -273,6 +273,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .tab-media.cached { color:var(--ok); border-color:var(--ok); }
 .tab-media.missing { color:var(--warn); border-color:var(--warn); }
 .tab-media.downloading { color:var(--accent); border-color:var(--accent); }
+.tab-media.audio { color:var(--warn); border-color:var(--warn); }
 .tab-media.queued { color:var(--muted); border-style:dashed; }
 .tab-media.failed { color:var(--err); border-color:var(--err); }
 .tab.active .tab-state { border-color:var(--accent); color:var(--accent); }

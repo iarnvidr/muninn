@@ -735,7 +735,8 @@ test('video-tab cache indicators reflect actual download availability, not tab s
   assert.deepEqual([indicator.label, indicator.icon], ['✓','play']);
   assert.match(indicator.description, /720p/);
   indicator = L.tabMediaIndicator({...tab, media_cache:{state:'cached', variant:'audio'}});
-  assert.match(indicator.description, /audio only/);
+  assert.deepEqual([indicator.label,indicator.icon,indicator.state], ['A','music','audio']);
+  assert.match(indicator.description, /Only audio is cached/);
 
   indicator = L.tabMediaIndicator({...tab, media_cache:{state:'failed'}});
   assert.deepEqual([indicator.label,indicator.icon], ['!','alert']);
