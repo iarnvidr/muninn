@@ -9,6 +9,9 @@ pub const LIB_JS: &str = include_str!("../../../ui/lib.js");
 pub const QUEUE_JS: &str = include_str!("../../../ui/queue.js");
 pub const WATCH_JS: &str = include_str!("../../../ui/watch.js");
 pub const FEED_GRAPH_JS: &str = include_str!("../../../ui/feed-graph.js");
+/// Offline graph engine shared with Chat Hub; loaded on demand by Feeds.
+pub const CYTOSCAPE_MJS: &str = include_str!("../../../ui/vendor/cytoscape.esm.min.mjs");
+pub const CYTOSCAPE_LICENSE: &str = include_str!("../../../ui/vendor/CYTOSCAPE-LICENSE");
 pub const PAGES_JS: &str = include_str!("../../../ui/pages.js");
 pub const BROWSE_CUSTOM_JS: &str = include_str!("../../../ui/browse-custom.js");
 pub const UPDATES_JS: &str = include_str!("../../../ui/updates.js");
@@ -42,6 +45,8 @@ pub fn asset(name: &str) -> Option<(&'static str, &'static str)> {
         "queue.js" => Some((JS, QUEUE_JS)),
         "watch.js" => Some((JS, WATCH_JS)),
         "feed-graph.js" => Some((JS, FEED_GRAPH_JS)),
+        "vendor/cytoscape.esm.min.mjs" => Some((JS, CYTOSCAPE_MJS)),
+        "vendor/CYTOSCAPE-LICENSE" => Some(("text/plain; charset=utf-8", CYTOSCAPE_LICENSE)),
         "pages.js" => Some((JS, PAGES_JS)),
         "browse-custom.js" => Some((JS, BROWSE_CUSTOM_JS)),
         "updates.js" => Some((JS, UPDATES_JS)),
@@ -73,6 +78,8 @@ mod tests {
         for name in ["lib.js", "app.js", "queue.js", "watch.js", "feed-graph.js", "pages.js", "browse-custom.js", "updates.js", "boot.js", "mock.js", "hls.min.js", "style.css"] {
             assert!(!asset(name).unwrap().1.is_empty(), "{name} is empty");
         }
+        assert!(asset("vendor/cytoscape.esm.min.mjs").unwrap().1.len() > 100_000);
+        assert!(asset("vendor/CYTOSCAPE-LICENSE").unwrap().1.contains("MIT"));
         assert!(asset("nope.js").is_none());
     }
 
