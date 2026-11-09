@@ -696,3 +696,22 @@ test('offscreen active tab direction follows both layout orientations', () => {
   assert.equal(L.offscreenTabDirection(view, {top:20,bottom:53,left:261,right:300,width:39,height:33}, false), 'right');
   assert.equal(L.offscreenTabDirection(view, {top:20,bottom:53,left:20,right:160,width:140,height:33}, true), null);
 });
+
+test('switching away before the first decoded frame never creates a floating ghost player', () => {
+  const pending = {sourceSet:false, started:false, background:false};
+  assert.equal(L.watchLeavePolicy(pending, {background_playback:true}, 0, false, false), 'discard-loading');
+  const fetching = {...pending, sourceSet:true};
+  assert.equal(L.watchLeavePolicy(fetching, {background_playback:true}, 1, false, false), 'discard-loading');
+  assert.equal(L.miniVideoVisible({...fetching, background:true}, 0, false), false);
+  assert.equal(L.miniVideoVisible({...fetching, background:true, started:true}, 4, false), true);
+  assert.equal(L.miniVideoVisible({...fetching, background:true, started:true}, 4, true), false);
+});
+
+test('leaving a playing tab pauses unless background playback or PiP was allowed', () => {
+  const started = {sourceSet:true, started:true, background:false};
+  assert.equal(L.watchLeavePolicy(started, {background_playback:false}, 4, false, false), 'pause');
+  assert.equal(L.watchLeavePolicy(started, {}, 4, false, false), 'pause');
+  assert.equal(L.watchLeavePolicy(started, {background_playback:true}, 4, false, false), 'continue');
+  assert.equal(L.watchLeavePolicy(started, {background_playback:false}, 4, true, false), 'continue');
+  assert.equal(L.watchLeavePolicy(started, {background_playback:false}, 0, false, true), 'continue');
+});
