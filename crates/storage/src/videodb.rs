@@ -244,6 +244,39 @@ impl VideoDb {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// Snapshot local media availability for open watch tabs in one bounded DB query.
+    /// A complete index row only counts as cached when its local file still exists.
+    /// This is media state, never the webview/hibernation state of a browser tab.
+    pub fn cache_states_for_videos(&self, video_ids: &[String]) -> Result<std::collections::HashMap<String, String>> {
+        let mut result = std::collections::HashMap::new();
+        if video_ids.is_empty() { return Ok(result); }
+        let conn = self.lock();
+        for chunk in video_ids.chunks(400) {
+            let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
+            let sql = format!("SELECT video_id, status, file_path FROM entries WHERE video_id IN ({placeholders})");
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+            })?;
+            for row in rows {
+                let (id, status, path) = row?;
+                let candidate = match status.as_str() {
+                    STATUS_COMPLETE if path.as_deref().is_some_and(|file| Path::new(file).is_file()) => "cached",
+                    STATUS_DOWNLOADING => "downloading",
+                    STATUS_QUEUED => "queued",
+                    STATUS_FAILED => "failed",
+                    _ => "uncached",
+                };
+                let rank = |state: &str| match state {
+                    "cached" => 4, "downloading" => 3, "queued" => 2, "failed" => 1, _ => 0
+                };
+                let previous = result.entry(id).or_insert_with(|| "uncached".to_string());
+                if rank(candidate) > rank(previous) { *previous = candidate.to_string(); }
+            }
+        }
+        Ok(result)
+    }
+
     pub fn entries_with_status(&self, status: &str) -> Result<Vec<EntryRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(&format!("SELECT {ENTRY_COLS} FROM entries WHERE status = ?1 ORDER BY created_at, id"))?;
