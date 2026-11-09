@@ -688,6 +688,34 @@ test('watch tabs keep player identity instead of a hibernation moon', () => {
   assert.equal(L.tabLeadKind({face:'yt', state:'live', kind:'home'}), 'browse');
 });
 
+
+test('watch tabs distinguish real media cache states, not webview hibernation', () => {
+  for (const [state, icon, symbol, description] of [
+    ['cached', 'play', '✓', /Cached video/],
+    ['downloading', 'download', '↓', /Downloading video/],
+    ['queued', 'download', '…', /queued/],
+    ['uncached', 'play-outline', '○', /Not cached/],
+    ['failed', 'play-outline', '!', /failed/],
+  ]) {
+    const tab = {id:5,face:'watch',state:'watch',cache_state:state,video_id:'aaaaaaaaaaa'};
+    assert.equal(L.tabLeadKind(tab), icon);
+    const indicator = L.tabCacheIndicator(tab);
+    assert.equal(indicator.symbol,symbol);
+    assert.match(indicator.label,description);
+    assert.equal(indicator.state,state);
+  }
+  assert.equal(L.tabCacheIndicator({face:'yt',state:'sleeping'}),null);
+  assert.equal(L.tabLeadKind({face:'yt',state:'sleeping',kind:'channel'}),'channel');
+});
+
+test('media status changes are detected without a new tab-list revision', () => {
+  const base=[{id:1,face:'watch',video_id:'aaaaaaaaaaa',cache_state:'uncached'}];
+  const before=L.tabCacheSignature(base);
+  assert.notEqual(before,L.tabCacheSignature([{...base[0],cache_state:'downloading'}]));
+  assert.notEqual(before,L.tabCacheSignature([{...base[0],cache_state:'cached'}]));
+  assert.equal(before,L.tabCacheSignature([...base,{id:2,face:'yt',state:'sleeping'}]));
+});
+
 test('offscreen active tab direction follows both layout orientations', () => {
   const view = {top:10, bottom:210, left:10, right:260, width:250, height:200};
   assert.equal(L.offscreenTabDirection(view, {top:-40,bottom:9,left:20,right:160,width:140,height:49}, true), 'up');
