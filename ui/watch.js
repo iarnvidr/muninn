@@ -436,9 +436,16 @@
       if (automatic && !c.background && M.settings.pip_return_to_inline !== false) await exitPip();
     } catch (e) {
       if (c === cur) {
+        if (c.background && (!c.sourceSet || !c.started)) {
+          // Automatic PiP may be denied before video playback is ready.
+          // Do not leave an unfinished player alive behind another page.
+          M.flash('info', 'Picture in picture was unavailable; reopen the video to play.', 6000);
+          leave();
+          return;
+        }
         const fallback = c.background && M.settings.background_playback ? ' Continuing audio in the background.' : (c.background ? ' Playback paused.' : '');
         M.flash('info', M.errText(e) + fallback, 7000);
-        if (c.background && !M.settings.background_playback) video.pause();
+        if (c.background && !M.settings.background_playback) { c.playIntent = false; video.pause(); }
       }
     } finally { c.pipPending = false; updateNowPlaying(); }
   }
