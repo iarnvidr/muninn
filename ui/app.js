@@ -86,6 +86,8 @@
     expand: SVG('<path d="M9 18l6-6-6-6"/>'),
     moon: SVG('<path d="M20 13.5A8.5 8.5 0 1 1 10.5 4a6.7 6.7 0 0 0 9.5 9.5z"/>'),
     play: SVG('<path d="M7 4.5v15l12.5-7.5z"/>', true),
+    'play-outline': SVG('<path d="M7 4.5v15l12.5-7.5z"/>'),
+    download: SVG('<path d="M12 3v12M7 10l5 5 5-5M5 18v3h14v-3"/>'),
     pause: SVG('<path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z"/>', true),
     volume: SVG('<path d="M4 9.5v5h4l5 4v-13l-5 4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>'),
     mute: SVG('<path d="M4 9.5v5h4l5 4v-13l-5 4z" fill="currentColor"/><path d="M17 9.5l5 5M22 9.5l-5 5"/>'),
