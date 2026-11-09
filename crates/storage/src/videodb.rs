@@ -461,6 +461,34 @@ mod tests {
     }
 
     #[test]
+    fn media_cache_state_is_based_on_real_local_file_and_download_status() {
+        let db = VideoDb::in_memory().unwrap();
+        let video = "aaaaaaaaaaa";
+        let complete = EntryRow::new(video, "360", "360", "test", 1);
+        let download = EntryRow::new("bbbbbbbbbbb", "720", "720", "test", 2);
+        let queued = EntryRow::new("ccccccccccc", "480", "480", "test", 3);
+        db.insert_entry(&complete).unwrap();
+        db.insert_entry(&download).unwrap();
+        db.insert_entry(&queued).unwrap();
+        db.set_status(&download.id, STATUS_DOWNLOADING, None, 4).unwrap();
+        // The DB row may say complete even after the file has been evicted.
+        db.set_file(&complete.id, "/not/a/real/muninn-video.mp4", "mp4", None, None, false).unwrap();
+        db.complete_entry(&complete.id, 100, None).unwrap();
+        let ids = [video, "bbbbbbbbbbb", "ccccccccccc", "ddddddddddd"]
+            .map(str::to_string);
+        let states = db.cache_states_for_videos(&ids).unwrap();
+        assert_eq!(states.get(video).map(String::as_str), Some("uncached"));
+        assert_eq!(states.get("bbbbbbbbbbb").map(String::as_str), Some("downloading"));
+        assert_eq!(states.get("ccccccccccc").map(String::as_str), Some("queued"));
+        assert!(!states.contains_key("ddddddddddd"));
+        let existing_file = std::env::current_exe().unwrap();
+        db.set_file(&complete.id, existing_file.to_str().unwrap(), "mp4", None, None, false).unwrap();
+        let states = db.cache_states_for_videos(&ids).unwrap();
+        assert_eq!(states.get(video).map(String::as_str), Some("cached"));
+        assert!(db.cache_states_for_videos(&[]).unwrap().is_empty());
+    }
+
+    #[test]
     fn range_merging() {
         assert_eq!(merge_ranges(vec![(5, 9), (0, 4), (20, 30), (25, 26)]), vec![(0, 9), (20, 30)]);
     }
