@@ -28,7 +28,8 @@ test('graph edges express only actual stored source, snapshot, video and channel
 
 test('graph caps large histories and refuses malformed links',()=>{
  const videos=Array.from({length:90},(_,i)=>({video_id:String(i).padStart(11,'0'),title:'Video '+i}));
- const rows=Array.from({length:40},(_,id)=>({id:id+1,kind:'home',source_url:null,items:videos}));
+ const rows=Array.from({length:40},(_,id)=>({id:id+1,kind:'home',source_url:null,
+   items:videos.slice((id%4)*24,(id%4+1)*24)}));
  const g=G.build(rows);
  assert.equal(g.snapshots,20);
  assert.equal(g.nodes.filter(n=>n.kind==='video').length,64);
