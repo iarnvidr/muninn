@@ -763,6 +763,7 @@
     { group: 'Downloads', key: 'prefetch_bandwidth_kbps', label: 'Prefetch bandwidth', unit: 'kbps', kind: 'int', min: 0, hint: '0 = unlimited' },
     { group: 'Downloads', key: 'auto_prefetch', label: 'Auto-prefetch by rules', kind: 'bool', hint: 'Cache videos in the background when a rule says so' },
     { group: 'Watching', key: 'watch_height', label: 'Watch quality', kind: 'select', options: [[360, '360p'], [480, '480p'], [720, '720p'], [1080, '1080p']], hint: 'Quality for videos that are not cached yet' },
+    { group: 'Browsing', key: 'browse_mode', label: 'Browse start page', kind: 'choice', options: [['native', 'Original YouTube'], ['muninn', 'Muninn home (customisable)']], hint: 'Choose the original YouTube webview or a configurable Muninn page built from captured feeds; both use the same local player and cache.' },
     { group: 'Browsing', key: 'auto_hibernate_tabs', label: 'Automatically unload background tabs', kind: 'bool', hint: 'Save memory by unloading inactive YouTube webviews while tabs stay open. Cached pages and downloaded videos are retained. Disable to keep tabs live (offline mode still suspends remote pages).' },
     { group: 'Browsing', key: 'warm_tabs', label: 'Warm tabs', kind: 'int', min: 1, max: 12, hint: 'Maximum live webviews when automatic unloading is enabled' },
     { group: 'Browsing', key: 'hibernate_after_secs', label: 'Hibernate after', unit: 'seconds', kind: 'int', min: 5, hint: 'Background time before a tab may sleep' },
