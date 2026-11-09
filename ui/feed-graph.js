@@ -274,7 +274,10 @@
       const item=el('span','feed-network-legend-'+kind,text);legend.append(item);
     }
     container.replaceChildren(toolbar,stage,caption,legend);
-    let cy=null,prepared=null,graph={nodes:[],edges:[]},captureId=null,scope='selected',
+    // Match Chat Hub's overview: show the connected library by default, not a
+    // single-capture star. Narrow down with Selected capture when needed.
+    scopeControl.value='all';
+    let cy=null,prepared=null,graph={nodes:[],edges:[]},captureId=null,scope='all',
       focused=null,limit=42,query='',disposed=false,generation=0,labelsFrame=null,resizeFrame=null;
     const views=new Map(),MAX_VIEWS=6;
     const cacheKey=()=>JSON.stringify([scope,captureId,focused,query,limit]);
