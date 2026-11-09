@@ -243,7 +243,10 @@ impl Shell {
             .iter()
             .map(|t| {
                 let (_, query) = t.kind();
-                let state = if t.restoring {
+                let state = if t.face() == Face::Watch {
+                    // The watch player has no browser webview; it is not a hibernated tab.
+                    "watch"
+                } else if t.restoring {
                     "restoring"
                 } else if !t.live {
                     "sleeping"
@@ -285,7 +288,7 @@ impl Shell {
                 }
             })
             .collect();
-        json!({"rev": inner.rev, "active": inner.active, "handoff_rev": inner.handoff_rev, "warm_tabs": settings.warm_tabs, "hibernate_after_secs": settings.hibernate_after_secs, "tabs": tabs})
+        json!({"rev": inner.rev, "active": inner.active, "handoff_rev": inner.handoff_rev, "auto_hibernate_tabs": settings.auto_hibernate_tabs, "warm_tabs": settings.warm_tabs, "hibernate_after_secs": settings.hibernate_after_secs, "tabs": tabs})
     }
 
     // --- persistence ---------------------------------------------------------------------------
@@ -1214,6 +1217,8 @@ impl Shell {
         };
         let victims = if settings.offline_mode {
             live.iter().map(|t| t.0).collect()
+        } else if !settings.auto_hibernate_tabs {
+            Vec::new()
         } else {
             tabs::pick_hibernation(
                 &live,
