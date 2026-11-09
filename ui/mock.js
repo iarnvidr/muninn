@@ -32,7 +32,9 @@
     mk(2, 'Subscriptions - YouTube', 'https://www.youtube.com/feed/subscriptions', { kind: 'subscriptions' }),
     mk(3, 'lofi hip hop - YouTube', 'https://www.youtube.com/results?search_query=lofi+hip+hop', { kind: 'search', query: 'lofi hip hop', state: 'sleeping', last_active_ms: now - 900000 }),
     mk(4, 'Rust Programming', 'https://www.youtube.com/@rustlang', { kind: 'channel', state: 'sleeping', last_active_ms: now - 1800000 }),
-    mk(5, 'Watching: Seeded video', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', { face: 'watch', video_id: 'aaaaaaaaaaa', state: 'live', kind: 'other' }),
+    mk(5, 'Watching: Seeded video', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', { face: 'watch', video_id: 'aaaaaaaaaaa', state: 'watch', kind: 'other', cache_state: 'cached' }),
+    mk(6, 'Downloading video', 'https://www.youtube.com/watch?v=bbbbbbbbbbb', { face: 'watch', video_id: 'bbbbbbbbbbb', state: 'watch', kind: 'other', cache_state: 'downloading' }),
+    mk(7, 'Uncached video', 'https://www.youtube.com/watch?v=ccccccccccc', { face: 'watch', video_id: 'ccccccccccc', state: 'watch', kind: 'other', cache_state: 'uncached' }),
   ];
   if (q.get('tabs') === 'many') {
     for (let n = 0; n < 36; n++) {
@@ -48,7 +50,7 @@
   function bump() { rev++; }
   function tabView(t) {
     return {
-      id: t.id, title: t.title, url: t.url, face: t.face, video_id: t.video_id, state: t.state,
+      id: t.id, title: t.title, url: t.url, face: t.face, video_id: t.video_id, state: t.state, cache_state: t.cache_state || (t.face === 'watch' ? 'uncached' : null),
       live: t.state === 'live' || t.state === 'loading', kind: t.kind, query: t.query,
       can_back: t.hi > 0, can_forward: t.hi < t.hist.length - 1, last_active_ms: t.last_active_ms,
     };
@@ -92,7 +94,7 @@
       const t = mk(id, 'New tab', url, { state: 'loading', last_active_ms: Date.now() });
       tabs.push(t); active = id;
       const videoId=window.MuninnLib.extractVideoId(url);
-      if(videoId){Object.assign(t,{face:'watch',video_id:videoId,state:'live',kind:'other',title:'Video '+videoId});t.hist=[{url,title:t.title,face:'watch',video_id:videoId,kind:'other',query:null}];bump();return id;}
+      if(videoId){Object.assign(t,{face:'watch',video_id:videoId,state:'watch',cache_state:'uncached',kind:'other',title:'Video '+videoId});t.hist=[{url,title:t.title,face:'watch',video_id:videoId,kind:'other',query:null}];bump();return id;}
       setTimeout(() => { t.title = 'YouTube'; if (t.state === 'loading') t.state = 'live'; bump(); enforceWarm(); }, 900);
       bump();
       return id;
