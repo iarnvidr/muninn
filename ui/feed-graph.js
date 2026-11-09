@@ -218,6 +218,12 @@
         n.hub=id===hub;n.landmark=landmarks.has(id)||(n.kind==='snapshot');
       }cluster++;
     }
+    // A single capture connects to every channel, so the generic hub-only
+    // landmark rule would label only that capture. Keep a handful of the
+    // highest-evidence channels eligible for collision-checked labels too.
+    for(const g of included.slice(0,10)){
+      const visible=nodeMap.get(g.node.id);if(visible)visible.landmark=true;
+    }
     const nodes=[...nodeMap.values()],edges=[...edgeMap.values()];
     return {nodes,edges,focus_id:focusId,selected_id:selected?.id||null,clusterCount:cluster,
       totalVideos:inScope.size,totalChannels:ranked.length,visibleChannels:included.length,
