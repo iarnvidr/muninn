@@ -22,9 +22,10 @@ type MuninnServerPreview {
       source: ws.directory("/ci/cache/linux-cargo", exclude: [".gitignore"]), sharing: CacheSharingMode.LOCKED)
   }
   let source: Directory! {
+    # Retain the complete Rust/frontend closure in the canonical cache mirror.
+    # Cargo still builds only muninn-server and its transitive dependencies.
     ws.directory("/", include: ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
-      "core/**", "crates/**", "ui/**", "src-tauri/Cargo.toml", "src-tauri/src/main.rs",
-      "src-tauri/build.rs", "src-tauri/tauri.conf.json", "LICENSE"],
+      "core/**", "crates/**", "ui/**", "src-tauri/**", "LICENSE"],
       exclude: ["**/target", "**/__pycache__", "**/node_modules"])
   }
   pub binary: File! {
@@ -40,7 +41,7 @@ type MuninnServerPreview {
   }
   pub image(revision: String!): Container! {
     ws.directory("/server-preview", exclude: ["__pycache__", "*.pyc"])
-      .dockerBuild
+      .dockerBuild(platform: "linux/amd64")
       .withFile("/usr/local/bin/muninn-web", binary, permissions: 493)
       .withLabel("org.opencontainers.image.source", "https://github.com/iarnvidr/muninn")
       .withLabel("org.opencontainers.image.revision", revision)
