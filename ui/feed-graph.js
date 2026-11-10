@@ -34,7 +34,16 @@
       const kind=Object.prototype.hasOwnProperty.call(KINDS,s.kind)?s.kind:'other';
       const source='source:'+kind,snapshot='snapshot:'+numeric;
       const query=nameOf(s.query);
-      const label=KINDS[kind]+(query?' · '+shorten(query,52):'');
+      // Use the same provenance labels as Feeds Cards so the graph's snapshot
+      // hubs identify the actual search, channel, or parent watch video.
+      const provenance=root?.MuninnLib?.feedProvenance?.(s);
+      let label=provenance?.label||KINDS[kind]+(query?' · '+shorten(query,52):'');
+      if((kind==='home'||kind==='subscriptions')&&Number(s.captured_at)>0){
+        const timestamp=Number(s.captured_at);
+        const date=new Date(timestamp<1e11?timestamp*1000:timestamp);
+        if(!Number.isNaN(date.valueOf()))
+          label+=' · '+date.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+      }
       add(source,'source',KINDS[kind],{kindName:kind});
       add(snapshot,'snapshot',label,{snapshot_id:numeric,source_url:nameOf(s.source_url),
         captured_at:s.captured_at,count:s.count,query,kindName:kind});
@@ -59,9 +68,13 @@
         if(!channels.has(channelId)&&channels.size>=MAX_CHANNELS){truncated=true;continue;}
         channels.add(channelId);
         const known=validChannel(rawId);
-        add(channelId,'channel',channelName||(known?rawId:'Channel not recorded'),{
+        add(channelId,'channel',channelName||(known?'Channel ID '+rawId:'Channel name not recorded'),{
           channel_id:known?rawId:null,verified_id:known,
           explanation:known?'Channel ID recorded by YouTube':'Channel ID not recorded; grouped within this capture only'});
+        // A later captured video can supply the name of a previously anonymous
+        // channel ID. Do not keep the opaque ID label when verified metadata exists.
+        if(channelName&&nodes.get(channelId)?.label.startsWith('Channel ID '))
+          nodes.get(channelId).label=shorten(channelName,220);
         edge(channelId,video,'published');
       }
     }
