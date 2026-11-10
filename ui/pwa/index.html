@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#11141c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="referrer" content="no-referrer">
+  <title>Muninn · Server library</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+  <script src="./model.js" defer></script>
+  <script src="./store.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./"><img src="./icon.svg" alt="" width="36" height="36"><span>Muninn<small>SERVER + DEVICE</small></span></a>
+    <div class="connection"><span id="connection">Checking connection…</span><button id="install" hidden>Install app</button><button id="logout" hidden>Sign out &amp; clear device</button></div>
+  </header>
+  <main>
+    <section class="intro"><p class="eyebrow">A separate way into your library</p><h1>Your videos. Your server.</h1><p>Download to the server, save a complete copy on this device, then play it offline. The macOS app stays unchanged.</p></section>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <section id="login-panel" class="panel" hidden>
+      <h2>Connect to this server</h2><p>Enter the access token from your server’s token file. It is exchanged for an HTTP-only session, not saved in browser storage.</p>
+      <form id="login-form"><label for="token">Server access token</label><div class="input-row"><input id="token" type="password" autocomplete="current-password" required maxlength="256"><button type="submit">Connect</button></div></form>
+    </section>
+    <nav class="tabs" aria-label="Library views"><button data-view="server" aria-pressed="true">Server library <span id="server-count">0</span></button><button data-view="device" aria-pressed="false">On this device <span id="device-count">0</span></button><button data-view="feeds" aria-pressed="false">Feeds</button></nav>
+    <section id="queue-panel" class="panel" hidden><h2>Add to the server</h2><form id="queue-form"><label for="url">YouTube video URL or ID</label><div class="input-row"><input id="url" type="text" inputmode="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=…" required><button type="submit">Download on server</button></div><fieldset class="choices"><legend>Quality</legend><label><input type="radio" name="quality" value="360">360p</label><label><input type="radio" name="quality" value="720" checked>720p</label><label><input type="radio" name="quality" value="1080">1080p</label><label><input type="radio" name="quality" value="audio">Audio</label></fieldset></form><p class="hint">Public videos first. Server downloads continue when this page closes; device transfers require this page to stay open.</p></section>
+    <section id="player-panel" class="panel player-panel" hidden><div class="section-heading"><h2 id="playing-title">Local playback</h2><button id="close-player">Close player</button></div><video id="player" controls playsinline preload="metadata"></video><p class="hint">Playing the complete copy stored on this device. No YouTube or server stream.</p></section>
+    <section id="transfer-panel" class="panel" hidden><div class="section-heading"><h2>Saving to this device</h2><button id="cancel-transfer">Cancel</button></div><progress id="transfer-progress" max="1" value="0"></progress><p id="transfer-status" aria-live="polite"></p></section>
+    <div class="section-heading"><h2 id="view-title">Server library</h2><div class="actions"><button id="persist" hidden>Keep device storage</button><button id="refresh">Refresh</button></div></div>
+    <p id="view-hint" class="hint"></p>
+    <div id="feed-filters" class="tabs compact" role="group" aria-label="Feed categories" hidden></div>
+    <div id="feed-list" class="feed-list" hidden></div>
+    <div id="content" class="cards" aria-live="polite"></div>
+    <section id="copy-fallback" class="panel" hidden><label for="copy-value">Select and copy this URL</label><input id="copy-value" readonly><button id="close-copy">Close</button></section>
+    <footer><p>Initial server/PWA edition · Single-owner access · Device copies up to 512 MB each</p><p>Install from your browser menu, or on iPhone use Share → Add to Home Screen. HTTPS is required outside localhost. Saved copies can be removed by the browser; keep originals on the server.</p></footer>
+  </main>
+</body>
+</html>
