@@ -179,23 +179,75 @@
     return !!(c && c.background && c.sourceSet && c.started && readyState >= 2 && !pipActive);
   }
 
-  /** Captured source provenance; do not invent an origin URL when none was stored. */
+  /** Provenance never invents a source link, especially for old Related captures.
+   * The API stores a watch URL and the parent title for *new* related snapshots. */
   function feedProvenance(snapshot) {
-    const s = snapshot || {};
-    const kinds = {home:'Home', subscriptions:'Subscriptions', search:'Search',
-      related:'Related videos', channel:'Channel', other:'Other'};
-    const kind = Object.prototype.hasOwnProperty.call(kinds,s.kind) ? s.kind : 'other';
-    const label = kinds[kind]+(s.query ? ': '+String(s.query).slice(0,100) : '');
-    let origin = 'Origin URL not recorded';
-    if(typeof s.source_url === 'string' && s.source_url) {
+    const s=snapshot||{},kind=String(s.kind||'other');
+    const name=String(s.query||'').trim(),verifiedName=String(s.source_title||'').trim();
+    let url=null,parentVideoId=null,route='',hostname='';
+    if(typeof s.source_url==='string'&&s.source_url){
       try {
-        const u = new URL(s.source_url);
-        if(u.protocol === 'https:' && (u.hostname==='youtube.com'||u.hostname.endsWith('.youtube.com'))) {
-          origin = u.hostname+u.pathname+(u.searchParams.has('search_query') ? ' · query '+String(u.searchParams.get('search_query')).slice(0,90):'');
+        const parsed=new URL(s.source_url);
+        if(parsed.protocol==='https:'&&!parsed.port&&
+           ['youtube.com','www.youtube.com','m.youtube.com'].includes(parsed.hostname)){
+          const path=parsed.pathname||'/',query=parsed.searchParams;
+          hostname=parsed.hostname;route=path;
+          // Prefer canonical, copyable YouTube URLs. Avoid leaking unrelated
+          // captured query parameters (tokens, tracking, and sign-in context).
+          if(path==='/watch'||/^\/(live|embed)\/[A-Za-z0-9_-]{11}$/.test(path)){
+            const id=path==='/watch'?query.get('v'):path.split('/')[2];
+            if(/^[A-Za-z0-9_-]{11}$/.test(id||'')){
+              parentVideoId=id;
+              url='https://www.youtube.com/watch?v='+id;
+            }
+          }else if(path==='/results'){
+            const term=query.get('search_query')||name;
+            if(term)url='https://www.youtube.com/results?search_query='+encodeURIComponent(term);
+          }else {
+            url=parsed.origin+path;
+          }
         }
-      } catch (_) { /* stored source is not a usable YouTube URL */ }
-    } else if(kind==='related') origin='Captured from a video watch page (specific origin not recorded)';
-    return {label, origin, hasSource:origin!=='Origin URL not recorded'};
+      }catch(_){ /* not a trusted YouTube origin */ }
+    }
+    let label;
+    switch(kind){
+      case 'home':label='YouTube Home';break;
+      case 'subscriptions':label='Subscriptions';break;
+      case 'search':{
+        let term=name;
+        if(!term&&url){try{term=new URL(url).searchParams.get('search_query')||'';}catch(_){}}
+        label=term?'Search: '+term:'Search (query not recorded)';break;
+      }
+      case 'channel':{
+        let channel=verifiedName||name;
+        if(!channel&&route.startsWith('/@')){
+          try{channel=decodeURIComponent(route.split('/')[1]||'');}
+          catch(_){channel=route.split('/')[1]||'';}
+        }
+        if(!channel&&route.startsWith('/channel/'))channel=route.split('/')[2]||'';
+        if(!channel&&(route.startsWith('/c/')||route.startsWith('/user/')))channel=route.split('/')[2]||'';
+        label=channel?'Channel: '+channel:'Channel (identity not recorded)';break;
+      }
+      case 'related':
+        label=parentVideoId?'Related to: '+(name||'video '+parentVideoId):
+          'Related (original video not recorded)';
+        break;
+      default:label=route&&route!=='/'?'Other: '+route:'Other capture';
+    }
+    // Source URLs in older snapshots can be absent. Never claim the
+    // first suggested video is the video whose watch page produced the list.
+    if(kind==='related'&&!parentVideoId)url=null;
+    const origin=url?url.replace(/^https:\/\//,''):
+      kind==='related'?'Original video not recorded in this older snapshot':'Source URL not recorded';
+    return {label,origin,hasSource:!!url,url,parentVideoId};
+  }
+
+  function feedCapturedAt(capturedAt) {
+    const raw=Number(capturedAt);
+    if(!Number.isFinite(raw)||raw<=0)return 'Time not recorded';
+    const date=new Date(raw<1e11?raw*1000:raw);
+    return Number.isNaN(date.valueOf())?'Time not recorded':
+      date.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'});
   }
 
   /** Window-level shortcut for a keydown event description ({key, metaKey, ctrlKey, altKey, shiftKey}). */
@@ -953,7 +1005,7 @@
   return {
     observedAccountState, youtubeSessionLabel, settingsReadiness,
     fmtClock, fmtDuration, fmtBytes, fmtBytesBin, fmtCount, relTime, pct, qLabel, fraction, asArray,
-    chooseView, tabTitle, addressText, channelUrl, extractVideoId, feedProvenance, canHibernate, tabLeadKind, tabMediaIndicator, tabMediaFingerprint, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
+    chooseView, tabTitle, addressText, channelUrl, extractVideoId, feedProvenance, feedCapturedAt, canHibernate, tabLeadKind, tabMediaIndicator, tabMediaFingerprint, offscreenTabDirection, watchLeavePolicy, miniVideoVisible, shortcutAction,
     SEEK_STEP, SEEK_MARGIN, SEEK_DEBOUNCE_MS, MAX_LOCAL_RESTARTS, seekDue, mayRestartLocal, frameSettled, showSpinner, stopBarrier, windowOffset, toOriginal, toWindow, windowLimit, seekPlan, localFits, localReady, isTypingTarget, playerKeyAction, mediaUrl, withToken, effectiveDuration, mediaRanges, seekLimit, clampSeek, clampNoticeText,
     resumePosition, streamLabel, overlayMessage, playbackError, failureView, playbackFailure, classifyFailureText, redactDetail, startStalled, START_WATCHDOG_MS, watchSettled, pollDelay,
     cacheBadge, itemView, commentView, viewsLine, entryView, promotableEntry, inLibrary, cleanupPoint, pickSnapshot,

@@ -32,6 +32,36 @@ fn clean_items(items: &[Item]) -> Vec<Item> {
         .collect()
 }
 
+/// A name for a channel feed only when recorded video authors consistently
+/// match the YouTube channel origin. We do not guess from arbitrary suggestions.
+pub fn channel_snapshot_title(source_url: Option<&str>, items: &[Item]) -> Option<String> {
+    let source = crate::extract::parse_url(source_url?)?;
+    if source.scheme != "https" || source.port.is_some()
+        || !matches!(source.host.as_str(), "youtube.com" | "www.youtube.com" | "m.youtube.com") {
+        return None;
+    }
+    let channel_id = source.path.strip_prefix("/channel/").map(|value| value.split('/').next().unwrap_or(""));
+    if channel_id.is_none() && !source.path.starts_with("/@") && !source.path.starts_with("/c/")
+        && !source.path.starts_with("/user/") {
+        return None;
+    }
+    let first = items.first()?;
+    let name = first.channel.as_deref()?.trim();
+    if name.is_empty() || !items.iter().all(|item| item.channel.as_deref().is_some_and(|text| text.trim() == name)) {
+        return None;
+    }
+    if let Some(id) = channel_id {
+        if !id.starts_with("UC") || id.len() != 24
+            || items.iter().any(|item| item.channel_id.as_deref().is_some_and(|recorded| recorded != id)) {
+            return None;
+        }
+        // YouTube sometimes omits browse IDs on video cards. If the captured
+        // page is a channel page and *all* recorded authors agree, that
+        // consistent name is still useful without inventing a missing ID.
+    }
+    Some(crate::extract::clip(name, 120))
+}
+
 impl Core {
     // --- ingest ---------------------------------------------------------------------
 
@@ -44,7 +74,15 @@ impl Core {
             return Ok(json!({"ok": true, "snapshot_id": null, "new_videos": [], "queued": []}));
         }
         let captured = req.captured_at.unwrap_or(now);
-        let snapshot_id = self.content.add_snapshot(&kind, req.source_url.as_deref(), req.query.as_deref(), captured, &items)?;
+        // A related list belongs to a specific *parent* video. Persist its
+        // canonical watch URL rather than losing the most important relationship.
+        let related_source = (kind == "related").then(|| req.video_id.as_deref()
+            .filter(|id| valid_video_id(id))
+            .map(|id| format!("https://www.youtube.com/watch?v={id}"))).flatten();
+        let source = related_source.as_deref().or(req.source_url.as_deref());
+        let channel_name = (kind == "channel").then(|| channel_snapshot_title(source, &items)).flatten();
+        let display_query = channel_name.as_deref().or(req.query.as_deref());
+        let snapshot_id = self.content.add_snapshot(&kind, source, display_query, captured, &items)?;
         if kind == "search" {
             if let Some(q) = req.query.as_deref() {
                 let value = serde_json::to_value(&items)?;
@@ -124,7 +162,11 @@ impl Core {
             self.remember_item(item, now)?;
         }
         if !related.is_empty() {
-            self.content.add_snapshot("related", None, None, now, &related)?;
+            let parent_url = format!("https://www.youtube.com/watch?v={}", req.video_id);
+            // Use the parent title, not a title from any recommended video.
+            let parent_title = crate::extract::clip(&req.title, 140);
+            self.content.add_snapshot("related", Some(&parent_url),
+                (!parent_title.is_empty()).then_some(parent_title.as_str()), now, &related)?;
         }
         Ok(json!({"ok": true}))
     }
@@ -423,6 +465,57 @@ mod tests {
         assert_eq!(core.content.list_snapshots(Some("other"), 10).unwrap().len(), 1);
         let r = core.ingest_feed(feed("home", vec![])).unwrap();
         assert!(r["snapshot_id"].is_null());
+    }
+
+    #[test]
+    fn related_snapshots_remember_the_parent_video_and_its_title() {
+        let (_dir, core) = test_core(None, None);
+        core.ingest_video(VideoIngest {
+            video_id: "aaaaaaaaaaa".into(),
+            title: "Why the Rust borrow checker matters".into(),
+            related: vec![item("bbbbbbbbbbb", "Recommended video", "Creator", 120)],
+            ..VideoIngest::default()
+        }).unwrap();
+        let snap = core.content.latest_snapshot("related").unwrap().unwrap();
+        assert_eq!(snap.meta.source_url.as_deref(), Some("https://www.youtube.com/watch?v=aaaaaaaaaaa"));
+        assert_eq!(snap.meta.query.as_deref(), Some("Why the Rust borrow checker matters"));
+        assert_eq!(snap.items[0].video_id, "bbbbbbbbbbb");
+
+        let feed = FeedIngest {
+            kind: "related".into(), video_id: Some("ccccccccccc".into()),
+            items: vec![item("ddddddddddd", "Another recommendation", "Creator", 60)],
+            ..FeedIngest::default()
+        };
+        core.ingest_feed(feed).unwrap();
+        let snap = core.content.latest_snapshot("related").unwrap().unwrap();
+        assert_eq!(snap.meta.source_url.as_deref(), Some("https://www.youtube.com/watch?v=ccccccccccc"));
+        assert!(snap.meta.query.is_none());
+    }
+
+    #[test]
+    fn channel_titles_only_come_from_matching_captured_channel_data() {
+        let source = "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos";
+        let same_channel = vec![Item {
+            video_id: "aaaaaaaaaaa".into(), title: "Upload".into(),
+            channel: Some("Example Studio".into()),
+            channel_id: Some("UCabcdefghijklmnopqrstuv".into()),
+            ..Item::default()
+        }];
+        assert_eq!(channel_snapshot_title(Some(source), &same_channel).as_deref(), Some("Example Studio"));
+        let mut no_ids = same_channel.clone();
+        no_ids[0].channel_id = None;
+        assert_eq!(channel_snapshot_title(Some(source), &no_ids).as_deref(), Some("Example Studio"));
+
+        assert!(channel_snapshot_title(Some("https://example.test/channel/UCabcdefghijklmnopqrstuv"), &same_channel).is_none());
+        let mut wrong = same_channel.clone();
+        wrong[0].channel_id = Some("UCxxxxxxxxxxxxxxxxxxxxxx".into());
+        assert!(channel_snapshot_title(Some(source), &wrong).is_none());
+
+        let (_dir, core) = test_core(None, None);
+        core.ingest_feed(FeedIngest { kind: "channel".into(), source_url: Some(source.into()),
+            items: same_channel, ..FeedIngest::default() }).unwrap();
+        let snap = core.content.latest_snapshot("channel").unwrap().unwrap();
+        assert_eq!(snap.meta.query.as_deref(), Some("Example Studio"));
     }
 
     #[test]
