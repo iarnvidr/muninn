@@ -1,0 +1,56 @@
+"""
+Optional server browser preview. Uses the same Cargo seed, ABI and mirror as
+Muninn's Linux checks; publishing does not rebuild the native macOS application.
+"""
+type MuninnServerPreview {
+  let ws: Workspace!
+  new(ws: Workspace!) {
+    self.ws = ws
+    self
+  }
+  let rustTools: Container! = container(platform: "linux/amd64")
+    .from("rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b")
+  # Intentionally identical to the authoritative check module's system ABI.
+  let rustSystem: Container! {
+    rustTools.withExec(["sh", "-ec", "apt-get update && apt-get install -y --no-install-recommends build-essential rsync pkg-config patchelf libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg && rm -rf /var/lib/apt/lists/*"])
+  }
+  pub rustAbi: String! {
+    rustSystem.withExec(["bash", "-euc", "set -o pipefail; dpkg-query -W | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1 | tr -d '\\n'"]).stdout
+  }
+  let cargoCache: CacheVolume! {
+    cacheVolume("muninn-cargo-linux-amd64-rust-1.99.1-bookworm-v1",
+      source: ws.directory("/ci/cache/linux-cargo", exclude: [".gitignore"]), sharing: CacheSharingMode.LOCKED)
+  }
+  let source: Directory! {
+    # Retain the complete Rust/frontend closure in the canonical cache mirror.
+    # Cargo still builds only muninn-server and its transitive dependencies.
+    ws.directory("/", include: ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
+      "core/**", "crates/**", "ui/**", "src-tauri/**", "LICENSE"],
+      exclude: ["**/target", "**/__pycache__", "**/node_modules"])
+  }
+  pub binary: File! {
+    rustSystem.withMountedCache("/cache", cargoCache)
+      .withEnvVariable("CARGO_HOME", "/cache/cargo")
+      .withEnvVariable("CARGO_TARGET_DIR", `/cache/target/${rustAbi}`)
+      .withEnvVariable("CARGO_INCREMENTAL", "0")
+      .withEnvVariable("CARGO_BUILD_JOBS", "2")
+      .withFile("/run-rust.sh", ws.file("/ci/dagger/check/run-rust.sh"))
+      .withMountedDirectory("/input", source)
+      .withExec(["bash", "/run-rust.sh", "/input", "/cache", "bash", "-euc", "cargo test --locked -p muninn-server --bin muninn-web && cargo build --locked -p muninn-server --bin muninn-web && mkdir -p /out && cp \"$CARGO_TARGET_DIR/debug/muninn-web\" /out/muninn-web"])
+      .file("/out/muninn-web")
+  }
+  pub image(revision: String!): Container! {
+    ws.directory("/server-preview", exclude: ["__pycache__", "*.pyc"])
+      .dockerBuild(platform: "linux/amd64")
+      .withFile("/usr/local/bin/muninn-web", binary, permissions: 493)
+      .withLabel("org.opencontainers.image.source", "https://github.com/iarnvidr/muninn")
+      .withLabel("org.opencontainers.image.revision", revision)
+      .withLabel("org.opencontainers.image.title", "Muninn server browser preview")
+  }
+  pub publish(revision: String!, address: String!, username: String!, password: Secret!): String! {
+    image(revision: revision)
+      .withRegistryAuth(address: "ghcr.io", username: username, secret: password)
+      # GHCR rejects the v1 engine's default Zstd-compressed image layers.
+      .publish(address: address, forcedCompression: ImageLayerCompression.Gzip)
+  }
+}

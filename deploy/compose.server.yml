@@ -1,0 +1,24 @@
+services:
+  muninn:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    restart: unless-stopped
+    environment:
+      MUNINN_WEB_ORIGIN: ${MUNINN_WEB_ORIGIN:?Set the exact HTTPS public origin}
+    ports:
+      - "127.0.0.1:47872:8080"
+    volumes:
+      - muninn-server-data:/var/lib/muninn
+    secrets:
+      - muninn_web_token
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+secrets:
+  muninn_web_token:
+    file: ./secrets/muninn_web_token
+volumes:
+  muninn-server-data:
