@@ -220,7 +220,10 @@
       }
       case 'channel':{
         let channel=verifiedName||name;
-        if(!channel&&route.startsWith('/@'))channel=decodeURIComponent(route.split('/')[1]||'');
+        if(!channel&&route.startsWith('/@')){
+          try{channel=decodeURIComponent(route.split('/')[1]||'');}
+          catch(_){channel=route.split('/')[1]||'';}
+        }
         if(!channel&&route.startsWith('/channel/'))channel=route.split('/')[2]||'';
         if(!channel&&(route.startsWith('/c/')||route.startsWith('/user/')))channel=route.split('/')[2]||'';
         label=channel?'Channel: '+channel:'Channel (identity not recorded)';break;
@@ -233,6 +236,7 @@
     }
     // Source URLs in older snapshots can be absent. Never claim the
     // first suggested video is the video whose watch page produced the list.
+    if(kind==='related'&&!parentVideoId)url=null;
     const origin=url?url.replace(/^https:\/\//,''):
       kind==='related'?'Original video not recorded in this older snapshot':'Source URL not recorded';
     return {label,origin,hasSource:!!url,url,parentVideoId};
