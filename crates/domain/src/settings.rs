@@ -61,6 +61,11 @@ pub struct Settings {
     /// Whether background YouTube tabs unload automatically while still open.
     /// Manual hibernation remains possible; offline mode still suspends remote pages.
     pub auto_hibernate_tabs: bool,
+    /// Existing installations previously defaulted automatic unloading on.
+    /// A missing marker means they have not seen the new opt-in default yet.
+    /// Preserve subsequent explicit user choices, including re-enabling it.
+    #[serde(default)]
+    pub tab_hibernation_opt_in_v2: bool,
     /// Browser tabs that keep a live web view when automatic unloading is enabled.
     pub warm_tabs: u32,
     /// Seconds a tab must stay in the background before it may hibernate.
@@ -98,7 +103,8 @@ impl Default for Settings {
             search_ttl_hours: 2,
             metadata_ttl_days: 21,
             watch_height: 720,
-            auto_hibernate_tabs: true,
+            auto_hibernate_tabs: false,
+            tab_hibernation_opt_in_v2: true,
             warm_tabs: 3,
             hibernate_after_secs: 120,
             developer_mode: false,
@@ -109,6 +115,12 @@ impl Default for Settings {
 impl Settings {
     /// Clamps to sane values so a typo cannot disable the safety limits.
     pub fn sanitized(mut self) -> Settings {
+        // Upgrade installations that inherited the old true-by-default value.
+        // Once opted in or out through the new settings, never override again.
+        if !self.tab_hibernation_opt_in_v2 {
+            self.auto_hibernate_tabs = false;
+            self.tab_hibernation_opt_in_v2 = true;
+        }
         self.channel_list_ttl_hours = self.channel_list_ttl_hours.clamp(1, 24 * 30);
         self.favourite_carousel_days = self.favourite_carousel_days.clamp(1, 30);
         self.download_concurrency = self.download_concurrency.clamp(1, 8);
@@ -145,7 +157,8 @@ mod tests {
         assert!((30..=60).contains(&s.feed_refresh_minutes));
         assert!(s.metadata_ttl_days >= 14);
         assert_eq!((s.warm_tabs, s.watch_height), (3, 720));
-        assert!(s.auto_hibernate_tabs);
+        assert!(!s.auto_hibernate_tabs);
+        assert!(s.tab_hibernation_opt_in_v2);
         assert_eq!(s.pip_mode,PipMode::Manual);
         assert_eq!(s.browse_mode,BrowseMode::Native);
         assert_eq!(s.browse_sections.len(),4);
@@ -166,8 +179,26 @@ mod tests {
         assert!(on.developer_mode);
         let text = serde_json::to_string(&on.clone().sanitized()).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
-        assert_eq!(back, on);
+        assert_eq!(back, on.sanitized(), "round-trip must include the one-time preference migration");
         assert_eq!(serde_json::to_value(Settings::default()).unwrap()["developer_mode"], false);
+    }
+
+    #[test]
+    fn persisted_legacy_automatic_unloading_is_migrated_once_and_opt_in_round_trips() {
+        let legacy: Settings = serde_json::from_str(r#"{"auto_hibernate_tabs":true,"warm_tabs":5}"#).unwrap();
+        assert!(legacy.auto_hibernate_tabs, "old persisted JSON is accurately read");
+        assert!(!legacy.tab_hibernation_opt_in_v2);
+        let migrated = legacy.sanitized();
+        assert!(!migrated.auto_hibernate_tabs, "previous default must stop evicting open views");
+        assert!(migrated.tab_hibernation_opt_in_v2);
+        assert_eq!(migrated.warm_tabs, 5);
+        let mut opted_in = migrated;
+        opted_in.auto_hibernate_tabs = true;
+        let serialized = serde_json::to_string(&opted_in).unwrap();
+        assert!(serde_json::from_str::<Settings>(&serialized).unwrap().sanitized().auto_hibernate_tabs,
+            "a new explicit opt-in must not be overridden");
+        let fresh = Settings::default();
+        assert!(!serde_json::from_str::<Settings>(&serde_json::to_string(&fresh).unwrap()).unwrap().auto_hibernate_tabs);
     }
 
     #[test]
@@ -196,7 +227,9 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"download_concurrency":4}"#).unwrap();
         assert_eq!(s.download_concurrency, 4);
         assert_eq!(s.search_ttl_hours, 2);
-        assert!(s.auto_hibernate_tabs, "old settings must retain existing defaults");
+        assert!(!s.auto_hibernate_tabs, "old settings must receive the opt-in default");
+        assert!(!s.tab_hibernation_opt_in_v2, "missing marker identifies old stored settings");
+        assert!(!s.clone().sanitized().auto_hibernate_tabs);
         assert_eq!(s.pip_mode,PipMode::Manual);
         assert_eq!(s.tab_layout, TabLayout::Horizontal);
         assert_eq!(s.browse_mode,BrowseMode::Native);
