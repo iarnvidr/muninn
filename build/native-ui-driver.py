@@ -90,8 +90,8 @@ return await (async()=>{
     # Feeds category choice must be visible; the former native dropdown hid
     # the choices and obscured the capture list.
     click('#sidebar [data-page="feeds"]')
-    feed_filters=ev("(()=>({chips:[...document.querySelectorAll('.feed-kind-chip')].map(b=>b.textContent),dropdown:document.querySelectorAll('select[aria-label=\\\"Feed kind\\\"]').length,copyTab:!!document.querySelector('#copy-tab-url')}))()")
-    check('feeds expose category chips and accessible copy-tab URL',feed_filters.get('chips')==['All','Home','Subscriptions','Search','Channels','Related','Other'] and feed_filters.get('dropdown')==0 and feed_filters.get('copyTab'),feed_filters)
+    feed_filters=ev("(()=>({chips:[...document.querySelectorAll('.feed-kind-chip')].map(b=>b.textContent),dropdown:document.querySelectorAll('select[aria-label=\\\"Feed kind\\\"]').length,scope:[...document.querySelectorAll('.feed-network-scope-btn')].map(b=>b.textContent),scopeDropdown:document.querySelectorAll('.feed-network-toolbar select').length,copyTab:!!document.querySelector('#copy-tab-url')}))()")
+    check('feeds expose category chips, graph scope choices and Copy URL',feed_filters.get('chips')==['All','Home','Subscriptions','Search','Channels','Related','Other'] and feed_filters.get('scope')==['This capture','All captures'] and feed_filters.get('dropdown')==0 and feed_filters.get('scopeDropdown')==0 and feed_filters.get('copyTab'),feed_filters)
     click('#sidebar [data-page="library"]')
     ev("(()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}));return true})()")
     opened=ev("window.Muninn.page")=='settings'
