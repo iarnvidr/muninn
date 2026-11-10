@@ -1,4 +1,4 @@
-//! The unchanged UI, embedded and served at `/ui/` by the localhost server.
+//! Native and browser UI assets, embedded by their respective HTTP adapters.
 //!
 //! Keeping assets outside the application core prevents frontend edits from
 //! invalidating the core and its independent policy, capture and storage tests.
@@ -27,6 +27,24 @@ pub const STYLE_CSS: &str = include_str!("../../../ui/style.css");
 pub const RAVEN_PNG: &[u8] = include_bytes!("../../../ui/raven.png");
 
 const JS: &str = "text/javascript; charset=utf-8";
+
+/// The additive browser client lives at `/app/` in explicit server mode only.
+/// Keep a separate allowlist: the native shell, mocks and privileged Tauri
+/// bridge are never part of the installable PWA's asset namespace.
+pub fn pwa_asset(name: &str) -> Option<(&'static str, &'static [u8])> {
+    match name {
+        "" | "index.html" => Some(("text/html; charset=utf-8", include_bytes!("../../../ui/pwa/index.html"))),
+        "app.js" => Some((JS, include_bytes!("../../../ui/pwa/app.js"))),
+        "app.css" => Some(("text/css; charset=utf-8", include_bytes!("../../../ui/pwa/app.css"))),
+        "manifest.webmanifest" => Some(("application/manifest+json", include_bytes!("../../../ui/pwa/manifest.webmanifest"))),
+        "sw.js" => Some((JS, include_bytes!("../../../ui/pwa/sw.js"))),
+        "icon-192.png" => Some(("image/png", include_bytes!("../../../ui/pwa/icon-192.png"))),
+        "icon-512.png" => Some(("image/png", include_bytes!("../../../ui/pwa/icon-512.png"))),
+        "raven.png" => Some(("image/png", RAVEN_PNG)),
+        "hls.min.js" => Some((JS, HLS_JS.as_bytes())),
+        _ => None,
+    }
+}
 
 pub fn font(name: &str) -> Option<&'static [u8]> {
     match name {
@@ -89,5 +107,29 @@ mod tests {
         let (_, html) = asset("").unwrap();
         assert!(!html.contains("mock.js"));
         assert!(!html.contains("hls.min.js"));
+    }
+
+    #[test]
+    fn browser_assets_are_separate_and_cannot_escape_the_namespace() {
+        for name in ["", "index.html", "app.js", "app.css", "manifest.webmanifest",
+            "sw.js", "icon-192.png", "icon-512.png", "raven.png", "hls.min.js"] {
+            assert!(!pwa_asset(name).unwrap().1.is_empty(), "empty PWA asset: {name}");
+        }
+        for name in ["../index.html", "../token", "mock.js", "boot.js", "watch.js",
+            "/app.js", "app.js?token=secret", "%2e%2e/index.html"] {
+            assert!(pwa_asset(name).is_none(), "unexpected PWA asset: {name}");
+        }
+        assert!(asset("sw.js").is_none(), "native UI must not register a PWA worker");
+        assert_eq!(pwa_asset("manifest.webmanifest").unwrap().0, "application/manifest+json");
+    }
+
+    #[test]
+    fn install_icons_have_their_advertised_png_dimensions() {
+        for (name, size) in [("icon-192.png", 192u32), ("icon-512.png", 512u32)] {
+            let png = pwa_asset(name).unwrap().1;
+            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+            assert_eq!(u32::from_be_bytes(png[16..20].try_into().unwrap()), size);
+            assert_eq!(u32::from_be_bytes(png[20..24].try_into().unwrap()), size);
+        }
     }
 }

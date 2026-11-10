@@ -17,9 +17,10 @@ muninn-protocol = { path = "../protocol" }
 muninn-ui-assets = { path = "../ui-assets" }
 axum = "0.8"
 futures-util = "0.3"
+url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "time", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "time", "macros", "sync", "signal"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

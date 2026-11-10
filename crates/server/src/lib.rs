@@ -4,9 +4,11 @@
 //!
 //! This adapter owns HTTP and UI delivery. Core owns application operations and
 //! keeps downloader credentials private. The existing desktop embeds this same
-//! service; this extraction does not enable remote access or change defaults.
+//! service. Its router remains loopback-only; `remote` provides an explicitly
+//! enabled browser server with a separate authentication and network boundary.
 
 pub mod backend;
+pub mod remote;
 pub use backend::EmbeddedBackend;
 use muninn_protocol::{WatchBackend, WatchRequest};
 
@@ -685,12 +687,14 @@ pub struct Service {
     pub addr: SocketAddr,
     pub proxy: Option<muninn_core::proxy::Proxy>,
     _runtime: tokio::runtime::Runtime,
+    _data_lock: std::fs::File,
 }
 
 impl Service {
     /// Opens the stores, starts the scheduler and serves HTTP on 127.0.0.1.
     /// `port` 0 means the default port, falling back to a random free one.
     pub fn start(mut config: CoreConfig, port: u16) -> muninn_core::error::Result<Service> {
+        let data_lock = remote::lock_data_dir(&config.data_dir)?;
         config.spawn_workers = true;
         let core = Core::open(config)?;
         let wanted = if port == 0 { DEFAULT_PORT } else { port };
@@ -713,7 +717,7 @@ impl Service {
                 None
             }
         };
-        Ok(Service { core, addr, proxy, _runtime: runtime })
+        Ok(Service { core, addr, proxy, _runtime: runtime, _data_lock: data_lock })
     }
 
     /// `http://127.0.0.1:<port>` of the capture proxy the YouTube web views use.
