@@ -52,9 +52,12 @@ pub fn channel_snapshot_title(source_url: Option<&str>, items: &[Item]) -> Optio
     }
     if let Some(id) = channel_id {
         if !id.starts_with("UC") || id.len() != 24
-            || !items.iter().all(|item| item.channel_id.as_deref() == Some(id)) {
+            || items.iter().any(|item| item.channel_id.as_deref().is_some_and(|recorded| recorded != id)) {
             return None;
         }
+        // YouTube sometimes omits browse IDs on video cards. If the captured
+        // page is a channel page and *all* recorded authors agree, that
+        // consistent name is still useful without inventing a missing ID.
     }
     Some(crate::extract::clip(name, 120))
 }
@@ -499,6 +502,10 @@ mod tests {
             ..Item::default()
         }];
         assert_eq!(channel_snapshot_title(Some(source), &same_channel).as_deref(), Some("Example Studio"));
+        let mut no_ids = same_channel.clone();
+        no_ids[0].channel_id = None;
+        assert_eq!(channel_snapshot_title(Some(source), &no_ids).as_deref(), Some("Example Studio"));
+
         assert!(channel_snapshot_title(Some("https://example.test/channel/UCabcdefghijklmnopqrstuv"), &same_channel).is_none());
         let mut wrong = same_channel.clone();
         wrong[0].channel_id = Some("UCxxxxxxxxxxxxxxxxxxxxxx".into());
