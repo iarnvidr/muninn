@@ -1,6 +1,9 @@
-# The checked-in Dang module uses the engine's native runtime. No downloaded SDK
-# or generated client is needed to execute these checks. Images are digest-pinned
-# in the module, so there are no floating remote dependencies to resolve.
+# The checked-in Dang modules use the engine's native runtime. No downloaded SDK
+# or generated client is needed. The preview is an additional module, not a new
+# workspace rooted under ci/dagger; both modules read the repository source tree.
 [modules.muninn-ci]
 source = "./ci/dagger/check"
 main = true
+
+[modules.muninn-server-preview]
+source = "./ci/dagger/server-preview"
