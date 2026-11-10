@@ -147,6 +147,15 @@ test('feed titles and copyable URLs identify exactly what was captured',()=>{
 });
 
 // The Chat Hub layout is shared rather than a fabricated four-column diagram.
+test('graph inspector exposes copyable canonical video and channel URLs',()=>{
+ assert.equal(G.copyableNodeUrl({kind:'video',video_id:A}), 'https://www.youtube.com/watch?v='+A);
+ assert.equal(G.copyableNodeUrl({kind:'channel',channel_id:CHANNEL}),
+   'https://www.youtube.com/channel/'+CHANNEL);
+ assert.equal(G.copyableNodeUrl({kind:'channel',channel_id:'garbage'}),null);
+ assert.equal(G.copyableNodeUrl({kind:'video',video_id:'invalid'}),null);
+ assert.equal(G.copyableNodeUrl({kind:'snapshot',kindName:'related',source_url:null}),null);
+});
+
 test('network contains one capture hub and bounded actual channel nodes by default',()=>{
  const items=Array.from({length:102},(_,i)=>({
    video_id:String(i).padStart(11,'0'),title:'Video '+i,
