@@ -1,0 +1,101 @@
+name: Server preview image
+on:
+  push:
+    branches: [main, codex/muninn-initial-server-pwa]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: server-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  image:
+    # The named preview branch already has a push build; never duplicate it.
+    if: github.event_name == 'push' || github.event.pull_request.head.ref != 'codex/muninn-initial-server-pwa' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ci/cache/linux-cargo
+          key: muninn-dagger-cargo-preview-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            muninn-dagger-cargo-v1-Linux-X64-
+      - uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
+        with:
+          version: 1.0.0-beta.25
+          module: ci/dagger/server-preview
+          verb: call
+          args: rust-abi
+          enable-github-summary: false
+      - name: Restore unchanged compiled crates from GitHub Packages
+        env:
+          GHCR_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP" GOTOOLCHAIN=auto go install oras.land/oras/cmd/oras@v1.3.0
+          printf '%s' "$GHCR_READ_TOKEN" | "$RUNNER_TEMP/oras" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          abi="$(dagger -m ci/dagger/server-preview api call rust-abi | tr -d '\r\n')"
+          [[ "$abi" =~ ^[0-9a-f]{64}$ ]]
+          python3 ci/dagger/check/crate_packages.py pull --root . --platform linux-amd64 --abi "$abi" \
+            --target "ci/cache/linux-cargo/target/$abi" --mirror ci/cache/linux-cargo/worktree --oras "$RUNNER_TEMP/oras"
+          git ls-files > ci/cache/linux-cargo/current-source-files.txt
+      - name: Build tested image with Dagger
+        run: |
+          set -euo pipefail
+          dagger -m ci/dagger/server-preview api call image --revision "$GITHUB_SHA" export --path "$RUNNER_TEMP/muninn-preview.tar"
+      - name: Exercise the exact image with sandboxed Chromium and the real Core
+        run: |
+          set -euo pipefail
+          docker load -i "$RUNNER_TEMP/muninn-preview.tar"
+          image="$(docker image ls --no-trunc --filter "label=org.opencontainers.image.revision=$GITHUB_SHA" --format '{{.ID}}' | head -n1)"
+          test -n "$image"
+          mkdir -p "$RUNNER_TEMP/muninn-preview-secrets"
+          openssl rand -hex 32 > "$RUNNER_TEMP/muninn-preview-secrets/token"
+          chmod 0444 "$RUNNER_TEMP/muninn-preview-secrets/token"
+          docker run --name muninn-preview-smoke --detach --init --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --security-opt "seccomp=$PWD/server-preview/chromium-seccomp.json" \
+            --pids-limit 512 --memory 3g --shm-size 512m --tmpfs /tmp:size=1g,mode=1777 \
+            --mount "type=bind,src=$RUNNER_TEMP/muninn-preview-secrets/token,dst=/run/secrets/muninn-token,readonly" \
+            -e MUNINN_WEB_ORIGIN=https://muninn-preview.test -e MUNINN_WEB_TOKEN_FILE=/run/secrets/muninn-token \
+            --mount type=volume,dst=/var/lib/muninn "$image"
+          trap 'docker rm -fv muninn-preview-smoke; rm -rf "$RUNNER_TEMP/muninn-preview-secrets"' EXIT
+          for i in $(seq 1 60); do
+            state=$(docker inspect -f '{{.State.Health.Status}}' muninn-preview-smoke)
+            [ "$state" != healthy ] || break
+            sleep 2
+          done
+          test "$state" = healthy
+          docker exec muninn-preview-smoke python3 /opt/muninn-preview/smoke.py
+      - name: Publish immutable checked preview
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="$(dagger -m ci/dagger/server-preview api call publish --revision "$GITHUB_SHA" \
+            --address "ghcr.io/iarnvidr/muninn-server:preview-$GITHUB_SHA" --username "$GITHUB_ACTOR" --password env:GHCR_TOKEN | tail -n1)"
+          IMAGE="$image" python3 - <<'PY'
+          import json, os, re
+          image=os.environ['IMAGE']
+          if not re.fullmatch(r'ghcr\.io/iarnvidr/muninn-server(?::preview-[a-f0-9]{40})?@sha256:[a-f0-9]{64}',image):
+              raise SystemExit('Missing immutable image digest')
+          with open('server-preview-image.json','w') as f:
+              json.dump({'schema':1,'repository':'iarnvidr/muninn','source_sha':os.environ['GITHUB_SHA'],
+                         'image':image,'workflow_run_id':int(os.environ['GITHUB_RUN_ID'])},f,indent=2)
+          PY
+          echo "Checked preview: $image" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name == 'push'
+        with:
+          name: muninn-server-preview-image
+          path: server-preview-image.json
+          if-no-files-found: error
+          retention-days: 90

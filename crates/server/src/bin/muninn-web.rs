@@ -1,6 +1,8 @@
 //! Opt-in server + PWA. This never replaces the desktop's embedded Service.
 #[path = "../web/mod.rs"]
 mod web;
+#[path = "../web/browser_capture.rs"]
+mod browser_capture;
 use muninn_core::{Core, CoreConfig};
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -58,19 +60,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let metadata = std::fs::metadata(&path)?;
     if !metadata.is_file() || metadata.len() > 1024 { return Err("invalid token file".into()); }
     let config = web::Config::new(&origin, &std::fs::read_to_string(path)?)?;
-    // Bind before starting workers. A conflicting port must not open a second
-    // core, and a running desktop must never silently be displaced.
+    // Bind both listeners before starting workers. The capture adapter is never
+    // public, even when the public PWA listener is explicitly non-loopback.
     let socket = std::net::TcpListener::bind(addr)?;
     socket.set_nonblocking(true)?;
-    let core = Core::open(CoreConfig { data_dir, spawn_workers: true, ..CoreConfig::default() })?;
+    let capture_socket = if std::env::var("MUNINN_BROWSER_CAPTURE").as_deref() == Ok("1") {
+        let socket = std::net::TcpListener::bind("127.0.0.1:47873")?;
+        socket.set_nonblocking(true)?;
+        Some(socket)
+    } else { None };
+    let youtube_cookie_reader = if capture_socket.is_some() {
+        std::env::var_os("MUNINN_BROWSER_COOKIE_FILE").map(|p| browser_capture::cookie_reader(PathBuf::from(p)))
+    } else { None };
+    let core = Core::open(CoreConfig { data_dir, spawn_workers: true, youtube_cookie_reader, ..CoreConfig::default() })?;
     let app = web::router(core.clone(), config);
+    let capture_app = browser_capture::router(core.clone());
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     println!("Muninn server PWA: {}/app/ (listener {addr})", origin.trim_end_matches('/'));
     let result = runtime.block_on(async move {
         let listener = tokio::net::TcpListener::from_std(socket)?;
-        axum::serve(listener, app).await
+        if let Some(socket) = capture_socket {
+            let private = tokio::net::TcpListener::from_std(socket)?;
+            tokio::select! {
+                result = axum::serve(listener, app).into_future() => result,
+                result = axum::serve(private, capture_app).into_future() => result,
+            }
+        } else { axum::serve(listener, app).await }
     });
     core.shutdown();
     result?;
     Ok(())
 }
+use std::future::IntoFuture;
