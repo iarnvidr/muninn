@@ -269,19 +269,28 @@
     };
     const btn=(title,fn)=>{const n=el('button',null,title);n.type='button';n.addEventListener('click',fn);return n;};
     const toolbar=el('div','feed-network-toolbar');
-    const scopeLabel=el('label','feed-network-scope','View');
-    const scopeControl=el('select');scopeControl.setAttribute('aria-label','Feed network scope');
-    for(const [value,label] of [['selected','Selected capture'],['all','All loaded captures']]){
-      const o=el('option',null,label);o.value=value;scopeControl.append(o);
+    const scopeGroup=el('div','feed-network-scopes');
+    scopeGroup.setAttribute('role','group');
+    scopeGroup.setAttribute('aria-label','Feed network scope');
+    const scopeButtons=new Map();
+    for(const [value,label] of [['selected','This capture'],['all','All captures']]){
+      const b=btn(label,()=>{
+        if(scope===value)return;
+        scope=value;focused=null;limit=42;syncScope();rebuild();
+      });
+      b.className='feed-network-scope-btn';
+      scopeButtons.set(value,b);scopeGroup.append(b);
     }
-    scopeLabel.append(scopeControl);
+    function syncScope(){
+      for(const [value,b] of scopeButtons)b.setAttribute('aria-pressed',String(scope===value));
+    }
     const search=el('input','feed-network-search');search.type='search';
     search.placeholder='Find channels or videos';search.setAttribute('aria-label','Search feed graph');
     const more=btn('Show more nodes',()=>{limit=Math.min(100,limit+20);rebuild();});
     const zoomOut=btn('−',()=>setZoom(.8));zoomOut.setAttribute('aria-label','Zoom graph out');
     const zoomIn=btn('+',()=>setZoom(1.25));zoomIn.setAttribute('aria-label','Zoom graph in');
     const fit=btn('Fit',()=>fitGraph());
-    toolbar.append(scopeLabel,search,more,zoomOut,zoomIn,fit);
+    toolbar.append(scopeGroup,search,more,zoomOut,zoomIn,fit);
     const stage=el('div','feed-network-stage');
     const canvas=el('div','feed-network-canvas');
     const tooltip=el('div','feed-network-tooltip');tooltip.hidden=true;
@@ -300,7 +309,6 @@
     container.replaceChildren(toolbar,stage,caption,legend);
     // Match Chat Hub's overview: show the connected library by default, not a
     // single-capture star. Narrow down with Selected capture when needed.
-    scopeControl.value='all';
     let cy=null,prepared=null,graph={nodes:[],edges:[]},captureId=null,scope='all',
       focused=null,limit=42,query='',disposed=false,generation=0,labelsFrame=null,resizeFrame=null;
     const views=new Map(),MAX_VIEWS=6;
@@ -443,7 +451,7 @@
       if(!record)return;
       focused=id;
       if(record.kind==='snapshot'&&captureId!==id){
-        captureId=id;scope='selected';scopeControl.value=scope;
+        captureId=id;scope='selected';syncScope();
         callbacks.onSelect?.(record);
       }
       rebuild();
@@ -563,7 +571,7 @@
         caption.textContent='Graph engine unavailable; nothing was changed in your saved captures.';
       }
     }
-    scopeControl.addEventListener('change',()=>{scope=scopeControl.value;focused=null;limit=42;rebuild();});
+    syncScope();
     search.addEventListener('input',()=>{query=search.value;focused=null;rebuild();});
     const observer=typeof ResizeObserver==='function'?new ResizeObserver(()=>{
       if(resizeFrame)cancelAnimationFrame(resizeFrame);
