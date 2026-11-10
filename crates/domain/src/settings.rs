@@ -179,7 +179,7 @@ mod tests {
         assert!(on.developer_mode);
         let text = serde_json::to_string(&on.clone().sanitized()).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
-        assert_eq!(back, on);
+        assert_eq!(back, on.sanitized(), "round-trip must include the one-time preference migration");
         assert_eq!(serde_json::to_value(Settings::default()).unwrap()["developer_mode"], false);
     }
 
