@@ -50,6 +50,7 @@ type MuninnServerPreview {
   pub publish(revision: String!, address: String!, username: String!, password: Secret!): String! {
     image(revision: revision)
       .withRegistryAuth(address: "ghcr.io", username: username, secret: password)
-      .publish(address: address)
+      # GHCR rejects the v1 engine's default Zstd-compressed image layers.
+      .publish(address: address, forcedCompression: ImageLayerCompression.Gzip)
   }
 }
