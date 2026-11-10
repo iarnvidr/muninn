@@ -434,7 +434,23 @@ async fn cancel(State(core): S, Path(id): Path<String>) -> ApiResult {
 async fn feeds(State(core): S, Query(q): Query<HashMap<String, String>>) -> ApiResult {
     let limit = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50).clamp(1, 500);
     let kind = q.get("kind").filter(|k| !k.is_empty()).map(|k| k.as_str());
-    Ok(Json(serde_json::to_value(core.content.list_snapshots(kind, limit)?).map_err(Error::from)?))
+    let snapshots = core.content.list_snapshots(kind, limit)?;
+    let mut rows = Vec::with_capacity(snapshots.len());
+    for meta in snapshots {
+        let mut row = serde_json::to_value(&meta).map_err(Error::from)?;
+        // Legacy channel captures stored only an opaque URL. Give them a real
+        // title only when their recorded video authors verify the channel.
+        if meta.kind == "channel" && meta.query.is_none() {
+            if let Some(snapshot) = core.content.get_snapshot(meta.id)? {
+                if let Some(title) = muninn_core::ingest::channel_snapshot_title(
+                    meta.source_url.as_deref(), &snapshot.items) {
+                    row["source_title"] = json!(title);
+                }
+            }
+        }
+        rows.push(row);
+    }
+    Ok(Json(Value::Array(rows)))
 }
 
 async fn feed_latest(State(core): S, Query(q): Query<HashMap<String, String>>) -> ApiResult {
@@ -823,6 +839,28 @@ mod tests {
         assert!(logs.contains("ui.error"));
         assert!(!logs.contains("sig=private"));
         assert!(!logs.contains(&h.core.token()));
+    }
+
+    #[tokio::test]
+    async fn legacy_channel_feeds_get_verified_titles_in_list_and_detail() {
+        let h = harness();
+        let items = vec![muninn_core::model::Item {
+            video_id: "aaaaaaaaaaa".into(), title: "Latest upload".into(),
+            channel: Some("Example Studio".into()),
+            channel_id: Some("UCabcdefghijklmnopqrstuv".into()),
+            ..Default::default()
+        }];
+        let id = h.core.content.add_snapshot(
+            "channel", Some("https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos"),
+            None, h.core.now(), &items).unwrap();
+        let (status, list) = h.json("GET", "/api/feeds?kind=channel", "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list[0]["source_title"], "Example Studio");
+        assert!(list[0]["query"].is_null(), "legacy capture retains its original source metadata");
+        let (status, detail) = h.json("GET", &format!("/api/feeds/{id}"), "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(detail["source_title"], "Example Studio");
+        assert_eq!(detail["source_url"], "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos");
     }
 
     #[tokio::test]

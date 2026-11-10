@@ -108,17 +108,54 @@ test('empty or invalid captures do not produce fake links',()=>{
  assert.equal(G.build(null).nodes.length,0);
 });
 
-test('feed list explains real provenance and missing origins without fabricating a URL',()=>{
- assert.deepEqual(L.feedProvenance({kind:'search',query:'rust',source_url:'https://www.youtube.com/results?search_query=rust'}),
-  {label:'Search: rust',origin:'www.youtube.com/results · query rust',hasSource:true});
- const related=L.feedProvenance({kind:'related',source_url:null});
- assert.equal(related.label,'Related videos');
- assert.match(related.origin,/specific origin not recorded/);
- assert.equal(L.feedProvenance({kind:'home',source_url:'https://example.com/secret'}).hasSource,false);
- assert.equal(L.feedProvenance({kind:'home'}).origin,'Origin URL not recorded');
+test('feed titles and copyable URLs identify exactly what was captured',()=>{
+ const search=L.feedProvenance({kind:'search',query:'rust',
+   source_url:'https://www.youtube.com/results?search_query=rust&feature=secret'});
+ assert.equal(search.label,'Search: rust');
+ assert.equal(search.url,'https://www.youtube.com/results?search_query=rust');
+ assert.equal(search.hasSource,true);
+ assert.match(search.origin,/search_query=rust/);
+
+ const channel=L.feedProvenance({kind:'channel',source_title:'Example Studio',
+   source_url:'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos'});
+ assert.equal(channel.label,'Channel: Example Studio');
+ assert.equal(channel.url,'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos');
+ const handle=L.feedProvenance({kind:'channel',source_url:'https://www.youtube.com/@FastLawyer/videos'});
+ assert.equal(handle.label,'Channel: @FastLawyer');
+ assert.equal(handle.hasSource,true);
+
+ const related=L.feedProvenance({kind:'related',query:'The actual original video',
+   source_url:'https://www.youtube.com/watch?v=aaaaaaaaaaa&list=tracking'});
+ assert.equal(related.label,'Related to: The actual original video');
+ assert.equal(related.url,'https://www.youtube.com/watch?v=aaaaaaaaaaa');
+ assert.equal(related.parentVideoId,'aaaaaaaaaaa');
+
+ const unnamed=L.feedProvenance({kind:'related',
+   source_url:'https://www.youtube.com/watch?v=bbbbbbbbbbb'});
+ assert.equal(unnamed.label,'Related to: video bbbbbbbbbbb');
+ assert.equal(unnamed.url,'https://www.youtube.com/watch?v=bbbbbbbbbbb');
+ const legacy=L.feedProvenance({kind:'related',source_url:null});
+ assert.match(legacy.label,/original video not recorded/);
+ assert.equal(legacy.url,null);
+ assert.equal(legacy.hasSource,false);
+ assert.match(legacy.origin,/not recorded/);
+ const invalid=L.feedProvenance({kind:'home',source_url:'https://example.com/secret'});
+ assert.equal(invalid.hasSource,false);
+ assert.equal(invalid.url,null);
+ assert.equal(L.feedProvenance({kind:'home'}).origin,'Source URL not recorded');
+ assert.notEqual(L.feedCapturedAt(1715360000000),'Time not recorded');
 });
 
 // The Chat Hub layout is shared rather than a fabricated four-column diagram.
+test('graph inspector exposes copyable canonical video and channel URLs',()=>{
+ assert.equal(G.copyableNodeUrl({kind:'video',video_id:A}), 'https://www.youtube.com/watch?v='+A);
+ assert.equal(G.copyableNodeUrl({kind:'channel',channel_id:CHANNEL}),
+   'https://www.youtube.com/channel/'+CHANNEL);
+ assert.equal(G.copyableNodeUrl({kind:'channel',channel_id:'garbage'}),null);
+ assert.equal(G.copyableNodeUrl({kind:'video',video_id:'invalid'}),null);
+ assert.equal(G.copyableNodeUrl({kind:'snapshot',kindName:'related',source_url:null}),null);
+});
+
 test('network contains one capture hub and bounded actual channel nodes by default',()=>{
  const items=Array.from({length:102},(_,i)=>({
    video_id:String(i).padStart(11,'0'),title:'Video '+i,
