@@ -1,0 +1,28 @@
+# Example: install the binary and create the muninn user before enabling this unit.
+# Replace the public origin here AND the hostname in your reverse proxy.
+# Setup and helper requirements: docs/PWA_SERVER.md
+[Unit]
+Description=Muninn standalone library server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=muninn
+Group=muninn
+StateDirectory=muninn-server
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/muninn-server
+ExecStart=/usr/local/bin/muninn-service --server --bind 127.0.0.1:47872 --public-origin https://muninn.example.com --data-dir /var/lib/muninn-server
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# StateDirectory remains writable; install ffmpeg and deno in system locations.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+# Replace this hostname with the exact host in --public-origin.
+# Muninn listens on loopback; Caddy provides HTTPS for the browser-facing origin.
+muninn.example.com {
+    # Preserve Host and Origin. Proxy the whole origin, including API and media.
+    # Do not rewrite the app under a URL prefix or add an authenticated-data cache.
+    reverse_proxy 127.0.0.1:47872
+}

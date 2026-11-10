@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#15161b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Your Muninn server library, on your phone or in your browser.">
+  <title>Muninn — Your server library</title>
+  <link rel="manifest" href="/app/manifest.webmanifest">
+  <link rel="icon" href="/app/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/app/icon-192.png">
+  <link rel="stylesheet" href="/app/app.css">
+  <script src="/app/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="masthead">
+    <a class="brand" href="/app/" aria-label="Muninn home"><img src="/app/raven.png" width="42" height="42" alt=""><span><strong>Muninn</strong><small>Your server library</small></span></a>
+    <div class="header-actions"><span id="connection" class="connection" role="status">Connecting</span><button id="install" type="button" class="quiet">Install app</button><button id="sign-out" type="button" class="quiet" hidden>Sign out</button></div>
+  </header>
+  <div id="offline-banner" class="notice" role="status" hidden>You are offline. Reconnect to your Muninn server to browse or play videos.</div>
+  <section id="sign-in" class="sign-in" aria-labelledby="sign-in-title" hidden>
+    <div class="eyebrow">MUNINN · SERVER EDITION</div>
+    <h1 id="sign-in-title">Your library.<br>Wherever you watch.</h1>
+    <p class="intro">Connect to your Muninn server to watch saved videos, explore feeds and queue downloads.</p>
+    <form id="login-form">
+      <label for="pairing-token">Server pairing token</label>
+      <input id="pairing-token" type="password" required autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="pairing-help">
+      <p id="pairing-help" class="hint">Use the pairing token from your server. It is used once to create a private browser session.</p>
+      <button type="submit" class="primary">Connect to server <span aria-hidden="true">→</span></button>
+      <p id="login-message" class="form-message" role="status"></p>
+    </form>
+    <div class="sign-in-foot"><span class="status-dot" aria-hidden="true"></span><span id="server-address"></span></div>
+  </section>
+  <div id="workspace" class="workspace" hidden>
+    <nav class="navigation" aria-label="Main navigation">
+      <button type="button" data-page="library" aria-current="page"><span aria-hidden="true">▦</span>Library</button>
+      <button type="button" data-page="feeds"><span aria-hidden="true">◉</span>Feeds</button>
+      <button type="button" data-page="downloads"><span aria-hidden="true">↓</span>Downloads<span id="download-count" class="count" hidden></span></button>
+    </nav>
+    <main id="content" tabindex="-1">
+      <section class="discovery" aria-label="Find a video">
+        <form id="search-form" class="search-form">
+          <label class="sr-only" for="search-input">Search videos or paste a YouTube video URL</label>
+          <span class="search-mark" aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search videos or paste a YouTube URL" maxlength="2048" autocomplete="off" enterkeyhint="search"><button type="submit">Find video <span aria-hidden="true">→</span></button>
+        </form>
+        <p class="search-hint">Search your library as you type. Choose Find video to search YouTube or open a pasted link.</p>
+      </section>
+      <section id="player-section" class="player-section" aria-labelledby="player-title" hidden>
+        <div class="player-heading"><div><div class="eyebrow">NOW WATCHING</div><h2 id="player-title"></h2><p id="player-subtitle"></p></div><button id="close-player" type="button" class="quiet" aria-label="Close player">Close <span aria-hidden="true">×</span></button></div>
+        <video id="video" controls playsinline preload="metadata"></video>
+        <div class="player-bottom"><p id="player-state" role="status"></p><div class="inline-actions"><button id="player-copy" type="button">Copy URL</button><button id="player-keep" type="button" hidden>Keep in library</button><button id="player-retry" type="button" hidden>Retry</button></div></div>
+      </section>
+      <section class="collection" aria-labelledby="section-title">
+        <div class="section-heading"><div><div id="section-eyebrow" class="eyebrow">ON YOUR SERVER</div><h1 id="section-title">Library</h1><p id="section-description" class="section-description">Your saved videos and downloaded copies.</p></div><button id="refresh" type="button" class="quiet">Refresh <span aria-hidden="true">↻</span></button></div>
+        <div id="filters" class="filters" aria-label="Filter library"></div>
+        <div id="feed-context" class="feed-context" hidden></div>
+        <div id="results" class="results" aria-live="polite"></div>
+      </section>
+      <footer class="page-footer"><span>Stored on your server. Played in your browser.</span><span id="server-version"></span></footer>
+    </main>
+  </div>
+  <dialog id="install-help" aria-labelledby="install-title">
+    <div class="dialog-heading"><h2 id="install-title">Keep Muninn close</h2><button id="close-install" type="button" aria-label="Close install help">×</button></div>
+    <p>Install this page for a dedicated app window and quick access to your server.</p>
+    <p><strong>iPhone or iPad:</strong> open this address in Safari, tap Share, then <strong>Add to Home Screen</strong>.</p>
+    <p><strong>Android or desktop:</strong> use your browser’s <strong>Install app</strong> or <strong>Add to Home screen</strong> command.</p>
+    <p class="hint">Remote installation needs HTTPS. The app shell opens offline; videos and your library still require a connection to your server.</p>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript><p class="notice">Muninn’s browser app needs JavaScript enabled.</p></noscript>
+</body>
+</html>

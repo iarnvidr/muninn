@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="#install-on-the-mac">Download &amp; install</a> ·
+  <a href="docs/PWA_SERVER.md">Server &amp; PWA</a> ·
   <a href="docs/DEVELOPMENT.md">Build</a> ·
   <a href="CONTRIBUTING.md">Contribute</a> ·
   <a href="https://github.com/iarnvidr/muninn/issues/new/choose">Report a bug</a>
@@ -84,6 +85,20 @@ channel downloads do not require a Google login.
 
 The first launch may show a macOS dialog asking you to allow Muninn's local certificate
 (see [How capture works](#how-capture-works)).
+
+## Optional server and PWA
+
+Muninn also has an initial standalone server and installable browser app for
+phones and other computers. Build `muninn-service`, run it with `--server`, then
+open `/app/` to connect to its library. This is an additional client with a
+separate data directory; the native macOS app remains available.
+
+The first version supports library/feed browsing, video search, server downloads
+and playback. Remote access uses HTTPS and browser pairing. Media stays on the
+server, so an installed PWA still needs a connection for playback. See
+[server setup, installation and limits](docs/PWA_SERVER.md) for build commands,
+HTTPS and systemd examples, and migration details. This is a source-build preview,
+not a hosted service or an additional installer in the macOS release.
 
 ## Using it
 
