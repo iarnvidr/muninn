@@ -188,8 +188,9 @@ fn allowed(method: &Method, path: &str) -> bool {
     let read = matches!(*method, Method::GET | Method::HEAD);
     if !path.starts_with('/') || path.starts_with("//") { return false; }
     let parts: Vec<_> = path[1..].split('/').collect();
-    let id = |s: &str| !s.is_empty() && s.len() <= 160
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':'));
+    let id = |s: &str| !s.is_empty() && s.len() <= 160 && s != "." && !s.contains("..")
+        // Existing Core IDs are video_id.variant (for example aaaaaaaaaaa.720).
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':' | b'.'));
     match parts.as_slice() {
         ["api", "entries" | "feeds" | "jobs" | "tools"] => read,
         ["api", "entries" | "feeds", entry] => read && id(entry),
@@ -231,8 +232,6 @@ async fn bridge(State(state): State<App>, mut req: Request) -> Response {
         format!("Bearer {}", state.core.token()).parse().expect("core token is ASCII"));
     req.headers_mut().remove(header::COOKIE);
     req.headers_mut().remove("x-muninn-token");
-    // In-process dispatch preserves the existing file-range implementation and
-    // streaming body/backpressure; no TCP proxy or second downloader is added.
     state.inner.clone().oneshot(req).await.unwrap_or_else(|never| match never {})
 }
 

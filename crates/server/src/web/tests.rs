@@ -13,7 +13,7 @@ fn harness() -> Harness {
     Harness { _dir:dir, core, app }
 }
 fn request(method: &str, path: &str, cookie: Option<&str>, body: &str) -> Request {
-    let mut builder = Request::builder().method(method).uri(path)
+    let mut builder = axum::http::Request::builder().method(method).uri(path)
         .header(header::HOST,"muninn.test").header(header::ORIGIN,ORIGIN)
         .header("x-muninn-client","pwa");
     if let Some(cookie)=cookie { builder=builder.header(header::COOKIE,cookie); }
@@ -108,7 +108,39 @@ async fn native_admin_and_incomplete_playback_are_not_exposed() {
 }
 #[test]
 fn route_allowlist_is_narrow() {
-    for path in ["/api/entries","/api/feeds/1","/media/aaaaaaaaaaa_720","/thumb/aaaaaaaaaaa"] { assert!(allowed(&Method::GET,path)); }
-    for path in ["/api/entries/../settings","//api/entries","/media/%2fetc","/api/settings","/api/feeds/1/extra"] { assert!(!allowed(&Method::GET,path),"{path}"); }
+    for path in ["/api/entries","/api/feeds/1","/media/aaaaaaaaaaa.720","/thumb/aaaaaaaaaaa"] { assert!(allowed(&Method::GET,path)); }
+    for path in ["/api/entries/../settings","//api/entries","/media/%2fetc","/api/settings","/api/feeds/1/extra","/media/..","/media/."] { assert!(!allowed(&Method::GET,path),"{path}"); }
     assert!(!allowed(&Method::DELETE,"/api/entries/abc"));
+}
+
+#[tokio::test]
+async fn completed_files_keep_auth_and_streaming_range_semantics() {
+    use muninn_core::videodb::{EntryRow, STATUS_COMPLETE};
+    let h=harness();let cookie=h.login().await;
+    let data:Vec<u8>=(0..512).map(|n|(n%251) as u8).collect();
+    let path=h.core.paths.video_dir.join("aaaaaaaaaaa.360.mp4");
+    std::fs::write(&path,&data).unwrap();
+    let mut entry=EntryRow::new("aaaaaaaaaaa","360","360","manual",1);
+    entry.status=STATUS_COMPLETE.into();entry.file_path=Some(path.display().to_string());
+    entry.ext=Some("mp4".into());entry.size_bytes=data.len() as u64;entry.actual_height=Some(360);
+    h.core.video.insert_entry(&entry).unwrap();
+    let url=format!("/media/{}",entry.id);
+    assert!(entry.id.contains('.'),"Use the real Core entry-ID format");
+    assert_eq!(h.send(request("GET",&url,None,"")).await.status(),StatusCode::UNAUTHORIZED);
+    let response=h.send(request("GET",&url,Some(&cookie),"")).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE],"video/mp4");
+    assert_eq!(response.headers()[header::CONTENT_LENGTH],"512");
+    assert_eq!(response.into_body().collect().await.unwrap().to_bytes().as_ref(),data.as_slice());
+    let mut req=request("GET",&url,Some(&cookie),"");
+    req.headers_mut().insert(header::RANGE,HeaderValue::from_static("bytes=100-199"));
+    let response=h.send(req).await;
+    assert_eq!(response.status(),StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[header::CONTENT_RANGE],"bytes 100-199/512");
+    assert!(!response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+    assert_eq!(response.into_body().collect().await.unwrap().to_bytes().as_ref(),&data[100..200]);
+    let response=h.send(request("HEAD",&url,Some(&cookie),"")).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_LENGTH],"512");
+    assert!(response.into_body().collect().await.unwrap().to_bytes().is_empty());
 }
