@@ -20,7 +20,7 @@ path = "src/main.rs"
 # Ordinary commands only communicate with the already-running local API.
 muninn-core = { path = "../../core" }
 serde_json = { version = "1", features = ["preserve_order"] }
-ureq = "2"
+ureq = "3"
 
 [dev-dependencies]
 muninn-server = { path = "../server" }
