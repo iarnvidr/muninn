@@ -103,9 +103,9 @@ docker compose -f deploy/compose.server.yml up --build -d
 Compose publishes only `127.0.0.1:47872`. Put your HTTPS reverse proxy on that host
 in front of it. The named volume is initialized for UID 10001 and survives restarts.
 Use a secured secret provider instead of a file for a production deployment.
-The preview is deployed separately at `https://muninn-preview.ginnungagaps.xyz/app/`
-behind Authelia; it requires both the perimeter login and Muninn's own pairing
-token. The container image is built and checked by Dagger, with private
+The optional deployment lives in a separate private infrastructure repository
+behind an identity perimeter; it requires both that login and Muninn's own
+pairing token. The container image is built and checked by Dagger, with private
 Patchright Chromium sandboxed as a non-root service, and should be pinned to a
 verified immutable digest for rollout.
 
