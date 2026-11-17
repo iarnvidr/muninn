@@ -7,7 +7,10 @@ const SHELL = ['/app/','/app/index.html','/app/style.css','/app/model.js','/app/
   '/app/app.js','/app/manifest.webmanifest','/app/icon.svg','/app/icon-192.png','/app/icon-512.png'];
 self.addEventListener('install', event => event.waitUntil((async()=>{
   const cache=await caches.open(CACHE);
-  await cache.addAll(SHELL.map(url=>new Request(url,{credentials:'omit',cache:'reload'})));
+  // The owner-only reverse proxy needs the existing same-origin login cookie
+  // to serve these static files. Never follow a login redirect into CacheStorage.
+  await cache.addAll(SHELL.map(url=>new Request(url,{credentials:'same-origin',
+    redirect:'error',cache:'reload'})));
   // Do not replace a worker beneath an active transfer; activate on next open.
 })()));
 self.addEventListener('activate', event => event.waitUntil((async()=>{
@@ -21,9 +24,10 @@ self.addEventListener('fetch', event => {
   event.respondWith((async()=>{
     const cache=await caches.open(CACHE);
     // Network first keeps deployment upgrades usable, cached shell permits
-    // offline launch. Strip credentials because these assets are public.
+    // offline launch. Forward the owner's session to the reverse proxy only
+    // for allowlisted shell URLs; never follow or cache login redirects.
     try{
-      const response=await fetch(new Request(request,{credentials:'omit'}));
+      const response=await fetch(new Request(request,{credentials:'same-origin',redirect:'error'}));
       if(response.ok&&!response.redirected){await cache.put(request,response.clone());return response;}
       return (await cache.match(url.pathname))||response;
     }catch{return (await cache.match(url.pathname))||Response.error();}

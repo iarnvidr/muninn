@@ -67,10 +67,11 @@ function worker(){
   vm.runInNewContext(file('sw.js'),ctx);
   return {events,calls};
 }
-test('service worker caches static shell without authentication credentials',async()=>{
+test('service worker caches only owner-authorized static shell and refuses login redirects',async()=>{
   const w=worker();let pending;w.events.install({waitUntil:p=>pending=p});await pending;
   const requests=w.calls.find(c=>c[0]==='addAll')[1];
-  assert.ok(requests.length>=8);assert.ok(requests.every(r=>r.credentials==='omit'&&r.url.startsWith('https://muninn.test/app/')));
+  assert.ok(requests.length>=8);
+  assert.ok(requests.every(r=>r.credentials==='same-origin'&&r.redirect==='error'&&r.url.startsWith('https://muninn.test/app/')));
 });
 test('service worker never intercepts private APIs, media, sessions or foreign requests',()=>{
   const w=worker();
@@ -81,11 +82,12 @@ test('service worker never intercepts private APIs, media, sessions or foreign r
   }
   let hit=false;w.events.fetch({request:new Request('https://muninn.test/app/app.js',{headers:{Authorization:'Bearer secret'}}),respondWith:()=>hit=true});assert.equal(hit,false);
 });
-test('service worker supports offline shell but not authenticated response caching',async()=>{
+test('service worker supports offline shell without following owner-login redirects',async()=>{
   const w=worker();let pending;
   w.events.fetch({request:new Request('https://muninn.test/app/app.js'),respondWith:p=>pending=p});
   const response=await pending;assert.equal(await response.text(),'shell');
-  assert.equal(w.calls.find(c=>c[0]==='fetch')[1].credentials,'omit');
+  assert.equal(w.calls.find(c=>c[0]==='fetch')[1].credentials,'same-origin');
+  assert.equal(w.calls.find(c=>c[0]==='fetch')[1].redirect,'error');
 });
 test('device storage commits metadata and media together without secrets',()=>{
   const source=file('store.js');assert.match(source,/transaction\(\['metadata','media'\]/);assert.match(source,/tx.oncomplete/);
