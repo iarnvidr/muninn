@@ -15,7 +15,8 @@ from policy import *
 
 class PolicyTests(unittest.TestCase):
     def test_navigation_and_resource_boundary(self):
-        for url in ['https://www.youtube.com/', 'https://accounts.google.com/ServiceLogin', 'https://youtu.be/aaaaaaaaaaa']:
+        for url in ['https://www.youtube.com/', 'https://accounts.google.com/ServiceLogin', 'https://youtu.be/aaaaaaaaaaa',
+                    'https://www.tiktok.com/foryou', 'https://vm.tiktok.com/ZMexample/']:
             self.assertEqual(navigation_url(url), url)
         for url in ['http://youtube.com/', 'file:///etc/passwd','https://youtube.com.evil.test/',
                     'https://127.0.0.1/', 'https://youtube.com:8443/', 'https://u:p@youtube.com/']:
@@ -25,10 +26,18 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(request_allowed('https://r1.googlevideo.com/videoplayback','fetch',False))
         self.assertFalse(request_allowed('https://www.youtube.com/video','media',False))
         self.assertFalse(request_allowed('https://i.ytimg.com/test','document',True))
+        self.assertTrue(request_allowed('https://p16.tiktokcdn.com/cover.jpg','image',False))
+        self.assertFalse(request_allowed('https://v16.tiktokv.com/tos/video','fetch',False))
+        self.assertFalse(request_allowed('https://v16-webapp-prime.tiktok.com/bytes','fetch',False))
+        self.assertFalse(request_allowed('https://www.tiktok.com/video/clip.mp4','fetch',False))
+        with self.assertRaises(ValueError): navigation_url('https://tiktok.com.evil.test/@maker')
 
     def test_only_native_parser_inputs_are_captured(self):
         self.assertEqual(capture_kind('https://www.youtube.com/youtubei/v1/browse?key=secret','application/json'),'application/json')
         self.assertEqual(capture_kind('https://www.youtube.com/watch?v=aaaaaaaaaaa','text/html'),'text/html')
+        self.assertEqual(capture_kind('https://www.tiktok.com/api/recommend/item_list/?msToken=private','application/json'),'application/json')
+        self.assertEqual(capture_kind('https://www.tiktok.com/@creator/video/7668090902816017671','text/html'),'text/html')
+        self.assertIsNone(capture_kind('https://www.tiktok.com/api/passport/account/login','application/json'))
         for url in ['https://accounts.google.com/', 'https://www.youtube.com/youtubei/v1/account', 'https://evil.test/']:
             self.assertIsNone(capture_kind(url,'application/json'))
         body=json.loads(safe_request_body('{"videoId":"aaaaaaaaaaa","context":{"user":"private"},"continuation":"next"}'))
@@ -40,6 +49,10 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(public_url('https://www.youtube.com/watch?v=aaaaaaaaaaa&token=secret'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa')
         self.assertEqual(video_id('https://youtu.be/aaaaaaaaaaa'), 'aaaaaaaaaaa')
         self.assertIsNone(video_id('https://accounts.google.com/watch?v=aaaaaaaaaaa'))
+        self.assertEqual(video_id('https://www.tiktok.com/@maker/video/7668090902816017671'), 'tt_7668090902816017671')
+        self.assertIsNone(video_id('https://www.tiktok.com.evil.test/@maker/video/7668090902816017671'))
+        self.assertEqual(public_url('https://www.tiktok.com/@maker/video/7668090902816017671?msToken=private'),
+                         'https://www.tiktok.com/@maker/video/7668090902816017671')
         self.assertFalse(key_allowed('Control+Shift+J'))
 
     def test_exact_origin_and_csrf(self):
@@ -66,6 +79,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
             rows=json.loads(path.read_text());self.assertEqual(len(rows),1)
             self.assertEqual(rows[0]['domain'],'.youtube.com')
+            tt=Path(d)/'tiktok-cookies.json'
+            self.assertEqual(tt.stat().st_mode & 0o777,0o600)
+            self.assertEqual(json.loads(tt.read_text()),[])
             self.assertNotIn('fixture-private',json.dumps(await browser.state()))
 
     async def test_capture_queue_is_bounded_and_tabs_use_native_open_encounter(self):

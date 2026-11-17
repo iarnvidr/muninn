@@ -1,4 +1,4 @@
-# Muninn server + PWA (initial additive edition)
+# Muninn server + PWA (additive edition, YouTube and TikTok)
 
 This is **another entry point**, not a replacement for the macOS app. `muninn-web`
 uses the existing Rust `Core`, download workers, stores and HTTP media implementation.
@@ -10,7 +10,16 @@ are unchanged. There is no migration or automatic cutover.
 
 - Single-owner server login with an access-token file exchanged for a revocable,
   24-hour HTTP-only session cookie; no token in URLs or browser storage.
-- Server library, video-URL download requests, queue status, retry/cancel and feeds.
+- Server library, YouTube and TikTok video-URL download requests, queue status,
+  retry/cancel, provider-specific captured feeds and the existing cache rules.
+- Dedicated Patchright/Chromium source browser for YouTube and TikTok. The private
+  capture bridge passes bounded JSON/HTML and tab encounters to the same Rust
+  Core used by the macOS app. Both providers' media downloads occur in the
+  native yt-dlp worker, **not** in the remote browser canvas.
+- TikTok IDs use `tt_<numeric ID>`; old 11-character YouTube IDs are unchanged.
+  A TikTok `@_` URL is a supported yt-dlp fallback when the creator handle was
+  unavailable. Browser cookies are provider-scoped private files; Google
+  cookies are never sent to TikTok or vice versa.
 - Explicit **Save to device** transfers for completed server files. The metadata
   and full media Blob are committed atomically in IndexedDB. **Play local copy**
   uses only that persisted Blob, never an upstream or server streaming fallback.
@@ -41,8 +50,9 @@ Open `http://127.0.0.1:47872/app/`. Enter the token stored in the file (use a lo
 editor to read it). The token generator creates a new file with Unix mode `0600`
 and refuses to overwrite an existing file; the server never logs its value.
 The core discovers/bootstrap-installs yt-dlp and related tools using its existing
-logic. Initial requests target public YouTube videos; authenticated desktop
-YouTube sessions are **not** copied to this server.
+logic. Initial requests can target public YouTube or TikTok videos; authenticated
+desktop sessions are **not** copied to this server. Server Chromium maintains
+its own optional YouTube and TikTok login state.
 
 Use a **separate data directory**. Never run the desktop and server against the
 same SQLite stores or actively written cache files. This initial version does
@@ -78,7 +88,7 @@ resume across page closure, and do not pretend to be reliable iOS background job
 A transfer is not playable until its complete file is durably stored. Unsupported
 codecs produce an explicit error; no live stream is substituted.
 
-## Container example (not automatically deployed)
+## Container example
 
 ```sh
 mkdir -m 700 -p deploy/secrets
@@ -93,9 +103,11 @@ docker compose -f deploy/compose.server.yml up --build -d
 Compose publishes only `127.0.0.1:47872`. Put your HTTPS reverse proxy on that host
 in front of it. The named volume is initialized for UID 10001 and survives restarts.
 Use a secured secret provider instead of a file for a production deployment.
-The container installs Debian's FFmpeg/Python packages, with their distribution
-licenses under `/usr/share/doc`; this is separate from the macOS LGPL packaging
-pipeline. This PR does not publish a container or modify desktop releases.
+The optional deployment lives in a separate private infrastructure repository
+behind an identity perimeter; it requires both that login and Muninn's own
+pairing token. The container image is built and checked by Dagger, with private
+Patchright Chromium sandboxed as a non-root service, and should be pinned to a
+verified immutable digest for rollout.
 
 ## Access boundary
 
@@ -135,9 +147,20 @@ cover safe URLs, manifest/scope, bounded complete copies and service-worker cach
 exclusions. Native iPhone installation and Safari codec compatibility still need
 hardware acceptance before treating this as a production release.
 
-### Deferred
+### Provider limitations and acceptance
 
-Remote YouTube browser/interception, subscription/login capture on the server,
-full desktop UI/graph parity, automatic desktop-server synchronization, resumable
-chunk transfers, device-independent playback history and notification/background
-workers. The current native app continues to provide its existing behavior.
+The TikTok parser recognizes item-list responses and the site's HTML hydration
+scripts. Provider layouts and anti-bot handling change independently of Muninn;
+synthetic capture tests cannot guarantee that a live authenticated TikTok feed
+will load from the production host. A manual acceptance pass must sign into
+the private browser, capture a TikTok feed, queue a video, verify a completed
+MP4, transfer it to iPhone/PWA, play offline, and confirm that upstream video
+traffic is blocked in the browsing canvas. Login and region-restricted media
+may require an active server-side account. The TikTok feed thumbnail URL is
+recorded but not automatically fetched from an untrusted, redirecting CDN.
+
+Still deferred: full desktop UI/graph parity, automatic desktop-server
+synchronization, resumable transfers, device-independent playback history and
+background notifications. The native macOS app continues to work independently;
+its TikTok interception uses a **separate name-constrained CA** so existing
+YouTube trust does not need to be replaced.

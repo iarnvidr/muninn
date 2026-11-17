@@ -187,6 +187,9 @@ impl Core {
     /// Fetches the watch page in the background when metadata (or comments) are not cached.
     pub fn ensure_meta(self: &Arc<Self>, video_id: &str) {
         if self.is_offline() { return; }
+        // TikTok metadata arrives through the source capture adapter; the
+        // YouTube Innertube metadata service cannot resolve TikTok IDs.
+        if video_id.starts_with("tt_") { return; }
         let now = self.now();
         let have_meta = self.content.has(KIND_META, video_id, now);
         let have_comments = self.content.has(crate::content::KIND_COMMENTS, video_id, now) || self.has_more_comments(video_id);

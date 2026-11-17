@@ -9,10 +9,11 @@ use crate::quality::Quality;
 use crate::rules::{evaluate, retention_for_request, Decision, Encounter, VideoFacts};
 use crate::util::valid_video_id;
 use crate::videodb::{EntryRow, STATUS_CANCELED, STATUS_COMPLETE, STATUS_FAILED, STATUS_QUEUED};
-use crate::ytdlp::plan_format;
+use crate::ytdlp::plan_format_source;
 use serde_json::{json, Value};
 
-const FEED_KINDS: &[&str] = &["home", "subscriptions", "search", "related", "channel", "other"];
+const FEED_KINDS: &[&str] = &["home", "subscriptions", "search", "related", "channel", "other",
+    "tiktok-for-you", "tiktok-following", "tiktok-profile", "tiktok-search", "tiktok-related"];
 /// Safety valve: one feed snapshot may queue at most this many automatic jobs.
 const MAX_AUTO_QUEUED_PER_INGEST: usize = 10;
 const MAX_ITEMS_PER_SNAPSHOT: usize = 500;
@@ -57,7 +58,7 @@ impl Core {
         let ids: Vec<String> = items.iter().map(|i| i.video_id.clone()).collect();
         let new_videos = self.content.mark_seen(&ids, now)?;
         let mut queued = Vec::new();
-        if kind == "subscriptions" && settings.auto_prefetch {
+        if matches!(kind.as_str(), "subscriptions" | "tiktok-following") && settings.auto_prefetch {
             for id in new_videos.iter().take(MAX_AUTO_QUEUED_PER_INGEST) {
                 if let Some(entry) = self.apply_rules(id, Encounter::NewUpload)? {
                     queued.push(entry.id);
@@ -291,7 +292,7 @@ impl Core {
     pub fn create_entry(&self, facts: &VideoFacts, quality: Quality, decision: &Decision, origin: &str, protect: bool) -> Result<EntryRow> {
         let now = self.now();
         let has_ffmpeg = self.tools().ffmpeg.found;
-        let plan = plan_format(quality, has_ffmpeg).ok_or_else(|| Error::bad("nothing to cache for quality 'none'"))?;
+        let plan = plan_format_source(quality, has_ffmpeg, &facts.video_id).ok_or_else(|| Error::bad("nothing to cache for this source and quality"))?;
         let existing = self.video.entries_for_video(&facts.video_id)?;
         let id = crate::videodb::entry_id(&facts.video_id, plan.variant.as_str());
         let expires = if protect { None } else { self.retention_expiry(now, decision.retention_days) };

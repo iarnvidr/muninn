@@ -19,7 +19,7 @@ use std::ffi::{c_char, c_void, CStr};
 use std::sync::{Arc, OnceLock};
 use tauri::Webview;
 
-static CA_DER: OnceLock<Vec<u8>> = OnceLock::new();
+static CA_DERS: OnceLock<(Vec<u8>, Vec<u8>)> = OnceLock::new();
 
 extern "C" {
     fn object_getClass(obj: *const c_void) -> *const c_void;
@@ -35,9 +35,9 @@ extern "C" {
 
 type Completion = block2::Block<dyn Fn(isize, *mut AnyObject)>;
 
-fn host_is_youtube(host: &str) -> bool {
+fn host_is_provider(host: &str) -> bool {
     let h = host.to_ascii_lowercase();
-    h == "youtube.com" || h.ends_with(".youtube.com")
+    h == "youtube.com" || h.ends_with(".youtube.com") || h == "tiktok.com" || h.ends_with(".tiktok.com")
 }
 
 unsafe fn nsstring(obj: *mut AnyObject) -> Option<String> {
@@ -49,11 +49,12 @@ unsafe fn nsstring(obj: *mut AnyObject) -> Option<String> {
 }
 
 /// True when the trust object's chain validates with Muninn's CA as the only anchor.
-unsafe fn chain_ends_in_muninn_ca(trust_ptr: *mut c_void) -> bool {
+unsafe fn chain_ends_in_muninn_ca(trust_ptr: *mut c_void, host: &str) -> bool {
     use core_foundation::base::TCFType;
-    let Some(der) = CA_DER.get() else {
+    let Some(ders) = CA_DERS.get() else {
         return false;
     };
+    let der = if host == "tiktok.com" || host.ends_with(".tiktok.com") { &ders.1 } else { &ders.0 };
     let Some(ca) = SecCertificate::from_der(der).ok() else {
         return false;
     };
@@ -81,9 +82,9 @@ extern "C" fn did_receive_challenge(
             let host = nsstring(msg_send![space, host]);
             let trust: *mut c_void = msg_send![space, serverTrust];
             if method.as_deref() == Some("NSURLAuthenticationMethodServerTrust")
-                && host.as_deref().is_some_and(host_is_youtube)
+                && host.as_deref().is_some_and(host_is_provider)
                 && !trust.is_null()
-                && chain_ends_in_muninn_ca(trust)
+                && chain_ends_in_muninn_ca(trust, host.as_deref().unwrap_or(""))
             {
                 let class = objc_getClass(c"NSURLCredential".as_ptr()) as *const AnyObject;
                 if !class.is_null() {
@@ -104,8 +105,8 @@ extern "C" fn did_receive_challenge(
 
 /// Adds the challenge method to the web view's navigation delegate class.
 pub fn prepare(shell: &Arc<Shell>, wv: &Webview) {
-    if let Some(ca) = shell.core.ca() {
-        let _ = CA_DER.set(ca.cert_der().to_vec());
+    if let (Some(youtube), Some(tiktok)) = (shell.core.ca(), shell.core.tiktok_ca()) {
+        let _ = CA_DERS.set((youtube.cert_der().to_vec(), tiktok.cert_der().to_vec()));
     }
     let _ = wv.with_webview(|w| unsafe {
         let webview = w.inner() as *mut AnyObject;

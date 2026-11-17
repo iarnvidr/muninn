@@ -36,13 +36,14 @@ struct CapturedResponse {
     body: String,
     content_type: String,
 }
-fn youtube(url: &str) -> bool {
-    ["https://www.youtube.com/", "https://youtube.com/", "https://m.youtube.com/"]
+fn provider(url: &str) -> bool {
+    ["https://www.youtube.com/", "https://youtube.com/", "https://m.youtube.com/",
+        "https://www.tiktok.com/", "https://tiktok.com/", "https://m.tiktok.com/"]
         .iter().any(|prefix| url.starts_with(prefix)) && !url.chars().any(char::is_control)
 }
 async fn capture(State(core): State<Arc<Core>>, Json(input): Json<CapturedResponse>) -> Response {
-    if !youtube(&input.url) || input.url.len() > 4096 || input.body.len() > MAX_BODY
-        || input.referer.as_ref().is_some_and(|r| !youtube(r) || r.len() > 4096)
+    if !provider(&input.url) || input.url.len() > 4096 || input.body.len() > MAX_BODY
+        || input.referer.as_ref().is_some_and(|r| !provider(r) || r.len() > 4096)
         || input.request_body.as_ref().is_some_and(|r| r.len() > 65536)
         || !matches!(input.content_type.as_str(), "application/json" | "text/html") {
         return (StatusCode::BAD_REQUEST, Json(json!({"error":"invalid capture envelope"}))).into_response();
@@ -54,7 +55,7 @@ async fn capture(State(core): State<Arc<Core>>, Json(input): Json<CapturedRespon
     Json(result).into_response()
 }
 async fn tab(State(core): State<Arc<Core>>, Json(input): Json<TabIngest>) -> Response {
-    if !input.tab_id.starts_with("server-") || input.tab_id.len() > 80 || !youtube(&input.url) {
+    if !input.tab_id.starts_with("server-") || input.tab_id.len() > 80 || !provider(&input.url) {
         return (StatusCode::BAD_REQUEST, Json(json!({"error":"invalid server tab"}))).into_response();
     }
     match core.ingest_tab(input) {
@@ -124,6 +125,23 @@ mod tests {
         let bad = Request::builder().method("POST").uri("/api/settings").header("Host","127.0.0.1:47873")
             .header("Authorization",format!("Bearer {}",core.token())).body(Body::empty()).unwrap();
         assert_eq!(app.oneshot(bad).await.unwrap().status(),StatusCode::NOT_FOUND);
+    }
+    #[tokio::test]
+    async fn tiktok_capture_and_tabs_reuse_shared_core_without_public_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(CoreConfig {data_dir:dir.path().into(),spawn_workers:false,tool_dirs:Some(vec![]),..Default::default()}).unwrap();
+        let app = router(core.clone());
+        let data=json!({"itemList":[{"id":"7668090902816017671","desc":"Native TikTok fixture",
+            "author":{"uniqueId":"maker"},"video":{"duration":14}}]}).to_string();
+        let body=json!({"url":"https://www.tiktok.com/api/recommend/item_list/",
+            "referer":"https://www.tiktok.com/foryou","request_body":null,
+            "body":data,"content_type":"application/json"});
+        let req=Request::builder().method("POST").uri("/capture").header("Host","127.0.0.1:47873")
+            .header("Authorization",format!("Bearer {}",core.token()))
+            .header("Content-Type","application/json").body(Body::from(body.to_string())).unwrap();
+        let result=app.oneshot(req).await.unwrap();
+        assert_eq!(result.status(),StatusCode::OK);
+        assert_eq!(core.content.latest_snapshot("tiktok-for-you").unwrap().unwrap().items[0].video_id,"tt_7668090902816017671");
     }
     #[test]
     fn cookie_reader_scopes_credentials_and_fails_closed() {

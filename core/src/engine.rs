@@ -119,6 +119,7 @@ pub struct Core {
     pub(crate) proxy_info: RwLock<Option<crate::proxy::ProxyInfo>>,
     pub(crate) proxy_stats: RwLock<Option<Arc<crate::proxy::ProxyStats>>>,
     pub(crate) ca: RwLock<Option<Arc<crate::ca::Ca>>>,
+    pub(crate) tiktok_ca: RwLock<Option<Arc<crate::ca::Ca>>>,
     pub(crate) setup: Mutex<crate::tools_setup::ToolsSetup>,
     pub streams: crate::stream::Streams,
     pub(crate) meta_fetches: Mutex<HashMap<String, String>>,
@@ -177,6 +178,7 @@ impl Core {
             proxy_info: RwLock::new(None),
             proxy_stats: RwLock::new(None),
             ca: RwLock::new(None),
+            tiktok_ca: RwLock::new(None),
             setup: Mutex::new(Default::default()),
             streams: Default::default(),
             meta_fetches: Mutex::new(HashMap::new()),
@@ -222,9 +224,10 @@ impl Core {
         );
     }
 
-    pub fn set_proxy(&self, stats: Arc<crate::proxy::ProxyStats>, ca: Arc<crate::ca::Ca>) {
+    pub fn set_proxy(&self, stats: Arc<crate::proxy::ProxyStats>, ca: Arc<crate::ca::Ca>, tiktok_ca: Arc<crate::ca::Ca>) {
         *self.proxy_stats.write().unwrap_or_else(|e| e.into_inner()) = Some(stats);
         *self.ca.write().unwrap_or_else(|e| e.into_inner()) = Some(ca);
+        *self.tiktok_ca.write().unwrap_or_else(|e| e.into_inner()) = Some(tiktok_ca);
     }
 
     pub fn proxy_info(&self) -> Option<crate::proxy::ProxyInfo> {
@@ -237,6 +240,10 @@ impl Core {
 
     pub fn ca(&self) -> Option<Arc<crate::ca::Ca>> {
         self.ca.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn tiktok_ca(&self) -> Option<Arc<crate::ca::Ca>> {
+        self.tiktok_ca.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn tools(&self) -> ToolsStatus {

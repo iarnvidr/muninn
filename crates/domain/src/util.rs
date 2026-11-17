@@ -40,9 +40,21 @@ pub fn ct_eq(a: &str, b: &str) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// YouTube video ids are 11 characters of `[A-Za-z0-9_-]`.
+/// Legacy YouTube IDs remain unchanged; TikTok uses a separate, filesystem-safe
+/// namespace so numeric TikTok IDs cannot collide with YouTube or entry variants.
 pub fn valid_video_id(id: &str) -> bool {
-    id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    (id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+        || id.strip_prefix("tt_").is_some_and(|n| (15..=22).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The download worker accepts provider IDs, never a user-supplied arbitrary URL.
+/// yt-dlp's TikTok extractor accepts the `@_` placeholder if the real handle
+/// was not captured (and substitutes the same placeholder internally).
+pub fn source_video_url(id: &str) -> Option<String> {
+    if let Some(n) = id.strip_prefix("tt_") {
+        return valid_video_id(id).then(|| format!("https://www.tiktok.com/@_/video/{n}"));
+    }
+    valid_video_id(id).then(|| format!("https://www.youtube.com/watch?v={id}"))
 }
 
 /// Free bytes available to unprivileged users on the filesystem holding `path`.
@@ -101,6 +113,10 @@ mod tests {
         assert!(!valid_video_id("short"));
         assert!(!valid_video_id("../etc/passwd"));
         assert!(!valid_video_id("dQw4w9WgXc!"));
+        assert!(valid_video_id("tt_7668090902816017671"));
+        assert!(!valid_video_id("tt_1234567890/../../etc"));
+        assert_eq!(source_video_url("tt_7668090902816017671").as_deref(),Some("https://www.tiktok.com/@_/video/7668090902816017671"));
+        assert!(source_video_url("tt_1").is_none());
     }
 
     #[test]

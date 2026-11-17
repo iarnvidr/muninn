@@ -10,6 +10,22 @@ test('PWA accepts known YouTube video URL forms and strips tracking',()=>{
     'https://m.youtube.com/shorts/'+ID,'https://www.youtube.com/live/'+ID])assert.equal(M.videoId(value),ID);
   assert.equal(M.youtubeURL(ID),'https://www.youtube.com/watch?v='+ID);
 });
+test('TikTok is a native provider ID and never a YouTube URL',()=>{
+  const id='tt_7668090902816017671';
+  assert.equal(M.videoId('https://www.tiktok.com/@creator/video/7668090902816017671?msToken=private'),id);
+  assert.equal(M.videoId('https://m.tiktok.com/@creator/video/7668090902816017671'),id);
+  assert.equal(M.videoId(id),id);
+  assert.equal(M.videoURL(id),'https://www.tiktok.com/@_/video/7668090902816017671');
+  assert.equal(M.youtubeURL(id),null);
+  assert.equal(M.sourceURL('https://www.tiktok.com/@creator/video/7668090902816017671?foo=private'),
+    'https://www.tiktok.com/@creator/video/7668090902816017671');
+  assert.equal(M.sourceURL('https://www.tiktok.com/foryou?msToken=private'),'https://www.tiktok.com/foryou');
+  assert.equal(M.feedTitle({kind:'tiktok-profile',source_url:'https://www.tiktok.com/@creator'}),'TikTok · @creator');
+  for(const url of ['https://tiktok.com.evil.test/@creator/video/7668090902816017671',
+    'https://user:secret@tiktok.com/@creator/video/7668090902816017671',
+    'https://tiktok.com:8080/@creator/video/7668090902816017671',
+    'https://tiktok.com/@creator/video/1'])assert.equal(M.videoId(url),null,url);
+});
 test('PWA never turns arbitrary hosts, schemes or credentials into download requests',()=>{
   for(const input of ['javascript:alert(1)','file:///etc/passwd','https://evil.test/watch?v='+ID,
     'https://youtube.com.evil.test/watch?v='+ID,'https://user:secret@youtube.com/watch?v='+ID,

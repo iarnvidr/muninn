@@ -66,7 +66,7 @@
     if(!device&&['failed','canceled'].includes(record.status))actions.append(button('Retry server download',async()=>{await api('/api/entries/'+encodeURIComponent(record.id)+'/retry',{method:'POST'});await refresh();}));
     if(!device&&['queued','downloading'].includes(record.status))actions.append(button('Cancel server download',async()=>{await api('/api/entries/'+encodeURIComponent(record.id)+'/cancel',{method:'POST'});await refresh();}));
     if(!device&&!record.id)actions.append(button('Download on server',()=>queue(record.video_id,record.title)));
-    actions.append(button('Copy video URL',()=>copy(M.youtubeURL(record.video_id))));
+    actions.append(button('Copy video URL',()=>copy(M.sourceURL(record.source_url)||M.videoURL(record.video_id))));
     content.append(actions);article.append(content);return article;
   }
   function render() {
@@ -74,7 +74,7 @@
     const device=state.view==='device',feeds=state.view==='feeds';
     $('#view-title').textContent=device?'On this device':feeds?'Captured feeds':'Server library';
     $('#view-hint').textContent=device?'Complete copies only. Playback and position are stored on this device.':feeds?
-      'Stored sources from this server. This initial PWA does not embed or intercept the YouTube website.':
+      'Captured YouTube and TikTok feeds from the private server browser. Playback always uses saved device copies.':
       'The server acquires and stores videos. Save a ready video to this device before playing.';
     $('#persist').hidden=!device;$('#feed-list').hidden=!feeds;$('#feed-filters').hidden=!feeds;
     $('#queue-panel').hidden=!state.signedIn||state.view!=='server';
@@ -83,11 +83,12 @@
     if(feeds){renderFeeds();return;}
     const records=device?state.device:state.entries;
     for(const item of records)content.append(card(item,device));
-    if(!records.length)content.append(el('p',device?'No device copies yet. Save a complete video from the server library.':state.signedIn?'No server downloads yet. Add a YouTube video above.':'Connect to browse the server, or open On this device for saved videos.','empty'));
+    if(!records.length)content.append(el('p',device?'No device copies yet. Save a complete video from the server library.':state.signedIn?'No server downloads yet. Add a YouTube or TikTok video above.':'Connect to browse the server, or open On this device for saved videos.','empty'));
   }
   function renderFeeds() {
     const filters=$('#feed-filters');filters.replaceChildren();
-    for(const [kind,label] of [['','All'],['home','Home'],['subscriptions','Subscriptions'],['search','Search'],['channel','Channels'],['related','Related']]){
+    for(const [kind,label] of [['','All'],['home','YouTube · Home'],['subscriptions','YouTube · Subscriptions'],['search','YouTube · Search'],['channel','YouTube · Channels'],['related','YouTube · Related'],
+      ['tiktok-for-you','TikTok · For You'],['tiktok-following','TikTok · Following'],['tiktok-profile','TikTok · Creators'],['tiktok-search','TikTok · Search'],['tiktok-related','TikTok · Related']]){
       const b=button(label,()=>{state.kind=kind;state.feed=null;render();});b.setAttribute('aria-pressed',String(state.kind===kind));filters.append(b);
     }
     const list=$('#feed-list');list.replaceChildren();
@@ -110,7 +111,7 @@
     }else content.append(el('p',state.feeds.length?'Choose a captured source above.':'No feed captures on this server yet. You can still add videos by URL.','empty'));
   }
   async function queue(id,title) {
-    if(!M.validId(id))throw new Error('Enter a YouTube video URL or its 11-character ID.');
+    if(!M.validId(id))throw new Error('Enter a YouTube or TikTok video URL (or a recognized source ID).');
     const quality=document.querySelector('input[name=quality]:checked').value;
     const result=await api('/api/cache',{method:'POST',body:{video_id:id,quality,title:title||undefined,protect:true}});
     notice(result.entry?'Queued on the server. It will keep downloading when you close this page.':'The server did not queue this video. Check its download rules.');

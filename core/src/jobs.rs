@@ -10,7 +10,7 @@ use crate::quality::Quality;
 use crate::range::{content_type_for, MediaFile};
 use crate::util::free_space;
 use crate::videodb::{EntryRow, STATUS_CANCELED, STATUS_DOWNLOADING, STATUS_FAILED, STATUS_QUEUED};
-use crate::ytdlp::{plan_format, Event, JobSpec, Runner, YtDlpRunner};
+use crate::ytdlp::{Event, JobSpec, Runner, YtDlpRunner};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -150,17 +150,17 @@ impl Core {
             let _ = self.video.set_status(id, STATUS_FAILED, Some("unknown variant"), self.now());
             return;
         };
-        let Some(plan) = plan_format(quality, tools.ffmpeg.found) else {
+        let Some(plan) = crate::ytdlp::plan_format_source(quality, tools.ffmpeg.found, &entry.video_id) else {
             let _ = self.video.set_status(id, STATUS_FAILED, Some("nothing to download"), self.now());
             return;
         };
         let out_dir = if entry.protected { self.paths.library_dir.clone() } else { self.paths.video_dir.clone() };
         let parallel = self.running_count().max(1) as u32;
         let limit = (entry.origin != "manual" && settings.prefetch_bandwidth_kbps > 0).then(|| (settings.prefetch_bandwidth_kbps / parallel).max(1));
-        let cookies = match self.youtube_cookie_file() {
+        let cookies = match if entry.video_id.starts_with("tt_") { self.tiktok_cookie_file() } else { self.youtube_cookie_file() } {
             Ok(cookies) => cookies,
             Err(_) => {
-                let _ = self.video.set_status(id, STATUS_FAILED, Some("Could not prepare the YouTube session. Retry the download."), self.now());
+                let _ = self.video.set_status(id, STATUS_FAILED, Some("Could not prepare the provider session. Retry the download."), self.now());
                 return;
             }
         };
@@ -460,6 +460,9 @@ impl Core {
     // --- thumbnails --------------------------------------------------------------------------
 
     pub fn queue_thumb(&self, video_id: &str) {
+        // TikTok's signed CDN cover URLs are not ytimg IDs. Do not fabricate
+        // a YouTube thumbnail request or follow untrusted cover redirects.
+        if video_id.starts_with("tt_") { return; }
         if self.is_offline() {return;}
         if self.content.has(KIND_THUMB, video_id, self.now()) {
             return;

@@ -311,6 +311,17 @@ pub fn playlist_context_of_url(url: &str) -> Option<PlaylistContext> {
 pub fn video_id_of_url(url: &str) -> Option<String> {
     let u = parse_url(url)?;
     let host = u.host.to_ascii_lowercase();
+    if u.scheme != "https" && u.scheme != "http" { return None; }
+    if matches!(host.as_str(), "www.tiktok.com" | "tiktok.com" | "m.tiktok.com") {
+        let parts: Vec<_> = u.path.split('/').filter(|s| !s.is_empty()).collect();
+        let number = match parts.as_slice() {
+            [user, "video", id] if user.starts_with('@') => Some(*id),
+            ["embed", id] | ["share", "video", id] => Some(*id),
+            _ => None,
+        }?;
+        let id = format!("tt_{number}");
+        return muninn_domain::util::valid_video_id(&id).then_some(id);
+    }
     let id = if host == "youtu.be" {
         u.path.trim_start_matches('/').split('/').next().map(str::to_string)
     } else if host == "youtube.com" || host.ends_with(".youtube.com") {
@@ -535,17 +546,17 @@ pub fn classify_input(text: &str) -> Input {
     }
     let with_scheme = if t.starts_with("http://") || t.starts_with("https://") {
         Some(t.to_string())
-    } else if !t.contains(' ') && (t.starts_with("www.") || t.starts_with("youtube.com") || t.starts_with("m.youtube.com") || t.starts_with("youtu.be/")) {
+    } else if !t.contains(' ') && (t.starts_with("www.") || t.starts_with("youtube.com") || t.starts_with("m.youtube.com") || t.starts_with("youtu.be/") || t.starts_with("tiktok.com/") || t.starts_with("m.tiktok.com/")) {
         Some(format!("https://{t}"))
     } else {
         None
     };
     if let Some(u) = with_scheme {
         if let Some(id) = video_id_of_url(&u) {
-            return match playlist_context_of_url(&u) { Some(playlist) => Input::VideoInPlaylist { video_id: id, playlist }, None => Input::Video(id) };
+            return match (!id.starts_with("tt_")).then(|| playlist_context_of_url(&u)).flatten() { Some(playlist) => Input::VideoInPlaylist { video_id: id, playlist }, None => Input::Video(id) };
         }
         return match parse_url(&u) {
-            Some(p) if is_youtube_host(&p.host) => Input::Yt(u.replace("http://", "https://")),
+            Some(p) if is_youtube_host(&p.host) || matches!(p.host.as_str(), "tiktok.com" | "www.tiktok.com" | "m.tiktok.com") => Input::Yt(u.replace("http://", "https://")),
             Some(_) => Input::External(u),
             None => Input::Search(t.to_string()),
         };

@@ -99,24 +99,15 @@ fn install_platform(shell: &Arc<Shell>) -> Result<(), String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let keychain = format!("{home}/Library/Keychains/login.keychain-db");
     // User-scope (no -d), SSL policy only, root of trust. macOS asks the user to confirm.
-    let out = std::process::Command::new("/usr/bin/security")
-        .args([
-            "add-trusted-cert",
-            "-r",
-            "trustRoot",
-            "-p",
-            "ssl",
-            "-k",
-            &keychain,
-        ])
-        .arg(&info.ca_pem_path)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    for path in [&info.ca_pem_path, &info.tiktok_ca_pem_path] {
+        let out = std::process::Command::new("/usr/bin/security")
+            .args(["add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", &keychain])
+            .arg(path).output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
     }
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -174,13 +165,19 @@ mod linux {
         "studio.youtube.com",
         "kids.youtube.com",
         "tv.youtube.com",
+        "www.tiktok.com",
+        "tiktok.com",
+        "m.tiktok.com",
     ];
 
     pub fn prepare(shell: &Arc<Shell>, wv: &Webview) {
-        let Some(ca) = shell.core.ca() else { return };
+        let (Some(youtube), Some(tiktok)) = (shell.core.ca(), shell.core.tiktok_ca()) else { return };
         let pems: Vec<(String, String)> = HOSTS
             .iter()
-            .filter_map(|h| ca.leaf_pem(h).map(|p| (h.to_string(), p)))
+            .filter_map(|h| {
+                let ca = if h.ends_with("tiktok.com") { &tiktok } else { &youtube };
+                ca.leaf_pem(h).map(|p| (h.to_string(), p))
+            })
             .collect();
         let _ = wv.with_webview(move |w| {
             let view = w.inner();
@@ -200,7 +197,8 @@ mod linux {
                     .nth(1)
                     .and_then(|r| r.split(['/', ':', '?']).next())
                     .unwrap_or("");
-                if host == "youtube.com" || host.ends_with(".youtube.com") {
+                if host == "youtube.com" || host.ends_with(".youtube.com")
+                    || host == "tiktok.com" || host.ends_with(".tiktok.com") {
                     if let Some(ctx) = view.context() {
                         #[allow(deprecated)]
                         ctx.allow_tls_certificate_for_host(cert, host);

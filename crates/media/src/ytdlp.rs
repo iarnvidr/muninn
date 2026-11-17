@@ -327,6 +327,16 @@ pub fn plan_format(requested: Quality, has_ffmpeg: bool) -> Option<FormatPlan> {
     Some(FormatPlan { variant, selector, merge, downgraded })
 }
 
+/// TikTok normally exposes a single progressive vertical MP4, not YouTube's
+/// itag 18/140 or separate DASH video+audio streams. Retain the requested
+/// cache variant, but use its provider's actual formats.
+pub fn plan_format_source(requested: Quality, has_ffmpeg: bool, video_id: &str) -> Option<FormatPlan> {
+    if !video_id.starts_with("tt_") { return plan_format(requested, has_ffmpeg); }
+    if requested == Quality::None || (requested == Quality::Audio && !has_ffmpeg) { return None; }
+    Some(FormatPlan { variant:requested,
+        selector:"b[ext=mp4]/best".into(), merge:false, downgraded:false })
+}
+
 // --- command line and progress protocol -----------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -366,6 +376,9 @@ pub fn build_args(spec: &JobSpec) -> Vec<String> {
     if let Some(path) = &spec.cookie_file {
         a.extend(["--cookies".into(), path.display().to_string()]);
     }
+    if spec.video_id.starts_with("tt_") && spec.entry_id.ends_with(".audio") {
+        a.extend(["--extract-audio".into(), "--audio-format".into(), "m4a".into()]);
+    }
     if spec.merge {
         a.push("--merge-output-format".into());
         a.push("mp4".into());
@@ -383,7 +396,7 @@ pub fn build_args(spec: &JobSpec) -> Vec<String> {
         a.push(format!("{name}:{path}"));
     }
     a.push("--".into());
-    a.push(format!("https://www.youtube.com/watch?v={}", spec.video_id));
+    a.push(muninn_domain::util::source_video_url(&spec.video_id).expect("validated job video ID"));
     a
 }
 

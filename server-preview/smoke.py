@@ -43,10 +43,23 @@ async def main():
                 image=await browser.frame(state['tabs'][0]['id']);assert image[:2]==b'\xff\xd8'
                 await browser.action({'action':'new','url':'https://www.youtube.com/feed/trending'})
                 assert len((await browser.state())['tabs'])==2
+                # TikTok enters the same private Chromium -> native Core ->
+                # feed snapshot pipeline, never an embedded remote player.
+                tiktok={'id':'7668090902816017671','desc':'TikTok browser fixture',
+                        'author':{'uniqueId':'fixture'},'video':{'duration':15},'stats':{'playCount':3}}
+                tt_html='<html><title>TikTok fixture</title><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">'+json.dumps({'__DEFAULT_SCOPE__':{'webapp.feed':{'itemList':[tiktok]}}})+'</script></html>'
+                async def fulfill_tiktok(route):await route.fulfill(status=200,content_type='text/html',body=tt_html)
+                await browser.context.route('https://www.tiktok.com/**',fulfill_tiktok)
+                await browser.action({'action':'new','url':'https://www.tiktok.com/foryou'})
+                await asyncio.wait_for(browser.queue.join(),10)
+                assert browser.captured>=2, await browser.state()
                 await browser.sync_cookies()
                 assert (Path(d)/'youtube-cookies.json').stat().st_mode & 0o077 == 0
+                assert (Path(d)/'tiktok-cookies.json').stat().st_mode & 0o077 == 0
                 async with http.get(base+'/api/feeds',headers=headers) as r:
-                    assert r.status==200;assert len(await r.json())>=1
+                    assert r.status==200
+                    feeds=await r.json()
+                    assert any(f['kind']=='tiktok-for-you' for f in feeds),feeds
                 await browser.action({'action':'reset'})
                 assert not (Path(d)/'profile').exists()
             finally:await browser.close()
