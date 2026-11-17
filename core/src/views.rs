@@ -94,10 +94,13 @@ impl Core {
         let by_video = self.entries_by_video();
         let settings = self.video.settings();
         let stale = self.content.feed_is_stale(&snapshot.meta.kind, self.now(), settings.feed_refresh_minutes);
+        let source_title = (snapshot.meta.kind == "channel")
+            .then(|| crate::ingest::channel_snapshot_title(snapshot.meta.source_url.as_deref(), &snapshot.items))
+            .flatten();
         // "stale" describes the feed, not this particular (possibly old) snapshot.
         json!({
             "id": snapshot.meta.id, "kind": snapshot.meta.kind, "captured_at": snapshot.meta.captured_at,
-            "source_url": snapshot.meta.source_url, "query": snapshot.meta.query, "stale": stale,
+            "source_url": snapshot.meta.source_url, "query": snapshot.meta.query, "source_title": source_title, "stale": stale,
             "items": snapshot.items.iter().map(|i| self.item_view(i, &by_video)).collect::<Vec<_>>(),
         })
     }
