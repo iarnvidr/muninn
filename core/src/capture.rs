@@ -74,6 +74,9 @@ impl Core {
 
     fn capture_inner(&self, input: &CaptureInput<'_>, cap: &mut Capture) -> Result<(), String> {
         let body = decode_body(input.body, input.content_encoding)?;
+        if crate::tiktok::is_tiktok_url(input.url) {
+            return crate::tiktok::capture(self, input, cap, &body);
+        }
         let is_html = input.content_type.is_some_and(|c| c.to_ascii_lowercase().contains("text/html"));
         if is_html {
             if !is_watch_or_feed_html(input.url) {

@@ -1,7 +1,7 @@
 """Persistent server Chromium; only bounded captures and rendered UI cross out.
 
 No arbitrary script evaluation, CDP endpoint, filesystem upload, or download is
-exposed to clients. Google credentials remain in this dedicated server profile.
+exposed to clients. Provider credentials remain in this dedicated server profile.
 """
 from __future__ import annotations
 import asyncio
@@ -11,8 +11,9 @@ import os
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 from policy import (MAX_CAPTURE, MAX_TABS, WIDTH, HEIGHT, navigation_url, request_allowed,
-                    capture_kind, public_url, video_id, safe_request_body, key_allowed)
+                    capture_kind, public_url, video_id, safe_request_body, key_allowed, TIKTOK_HOSTS)
 
 STOP_MEDIA = """(() => {
  const stop = e => { if(e instanceof HTMLMediaElement) { e.pause(); e.muted=true; } };
@@ -86,7 +87,7 @@ class Browser:
     def _closed(self, ident, page):
         self.pages.pop(ident, None)
         url = public_url(page.url)
-        if url.startswith(("https://www.youtube.com/", "https://youtube.com/", "https://m.youtube.com/")):
+        if urlsplit(url).hostname in TIKTOK_HOSTS | {"www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
             try:
                 self.queue.put_nowait(("tab", {"tab_id": "server-" + ident, "url": url,
                     "video_id": video_id(url), "state": "closed"}, self.epoch))
@@ -97,7 +98,7 @@ class Browser:
         # SPA navigations also fire framenavigated; background watch tabs retain
         # state=open, so the existing Core OpenTab encounter fires normally.
         url = public_url(frame.url)
-        if not url or "youtube.com" not in url and "youtu.be" not in url:
+        if urlsplit(url).hostname not in TIKTOK_HOSTS | {"www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
             return
         item = ("tab", {"tab_id": "server-" + ident, "url": url, "video_id": video_id(url), "state": "open"}, self.epoch)
         try:
@@ -165,19 +166,20 @@ class Browser:
     async def _sync_cookies(self):
         if not self.context:
             return
-        rows = await self.context.cookies(["https://www.youtube.com", "https://youtube.com"])
-        cookies = [{"domain": c["domain"], "path": c["path"], "name": c["name"], "value": c["value"],
-                    "secure": c["secure"], "http_only": c["httpOnly"],
-                    "expires": int(c["expires"]) if c.get("expires", -1) > 0 else None}
-                   for c in rows if c["domain"].lstrip(".") == "youtube.com" or c["domain"].endswith(".youtube.com")]
-        target = self.root / "youtube-cookies.json"
-        temp = self.root / ".youtube-cookies.tmp"
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as file:
-            json.dump(cookies, file)
-            file.flush()
-            os.fsync(file.fileno())
-        os.replace(temp, target)
+        for domain, file_name in (("youtube.com", "youtube-cookies.json"), ("tiktok.com", "tiktok-cookies.json")):
+            rows = await self.context.cookies(["https://www." + domain, "https://" + domain])
+            cookies = [{"domain": c["domain"], "path": c["path"], "name": c["name"], "value": c["value"],
+                        "secure": c["secure"], "http_only": c["httpOnly"],
+                        "expires": int(c["expires"]) if c.get("expires", -1) > 0 else None}
+                       for c in rows if c["domain"].lstrip(".") == domain or c["domain"].endswith("." + domain)]
+            target = self.root / file_name
+            temp = self.root / ("." + file_name + ".tmp")
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as file:
+                json.dump(cookies, file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temp, target)
 
     async def _cookie_loop(self):
         while True:
@@ -228,6 +230,7 @@ class Browser:
                 import shutil
                 shutil.rmtree(self.root / "profile", ignore_errors=False) if (self.root / "profile").exists() else None
                 (self.root / "youtube-cookies.json").unlink(missing_ok=True)
+                (self.root / "tiktok-cookies.json").unlink(missing_ok=True)
             else:
                 page = self.page(command.get("tab"))
                 if kind == "navigate":

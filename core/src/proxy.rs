@@ -61,14 +61,15 @@ fn host_is(host: &str, domain: &str) -> bool {
 
 pub fn classify_host(host: &str) -> HostClass {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
-    if host_is(&host, "googlevideo.com") {
+    if host_is(&host, "googlevideo.com") || host_is(&host, "tiktokv.com") || host_is(&host, "byteoversea.com")
+        || (host_is(&host, "tiktok.com") && ["v16-", "v19-", "v20-", "v21-"].iter().any(|p| host.starts_with(p))) {
         return HostClass::Block;
     }
     // The sign-in flow on youtube.com's domain stays untouched.
     if host_is(&host, "accounts.youtube.com") {
         return HostClass::Tunnel;
     }
-    if host_is(&host, "youtube.com") {
+    if host_is(&host, "youtube.com") || host_is(&host, "tiktok.com") {
         return HostClass::Mitm;
     }
     HostClass::Tunnel
@@ -148,6 +149,7 @@ pub struct ProxyInfo {
     pub port: u16,
     pub url: String,
     pub ca_pem_path: std::path::PathBuf,
+    pub tiktok_ca_pem_path: std::path::PathBuf,
 }
 
 #[derive(Default, Clone)]
@@ -163,11 +165,13 @@ pub struct Proxy {
     pub addr: SocketAddr,
     pub stats: Arc<ProxyStats>,
     pub ca: Arc<Ca>,
+    pub tiktok_ca: Arc<Ca>,
 }
 
 struct State {
     core: Arc<Core>,
     ca: Arc<Ca>,
+    tiktok_ca: Arc<Ca>,
     stats: Arc<ProxyStats>,
     client: Client<hyper_rustls::HttpsConnector<HttpConnector<Resolver>>, RespBody>,
     /// Plain HTTP to loopback only (a web view that shares this proxy and talks to Muninn's own server).
@@ -216,6 +220,8 @@ impl Proxy {
     /// Binds 127.0.0.1:<random> and serves on `rt`.
     pub fn spawn(core: Arc<Core>, rt: &tokio::runtime::Handle, cfg: ProxyConfig) -> Result<Proxy> {
         let ca = Arc::new(Ca::load_or_create(&cfg.ca_dir)?);
+        let tiktok_ca_dir = cfg.ca_dir.join("tiktok");
+        let tiktok_ca = Arc::new(Ca::load_or_create_for(&tiktok_ca_dir, crate::ca::TIKTOK_DNS)?);
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;
@@ -239,7 +245,8 @@ impl Proxy {
         let client = Client::builder(TokioExecutor::new()).pool_max_idle_per_host(8).build(https);
 
         let local = Client::builder(TokioExecutor::new()).build(HttpConnector::new());
-        let state = Arc::new(State { core: core.clone(), ca: ca.clone(), stats: stats.clone(), client, local, upstream_override: cfg.upstream_override });
+        let state = Arc::new(State { core: core.clone(), ca: ca.clone(), tiktok_ca: tiktok_ca.clone(),
+            stats: stats.clone(), client, local, upstream_override: cfg.upstream_override });
         rt.spawn(async move {
             let listener = match tokio::net::TcpListener::from_std(listener) {
                 Ok(l) => l,
@@ -260,9 +267,10 @@ impl Proxy {
             }
         });
         *core.proxy_info.write().unwrap_or_else(|e| e.into_inner()) =
-            Some(ProxyInfo { port: addr.port(), url: format!("http://127.0.0.1:{}", addr.port()), ca_pem_path: Ca::cert_path(&cfg.ca_dir) });
-        core.set_proxy(stats.clone(), ca.clone());
-        Ok(Proxy { addr, stats, ca })
+            Some(ProxyInfo { port: addr.port(), url: format!("http://127.0.0.1:{}", addr.port()),
+                ca_pem_path: Ca::cert_path(&cfg.ca_dir), tiktok_ca_pem_path: Ca::cert_path(&tiktok_ca_dir) });
+        core.set_proxy(stats.clone(), ca.clone(), tiktok_ca.clone());
+        Ok(Proxy { addr, stats, ca, tiktok_ca })
     }
 }
 
@@ -332,7 +340,8 @@ async fn handle_outer(state: Arc<State>, req: Request<Incoming>) -> std::result:
         }
         HostClass::Mitm => {
             state.stats.mitm_connects.fetch_add(1, Ordering::Relaxed);
-            let config = match state.ca.server_config(&host) {
+            let ca = if host_is(&host, "tiktok.com") { &state.tiktok_ca } else { &state.ca };
+            let config = match ca.server_config(&host) {
                 Ok(c) => c,
                 Err(e) => return Ok(text_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
             };
@@ -400,7 +409,15 @@ async fn handle_mitm(state: Arc<State>, host: String, port: u16, req: Request<In
     let (mut parts, body) = req.into_parts();
     let path_and_query = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     let path = parts.uri.path().to_string();
-    let api = is_api_post(&parts.method, &path);
+    if host_is(&host, "tiktok.com") && (
+        path.starts_with("/aweme/v1/play") || path.starts_with("/video/tos/")
+        || path.ends_with(".mp4") || path.ends_with(".m3u8")
+        || parts.headers.get(hyper::header::ACCEPT).and_then(|v| v.to_str().ok())
+            .is_some_and(|a| a.starts_with("video/") || a.starts_with("audio/"))) {
+        state.stats.blocked.fetch_add(1, Ordering::Relaxed);
+        return Ok(text_response(StatusCode::FORBIDDEN, "provider media is blocked in the browser"));
+    }
+    let api = is_api_post(&parts.method, &path) || (host_is(&host, "tiktok.com") && crate::tiktok::capturable(&format!("https://{host}{path}"), false));
     let html = wants_html(&parts.method, &parts.headers);
     let authority = if port == 443 { host.clone() } else { format!("{host}:{port}") };
     let uri: Uri = match format!("https://{authority}{path_and_query}").parse() {

@@ -725,8 +725,8 @@ impl Core {
         let bin = tools.ytdlp.path.clone().ok_or_else(|| Failure::new(FailureReason::ToolsPending, "yt-dlp is not installed"))?;
         let mut args: Vec<String> =
             ["--ignore-config", "--no-playlist", "--no-warnings", "-f", selector, "-J"].iter().map(|s| s.to_string()).collect();
-        let cookies = self.youtube_cookie_file()
-            .map_err(|_| Failure::new(FailureReason::HelperExit, "Could not prepare the YouTube session"))?;
+        let cookies = if video_id.starts_with("tt_") { self.tiktok_cookie_file() } else { self.youtube_cookie_file() }
+            .map_err(|_| Failure::new(FailureReason::HelperExit, "Could not prepare the provider session"))?;
         if let Some(jar) = &cookies { args.extend(jar.args()); }
         if let Some(dir) = tools.ffmpeg_dir() {
             args.push("--ffmpeg-location".into());
@@ -737,7 +737,7 @@ impl Core {
             args.push(format!("{name}:{path}"));
         }
         args.push("--".into());
-        args.push(format!("https://www.youtube.com/watch?v={video_id}"));
+        args.push(crate::util::source_video_url(video_id).expect("validated stream ID"));
         let mut child = Command::new(&bin)
             .args(&args)
             .env("PATH", search_path())
@@ -885,7 +885,9 @@ impl Core {
         if running.cancel.load(Ordering::SeqCst) {
             return Outcome::Canceled;
         }
-        let selector = selector_for(watch_height, audio_only);
+        let selector = if job.video_id.starts_with("tt_") {
+            "b[ext=mp4][protocol=https]/b[ext=mp4][protocol=http]/b".to_string()
+        } else { selector_for(watch_height, audio_only) };
         let resolve_started = Instant::now();
         let resolved = match self.resolve_with_retry(job, &selector, &running.cancel, tuning) {
             Ok(r) => r,

@@ -122,7 +122,8 @@ async def lifecycle(app):
     if not token_file.is_file():
         raise RuntimeError("Missing Muninn access-token file")
     env = {**os.environ, "MUNINN_WEB_BIND": "127.0.0.1:47872", "MUNINN_BROWSER_CAPTURE": "1",
-           "MUNINN_BROWSER_COOKIE_FILE": str(private / "youtube-cookies.json")}
+           "MUNINN_BROWSER_COOKIE_FILE": str(private / "youtube-cookies.json"),
+           "MUNINN_BROWSER_TIKTOK_COOKIE_FILE": str(private / "tiktok-cookies.json")}
     child = await asyncio.create_subprocess_exec("muninn-web", env=env)
     http = ClientSession(timeout=ClientTimeout(total=None, connect=10, sock_read=60), auto_decompress=False)
     app["http"] = http

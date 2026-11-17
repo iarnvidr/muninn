@@ -19,8 +19,10 @@ use std::sync::{Arc, Mutex};
 use time::{Duration, OffsetDateTime};
 
 /// The DNS subtrees the CA may issue for. The proxy only ever decrypts
-/// `*.youtube.com`; ytimg is permitted for future use, nothing else is.
+/// YouTube and TikTok use separate CAs. Existing macOS installs keep their
+/// already-trusted YouTube CA; TikTok never expands that CA's authority.
 pub const PERMITTED_DNS: &[&str] = &["youtube.com", "ytimg.com"];
+pub const TIKTOK_DNS: &[&str] = &["tiktok.com"];
 const CA_VALID_DAYS: i64 = 3650;
 /// macOS refuses TLS leaf certificates valid for more than 825 days; stay far below.
 const LEAF_VALID_DAYS: i64 = 30;
@@ -32,6 +34,7 @@ pub struct Ca {
     dir: PathBuf,
     leaves: Mutex<HashMap<String, Arc<rustls::ServerConfig>>>,
     leaf_pems: Mutex<HashMap<String, String>>,
+    permitted_dns: Vec<String>,
 }
 
 fn rc<T>(r: std::result::Result<T, rcgen::Error>) -> Result<T> {
@@ -44,11 +47,15 @@ impl Ca {
     }
 
     pub fn load_or_create(dir: &Path) -> Result<Ca> {
+        Self::load_or_create_for(dir, PERMITTED_DNS)
+    }
+
+    pub fn load_or_create_for(dir: &Path, permitted: &[&str]) -> Result<Ca> {
         std::fs::create_dir_all(dir)?;
         let cert_path = Ca::cert_path(dir);
         let key_path = dir.join("ca-key.pem");
         if let (Ok(cert_pem), Ok(key_pem)) = (std::fs::read_to_string(&cert_path), std::fs::read_to_string(&key_path)) {
-            if let Ok(ca) = Ca::from_pem(dir, cert_pem, &key_pem) {
+            if let Ok(ca) = Ca::from_pem(dir, cert_pem, &key_pem, permitted) {
                 return Ok(ca);
             }
         }
@@ -61,7 +68,7 @@ impl Ca {
         params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         params.name_constraints = Some(NameConstraints {
-            permitted_subtrees: PERMITTED_DNS.iter().map(|d| GeneralSubtree::DnsName((*d).to_string())).collect(),
+            permitted_subtrees: permitted.iter().map(|d| GeneralSubtree::DnsName((*d).to_string())).collect(),
             excluded_subtrees: vec![],
         });
         let now = OffsetDateTime::now_utc();
@@ -71,10 +78,10 @@ impl Ca {
         let cert_pem = cert.pem();
         write_private(&key_path, &key.serialize_pem())?;
         std::fs::write(&cert_path, &cert_pem)?;
-        Ca::from_pem(dir, cert_pem, &key.serialize_pem())
+        Ca::from_pem(dir, cert_pem, &key.serialize_pem(), permitted)
     }
 
-    fn from_pem(dir: &Path, cert_pem: String, key_pem: &str) -> Result<Ca> {
+    fn from_pem(dir: &Path, cert_pem: String, key_pem: &str, permitted: &[&str]) -> Result<Ca> {
         let key = rc(KeyPair::from_pem(key_pem))?;
         let der = pem_to_der(&cert_pem).ok_or_else(|| Error::other("CA certificate is not valid PEM"))?;
         // Reject an expired CA so a fresh one is generated.
@@ -82,7 +89,8 @@ impl Ca {
         if parsed.validity().not_after.timestamp() < OffsetDateTime::now_utc().unix_timestamp() + 30 * 86400 {
             return Err(Error::other("CA certificate is about to expire"));
         }
-        Ok(Ca { cert_pem, cert_der: der, key, dir: dir.to_path_buf(), leaves: Mutex::new(HashMap::new()), leaf_pems: Mutex::new(HashMap::new()) })
+        Ok(Ca { cert_pem, cert_der: der, key, dir: dir.to_path_buf(), leaves: Mutex::new(HashMap::new()),
+            leaf_pems: Mutex::new(HashMap::new()), permitted_dns: permitted.iter().map(|s| (*s).to_owned()).collect() })
     }
 
     pub fn cert_der(&self) -> &[u8] {
@@ -96,6 +104,9 @@ impl Ca {
     /// A TLS server config for `host`, with a freshly issued (and cached) leaf.
     /// Only advertises HTTP/1.1.
     pub fn server_config(&self, host: &str) -> Result<Arc<rustls::ServerConfig>> {
+        if !self.permitted_dns.iter().any(|d| host == d || host.strip_suffix(d.as_str()).is_some_and(|s| s.ends_with('.'))) {
+            return Err(Error::bad("host outside the capture certificate name constraints"));
+        }
         if let Some(c) = self.leaves.lock().unwrap_or_else(|e| e.into_inner()).get(host) {
             return Ok(c.clone());
         }

@@ -1,6 +1,7 @@
 //! Native browser credentials, never serialized into IPC, settings or diagnostics.
 use crate::{Core, Result};
 use std::{io::Write, path::{Path, PathBuf}};
+use serde::Deserialize;
 
 pub type CookieReader = std::sync::Arc<dyn Fn() -> Result<Vec<YoutubeCookie>> + Send + Sync>;
 
@@ -26,8 +27,9 @@ pub fn youtube_login_present(cookies: &[YoutubeCookie]) -> bool {
         && matches!(c.name.as_str(), "SID" | "SAPISID" | "__Secure-1PSID" | "__Secure-3PSID"))
 }
 
-fn cookie_line(cookie: &YoutubeCookie) -> Option<String> {
-    if !youtube_domain(&cookie.domain) || cookie.name.is_empty() || !cookie.path.starts_with('/')
+fn cookie_line_for(cookie: &YoutubeCookie, domain: &str) -> Option<String> {
+    let host = cookie.domain.trim_start_matches('.');
+    if !(host == domain || host.ends_with(&format!(".{domain}"))) || cookie.name.is_empty() || !cookie.path.starts_with('/')
         || [&cookie.domain, &cookie.path, &cookie.name, &cookie.value].iter()
             .any(|s| s.chars().any(char::is_control)) {
         return None;
@@ -37,6 +39,15 @@ fn cookie_line(cookie: &YoutubeCookie) -> Option<String> {
         if cookie.domain.starts_with('.') { "TRUE" } else { "FALSE" }, cookie.path,
         if cookie.secure { "TRUE" } else { "FALSE" }, cookie.expires.unwrap_or(0),
         cookie.name, cookie.value))
+}
+
+fn cookie_line(cookie: &YoutubeCookie) -> Option<String> { cookie_line_for(cookie, "youtube.com") }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserCookie {
+    domain: String, path: String, name: String, value: String,
+    secure: bool, http_only: bool, expires: Option<i64>,
 }
 
 /// A separate private jar for each helper. yt-dlp can rewrite its jar on exit;
@@ -53,6 +64,33 @@ impl Drop for CookieFile {
 }
 
 impl Core {
+    /// The TikTok session lives in a different private browser jar. Never hand
+    /// TikTok cookies to a YouTube download (or vice versa). This path is set by
+    /// the server launcher and is deliberately absent from public APIs.
+    pub(crate) fn tiktok_cookie_file(&self) -> Result<Option<CookieFile>> {
+        let Some(path) = std::env::var_os("MUNINN_BROWSER_TIKTOK_COOKIE_FILE").map(PathBuf::from) else { return Ok(None); };
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(crate::Error::other("TikTok browser session unavailable")),
+        };
+        if !meta.file_type().is_file() || meta.len() > 65536 {
+            return Err(crate::Error::other("TikTok browser session invalid"));
+        }
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.permissions().mode() & 0o077 != 0 { return Err(crate::Error::other("TikTok browser session is not private")); }
+        }
+        let data = std::fs::read(&path).map_err(|_| crate::Error::other("TikTok browser session unavailable"))?;
+        let rows: Vec<BrowserCookie> = serde_json::from_slice(&data).map_err(|_| crate::Error::other("TikTok browser session invalid"))?;
+        if rows.len() > 512 { return Err(crate::Error::other("Too many TikTok browser cookies")); }
+        let text: String = rows.into_iter().filter_map(|c| cookie_line_for(&YoutubeCookie {
+            domain:c.domain, path:c.path, name:c.name, value:c.value,
+            secure:c.secure, http_only:c.http_only, expires:c.expires,
+        }, "tiktok.com")).collect();
+        write_cookie_file(&text)
+    }
+
     /// Only native code calls this; a delayed cookie read cannot restore a
     /// signed-out or replaced account's credentials.
     pub fn observe_youtube_cookies(&self, key: &str, changed_at: i64, cookies: Vec<YoutubeCookie>) -> bool {
@@ -82,6 +120,11 @@ impl Core {
         };
         // Presence only, never names/values/identifiers or the cookie file path.
         self.log_event("info", "youtube.session", serde_json::json!({"source":source,"jar_supplied":!text.is_empty(),"login_present":login_cookies,"helper_version":self.tools().ytdlp.version}));
+        write_cookie_file(&text)
+    }
+}
+
+fn write_cookie_file(text: &str) -> Result<Option<CookieFile>> {
         if text.is_empty() { return Ok(None); }
         let directory = std::env::temp_dir().join(format!("muninn-session-{}", uuid::Uuid::new_v4()));
         let mut builder = std::fs::DirBuilder::new();
@@ -101,7 +144,6 @@ impl Core {
         file.write_all(b"# Netscape HTTP Cookie File\n")?;
         file.write_all(text.as_bytes())?;
         Ok(Some(jar))
-    }
 }
 
 #[cfg(test)]

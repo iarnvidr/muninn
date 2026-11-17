@@ -4,26 +4,26 @@
   const node = (tag, text, cls) => {const n=document.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n;};
   const panel=node('section',null,'panel remote-browser');panel.hidden=true;
   const tabs=document.querySelector('nav.tabs');
-  const browse=node('button','YouTube browser');browse.type='button';browse.setAttribute('aria-pressed','false');tabs.append(browse);
+  const browse=node('button','Source browser');browse.type='button';browse.setAttribute('aria-pressed','false');tabs.append(browse);
   tabs.after(panel);
   let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0;
-  const heading=node('h2','YouTube · server browser');
-  const explanation=node('p','Browse the real YouTube site on your server. Feeds and opened watch tabs are captured into Muninn. Video playback remains in On this device.','hint');
-  const status=node('p','Start the browser to create a separate server-side YouTube session.','hint');status.setAttribute('role','status');
+  const heading=node('h2','YouTube + TikTok · server browser');
+  const explanation=node('p','Browse YouTube or TikTok on the server. Both feed captures and video URLs enter the same Muninn cache and local-only player; provider media is blocked in the browsing canvas.','hint');
+  const status=node('p','Start the private browser to capture feeds and opened videos.','hint');status.setAttribute('role','status');
   const controls=node('div',null,'actions');
   const makeButton=(title,fn)=>{const b=node('button',title);b.type='button';b.addEventListener('click',()=>fn().catch(error=>{status.textContent=error.message;}));return b;};
   const tabBar=node('div',null,'tabs compact');tabBar.setAttribute('aria-label','Server browser tabs');
   const navigation=node('form',null,'input-row');
-  const url=node('input');url.type='url';url.placeholder='https://www.youtube.com/';url.setAttribute('aria-label','YouTube URL');
+  const url=node('input');url.type='url';url.placeholder='https://www.youtube.com/ or https://www.tiktok.com/';url.setAttribute('aria-label','YouTube or TikTok URL');
   const go=node('button','Open');go.type='submit';navigation.append(url,go);
-  const image=node('img');image.alt='Interactive server-side YouTube browser';image.tabIndex=0;image.width=1280;image.height=800;image.className='remote-frame';image.hidden=true;
+  const image=node('img');image.alt='Interactive server-side provider browser';image.tabIndex=0;image.width=1280;image.height=800;image.className='remote-frame';image.hidden=true;
   const input=node('form',null,'input-row');
   const text=node('input');text.type='password';text.autocomplete='off';text.placeholder='Type into the selected browser field';text.setAttribute('aria-label','Text sent to the server browser');
   const send=node('button','Type text');send.type='submit';input.append(text,send);
   const keyboard=node('div',null,'actions');
   for(const key of ['Tab','Enter','Backspace','Escape'])keyboard.append(makeButton(key,()=>action('key',{key})));
   keyboard.append(makeButton('Scroll up',()=>action('scroll',{dy:-600})),makeButton('Scroll down',()=>action('scroll',{dy:600})));
-  const warning=node('p','Single-owner preview: signing into Google stores that session on this server, not on your Mac or phone. Everyone allowed into this preview and paired to Muninn can operate it. Reset removes the server browser profile.','hint');
+  const warning=node('p','Single-owner preview: signing into Google or TikTok stores those sessions on this server, not on your Mac or phone. Anyone allowed into this preview and paired to Muninn can operate it. Reset removes both sessions.','hint');
   panel.append(heading,explanation,controls,tabBar,navigation,image,input,keyboard,status,warning);
 
   async function request(path, body) {
@@ -42,7 +42,7 @@
     }
     const tab=state.tabs.find(t=>t.id===active);
     if(document.activeElement!==url)url.value=tab?.url||'https://www.youtube.com/';
-    status.textContent=state.running?`${state.captured} captures · ${state.dropped} skipped · ${state.failures} capture errors`:'Browser stopped. Start it to browse YouTube.';
+    status.textContent=state.running?`${state.captured} captures · ${state.dropped} skipped · ${state.failures} capture errors`:'Browser stopped. Start it to browse YouTube or TikTok.';
     image.hidden=!tab;
   }
   function action(name, extra={}) {
@@ -72,8 +72,10 @@
   }
   controls.append(makeButton('Start browser',()=>action('start')),makeButton('New tab',()=>action('new',{url:'https://www.youtube.com/'})),
     makeButton('Subscriptions',()=>action(active?'navigate':'new',{url:'https://www.youtube.com/feed/subscriptions'})),
+    makeButton('TikTok For You',()=>action(active?'navigate':'new',{url:'https://www.tiktok.com/foryou'})),
+    makeButton('TikTok Following',()=>action(active?'navigate':'new',{url:'https://www.tiktok.com/following'})),
     makeButton('Back',()=>action('back')),makeButton('Reload',()=>action('reload')),makeButton('Close tab',()=>action('close')),
-    makeButton('Reset server browser',async()=>{if(confirm('Remove the server browser profile and Google sign-in? Downloaded videos are kept.'))await action('reset');}));
+    makeButton('Reset server browser',async()=>{if(confirm('Remove the server browser profile and YouTube/TikTok sign-in? Downloaded videos are kept.'))await action('reset');}));
   navigation.addEventListener('submit',event=>{event.preventDefault();action(active?'navigate':'new',{url:url.value}).catch(e=>status.textContent=e.message);});
   input.addEventListener('submit',event=>{event.preventDefault();const value=text.value;text.value='';action('text',{text:value}).catch(e=>status.textContent=e.message);});
   image.addEventListener('click',event=>{const r=image.getBoundingClientRect();action('click',{x:(event.clientX-r.left)*1280/r.width,y:(event.clientY-r.top)*800/r.height}).catch(e=>status.textContent=e.message);image.focus();});

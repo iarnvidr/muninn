@@ -19,6 +19,7 @@ mod featured;
 mod account;
 pub mod youtube_session;
 pub mod capture;
+pub mod tiktok;
 pub mod ca;
 pub use muninn_storage::content;
 pub mod engine;
