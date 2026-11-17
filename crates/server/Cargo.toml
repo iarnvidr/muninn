@@ -5,11 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Muninn embedded localhost HTTP service and headless service adapter"
+description = "Muninn embedded localhost HTTP service and opt-in server/PWA adapter"
 
 [[bin]]
 name = "muninn-service"
 path = "src/bin/muninn-service.rs"
+
+[[bin]]
+name = "muninn-web"
+path = "src/bin/muninn-web.rs"
 
 [dependencies]
 muninn-core = { path = "../../core" }
@@ -20,8 +24,8 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "time", "macros", "sync"] }
+tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
-tower = { version = "0.5", features = ["util"] }

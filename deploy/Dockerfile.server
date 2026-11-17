@@ -1,0 +1,23 @@
+# Separate from macOS packaging. Same Rust toolchain/ABI as existing Dagger checks.
+FROM rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS build
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN cargo build --locked --release -p muninn-server --bin muninn-web
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10001 --create-home muninn \
+    && mkdir -p /var/lib/muninn && chown muninn:muninn /var/lib/muninn
+COPY --from=build /src/target/release/muninn-web /usr/local/bin/muninn-web
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/muninn/
+USER 10001:10001
+ENV MUNINN_DATA_DIR=/var/lib/muninn \
+    MUNINN_WEB_BIND=0.0.0.0:8080 \
+    MUNINN_WEB_TOKEN_FILE=/run/secrets/muninn_web_token
+VOLUME ["/var/lib/muninn"]
+EXPOSE 8080
+# Public origin must be supplied explicitly. No default password or public bind
+# without a configured HTTPS origin. The existing core bootstraps yt-dlp tools.
+ENTRYPOINT ["muninn-web"]

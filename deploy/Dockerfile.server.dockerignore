@@ -1,0 +1,7 @@
+.git
+**/target
+**/node_modules
+**/__pycache__
+deploy/secrets
+.env
+**/.env
