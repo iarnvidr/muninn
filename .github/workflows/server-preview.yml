@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           image="$(dagger -m ci/dagger/server-preview api call publish --revision "$GITHUB_SHA" \
-            --address "ghcr.io/iarnvidr/muninn-server:preview-$GITHUB_SHA" --username "$GITHUB_ACTOR" --password env:GHCR_TOKEN | tail -n1)"
+            --address "ghcr.io/iarnvidr/muninn-server:preview-$GITHUB_SHA" --username "$GITHUB_ACTOR" --password env://GHCR_TOKEN | tail -n1)"
           IMAGE="$image" python3 - <<'PY'
           import json, os, re
           image=os.environ['IMAGE']
