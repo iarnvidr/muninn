@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "muninn"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "block2",
  "core-foundation 0.10.1",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-capture"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "muninn-domain",
  "serde",
@@ -2281,7 +2281,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-cli"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "axum",
  "muninn-core",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-client"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "muninn-domain",
  "muninn-navigation",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-core"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "bytes",
  "flate2",
@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-domain"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "libc",
  "rusqlite",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-media"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "axum",
  "futures-util",
@@ -2367,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-navigation"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "muninn-capture",
  "muninn-domain",
@@ -2377,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-policy"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "muninn-domain",
  "serde",
@@ -2386,7 +2386,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-protocol"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "muninn-domain",
  "serde",
@@ -2395,7 +2395,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-server"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "axum",
  "futures-util",
@@ -2412,7 +2412,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-storage"
-version = "0.2.28"
+version = "0.2.29"
 dependencies = [
  "flate2",
  "muninn-domain",
@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-ui-assets"
-version = "0.2.28"
+version = "0.2.29"
 
 [[package]]
 name = "ndk"
