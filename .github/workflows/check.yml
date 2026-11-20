@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -30,7 +30,7 @@ jobs:
       # call shares the engine's cached image/apt stage with the later checks.
       - name: Resolve the Dagger compiler and system ABI
         id: crate-abi
-        uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
+        uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77
         with:
           version: 1.0.0-beta.25
           verb: call
@@ -117,7 +117,7 @@ jobs:
             --output "$RUNNER_TEMP/muninn-crate-packages"
       - name: Retain individually compiled crates for trusted GHCR publication
         if: ${{ steps.crate-export.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: muninn-crates-linux-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/muninn-crate-packages/*
@@ -150,7 +150,7 @@ jobs:
           fi
       - name: Retain failing desktop crate log
         if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: muninn-desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/muninn-check-logs/desktop-tests.log
@@ -177,7 +177,7 @@ jobs:
       # GitHub Packages, including when an individual crate test failed.
       - name: Retain Linux compilation snapshot for GHCR publication
         if: ${{ always() && steps.cargo-archive.outcome == 'success' && !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: muninn-linux-cargo-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/muninn-linux-cargo-snapshot.tar.zst
@@ -189,7 +189,7 @@ jobs:
         run: python3 build/release_candidate.py create-check --root "$GITHUB_WORKSPACE"
       - name: Upload Dagger check receipt
         if: ${{ github.event_name == 'pull_request' && steps.dagger-checks.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: muninn-check-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: check-candidate.json
