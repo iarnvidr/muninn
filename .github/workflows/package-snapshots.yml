@@ -28,7 +28,7 @@ jobs:
       group: ghcr-muninn-publisher
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Validate origin, identity, artifact and immutable tags
@@ -162,7 +162,7 @@ jobs:
       group: ghcr-muninn-crate-publisher
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Validate source workflow metadata
@@ -199,7 +199,7 @@ jobs:
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
       - name: Read original test-merge sources as data only
         if: steps.crate-source.outcome == 'success'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.crate-source.outputs.sha }}
           # Parent verification requires the original PR merge's second
