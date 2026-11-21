@@ -85,7 +85,7 @@
     const actions=el('div',undefined,'pwa-card-actions');
     const saved=state.device.find(d=>d.id===record.id);
     if(!device&&M.complete(record))actions.append(button('Play from server',()=>playServer(record)));
-    if(device||saved)actions.append(button('Play offline',()=>play(device?record:saved)));
+    if(device||saved)actions.append(button('Play local copy',()=>play(device?record:saved)));
     else if(M.complete(record))actions.append(button('Save to device',()=>saveDevice(record)));
     if(device)actions.append(button('Remove copy',async()=>{
       if(state.playing===record.id)stopPlayer();await DB.remove(record.id);await loadDevice();render();
@@ -93,11 +93,11 @@
     if(!device&&['failed','canceled'].includes(record.status))actions.append(button('Retry download',async()=>{
       await api('/api/entries/'+encodeURIComponent(record.id)+'/retry',{method:'POST'});await refresh();
     }));
-    if(!device&&['queued','downloading'].includes(record.status))actions.append(button('Cancel download',async()=>{
+    if(!device&&['queued','downloading'].includes(record.status))actions.append(button('Cancel server download',async()=>{
       await api('/api/entries/'+encodeURIComponent(record.id)+'/cancel',{method:'POST'});await refresh();
     }));
     if(!device&&!record.id)actions.append(button('Download on server',()=>queue(record.video_id,record.title)));
-    actions.append(button('Copy URL',()=>copy(M.sourceURL(record.source_url)||M.videoURL(record.video_id))));
+    actions.append(button('Copy video URL',()=>copy(M.sourceURL(record.source_url)||M.videoURL(record.video_id))));
     info.append(actions);article.append(info);return article;
   }
   function render() {
