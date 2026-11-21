@@ -4,7 +4,7 @@
 'use strict';
 const CACHE = 'muninn-pwa-shell-v2';
 const SHELL = ['/app/','/app/index.html','/app/style.css','/app/desktop.css','/app/model.js','/app/store.js',
-  '/app/app.js','/app/manifest.webmanifest','/app/icon.svg','/app/icon-192.png','/app/icon-512.png'];
+  '/app/app.js','/app/manifest.webmanifest','/app/icon.svg','/app/raven.png','/app/icon-192.png','/app/icon-512.png'];
 self.addEventListener('install', event => event.waitUntil((async()=>{
   const cache=await caches.open(CACHE);
   // The owner-only reverse proxy needs the existing same-origin login cookie
