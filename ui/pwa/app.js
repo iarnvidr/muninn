@@ -104,7 +104,7 @@
     for(const tab of document.querySelectorAll('[data-view]')){
       const selected=tab.dataset.view===state.view;
       tab.setAttribute('aria-pressed',String(selected));
-      if(tab.classList.contains('side-item')){
+      if(typeof tab.className==='string'&&tab.className.split(/\s+/).includes('side-item')){
         if(selected)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
       }
     }
