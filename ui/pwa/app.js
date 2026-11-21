@@ -37,6 +37,21 @@
     player.onloadedmetadata=()=>{if(record.position_seconds>0&&record.position_seconds<player.duration)player.currentTime=record.position_seconds;};
     try {await player.play();} catch {notice('Copy ready. Press Play in the player; this browser may require a direct tap.');}
   }
+  // The server's authenticated /media route supports byte ranges. A completed
+  // video can play immediately from Muninn without storing a second local copy.
+  // Offline playback remains the explicit IndexedDB path in play().
+  async function playServer(record) {
+    if(!state.signedIn||!M.complete(record)||!record.id)
+      throw new Error('A completed server video and an active session are required.');
+    stopPlayer();
+    const player=$('#player');
+    player.onloadedmetadata=null;
+    player.src='/media/'+encodeURIComponent(record.id);
+    state.playing=null;
+    $('#playing-title').textContent=record.title||record.video_id;
+    $('#player-panel').hidden=false;
+    try{await player.play();}catch{notice('Video ready. Press Play to start streaming from your server.');}
+  }
   async function loadDevice() {
     try{state.device=await DB.list();$('#device-count').textContent=state.device.length;}
     catch(error){state.device=[];notice('Device storage: '+error.message,true);}
@@ -69,7 +84,8 @@
     if(record.error)info.append(el('p',record.error,'error'));
     const actions=el('div',undefined,'pwa-card-actions');
     const saved=state.device.find(d=>d.id===record.id);
-    if(device||saved)actions.append(button('Play local copy',()=>play(device?record:saved)));
+    if(!device&&M.complete(record))actions.append(button('Play from server',()=>playServer(record)));
+    if(device||saved)actions.append(button('Play offline',()=>play(device?record:saved)));
     else if(M.complete(record))actions.append(button('Save to device',()=>saveDevice(record)));
     if(device)actions.append(button('Remove copy',async()=>{
       if(state.playing===record.id)stopPlayer();await DB.remove(record.id);await loadDevice();render();
@@ -209,7 +225,7 @@
     try{await DB.clear();await api('/api/session',{method:'DELETE'});state.entries=[];state.feeds=[];state.feed=null;state.device=[];$('#device-count').textContent='0';setConnection(false);render();notice('Signed out; device copies removed.');}
     catch(error){notice('Could not finish signing out: '+error.message+'. Retry when the server is reachable.',true);}
   });
-  $('#player').addEventListener('error',()=>notice('This device cannot play the saved codec. Try a different server quality or audio download; no remote stream was substituted.',true));
+  $('#player').addEventListener('error',()=>notice('This browser cannot play this codec or the video is unavailable. Try another quality or download a device copy.',true));
   $('#player').addEventListener('timeupdate',()=>{if(state.playing&&Date.now()-progressWrite>5000){progressWrite=Date.now();const saved=state.device.find(d=>d.id===state.playing);if(saved)saved.position_seconds=$('#player').currentTime;DB.position(state.playing,$('#player').currentTime).catch(()=>{});}});
   addEventListener('offline',()=>{setConnection(false);notice('Offline. Device copies remain available.');});
   addEventListener('online',refresh);
