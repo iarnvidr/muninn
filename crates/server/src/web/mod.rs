@@ -134,6 +134,8 @@ fn asset(file: &str) -> Response {
         "model.js" => ("text/javascript; charset=utf-8", include_bytes!("../../../../ui/pwa/model.js")),
         "store.js" => ("text/javascript; charset=utf-8", include_bytes!("../../../../ui/pwa/store.js")),
         "style.css" => ("text/css; charset=utf-8", include_bytes!("../../../../ui/pwa/style.css")),
+        // Serve the desktop stylesheet verbatim: the PWA must share the native shell.
+        "desktop.css" => ("text/css; charset=utf-8", include_bytes!("../../../../ui/style.css")),
         "sw.js" => ("text/javascript; charset=utf-8", include_bytes!("../../../../ui/pwa/sw.js")),
         "manifest.webmanifest" => ("application/manifest+json", include_bytes!("../../../../ui/pwa/manifest.webmanifest")),
         "icon.svg" => ("image/svg+xml", include_bytes!("../../../../ui/pwa/icon.svg")),
