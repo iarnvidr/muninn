@@ -82,7 +82,7 @@
         <form id="queue-form">
           <div class="pwa-download-title"><h2>Add a video</h2><p class="muted">Download with the same cache engine as the desktop application.</p></div>
           <label for="url">YouTube or TikTok URL</label>
-          <div class="pwa-input-row"><input id="url" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube or TikTok video URL" required><button type="submit" class="primary">Download</button></div>
+          <div class="pwa-input-row"><input id="url" type="text" inputmode="url" autocomplete="off" placeholder="Paste a YouTube or TikTok video URL" required><button type="submit" class="primary">Download</button></div>
           <fieldset class="pwa-quality"><legend>Quality</legend>
             <label><input type="radio" name="quality" value="360">360p</label>
             <label><input type="radio" name="quality" value="720" checked>720p</label>
@@ -94,7 +94,7 @@
       <section id="player-panel" class="pwa-panel pwa-player" hidden>
         <div class="section-heading"><h2 id="playing-title">Player</h2><button type="button" id="close-player">Close</button></div>
         <div class="player"><div class="pv-stage"><video id="player" class="pv-video" controls playsinline preload="metadata"></video></div></div>
-        <p class="small-note muted">This playback uses your completed offline device copy, not an upstream stream.</p>
+        <p class="small-note muted">Play a completed server copy immediately, or save a video on this device for offline playback.</p>
       </section>
       <section id="transfer-panel" class="pwa-panel" hidden>
         <div class="section-heading"><h2>Saving on this device</h2><button type="button" id="cancel-transfer">Cancel</button></div>
