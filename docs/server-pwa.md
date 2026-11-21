@@ -23,7 +23,7 @@ are unchanged. There is no migration or automatic cutover.
 - Explicit **Save to device** transfers for completed server files. The metadata
   and full media Blob are committed atomically in IndexedDB. **Play local copy**
   uses only that persisted Blob, never an upstream or server streaming fallback.
-- Installable, responsive shell, offline device library, local playback position,
+- Installable, responsive shell sharing the native desktop navigation, stylesheet and library-card structure; offline device library, local playback position,
   copy-URL buttons and visible feed filters (no kind dropdown).
 - Per-file device-copy limit of 512 MiB, cancellation, size validation, quota
   checks and user-requested persistent storage. Server downloads are not limited
@@ -112,7 +112,7 @@ verified immutable digest for rollout.
 ## Access boundary
 
 The browser-facing adapter exposes only library/feed reads, cache requests,
-retry/cancel/keep, completed file reads, and thumbnails. It dispatches these into
+retry/cancel/keep, authenticated range reads of completed files, and thumbnails. It dispatches these into
 the existing localhost router **in-process after authentication**, without opening
 an internal TCP server or capture proxy. The core's original Host/token checks
 are left intact. The gateway deliberately does not expose local-path imports,
@@ -159,7 +159,7 @@ traffic is blocked in the browsing canvas. Login and region-restricted media
 may require an active server-side account. The TikTok feed thumbnail URL is
 recorded but not automatically fetched from an untrusted, redirecting CDN.
 
-Still deferred: full desktop UI/graph parity, automatic desktop-server
+Still deferred: full desktop feature/graph parity, automatic desktop-server
 synchronization, resumable transfers, device-independent playback history and
 background notifications. The native macOS app continues to work independently;
 its TikTok interception uses a **separate name-constrained CA** so existing
