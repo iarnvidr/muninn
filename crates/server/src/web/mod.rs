@@ -120,6 +120,8 @@ pub fn router(core: Arc<Core>, config: Config) -> Router {
         .route("/app", get(|| async { Redirect::permanent("/app/") }))
         .route("/app/", get(|| async { asset("index.html") }))
         .route("/app/{file}", get(|axum::extract::Path(file): axum::extract::Path<String>| async move { asset(&file) }))
+        // Fonts referenced by the real desktop CSS; all other native /ui routes stay blocked.
+        .route("/ui/{file}", get(|axum::extract::Path(file): axum::extract::Path<String>| async move { desktop_font(&file) }))
         .route("/api/session", get(session).post(login).delete(logout))
         .fallback(bridge)
         .layer(DefaultBodyLimit::max(16 * 1024))
@@ -139,11 +141,24 @@ fn asset(file: &str) -> Response {
         "sw.js" => ("text/javascript; charset=utf-8", include_bytes!("../../../../ui/pwa/sw.js")),
         "manifest.webmanifest" => ("application/manifest+json", include_bytes!("../../../../ui/pwa/manifest.webmanifest")),
         "icon.svg" => ("image/svg+xml", include_bytes!("../../../../ui/pwa/icon.svg")),
+        "raven.png" => ("image/png", include_bytes!("../../../../ui/raven.png")),
         "icon-192.png" => ("image/png", include_bytes!("../../../../ui/pwa/icon-192.png")),
         "icon-512.png" => ("image/png", include_bytes!("../../../../ui/pwa/icon-512.png")),
         _ => return error(StatusCode::NOT_FOUND, "asset not found"),
     };
     ([(header::CONTENT_TYPE, mime)], Body::from(bytes)).into_response()
+}
+
+// Desktop stylesheet references these three bundled fonts at /ui/<name>.
+// Do not turn this into a general-purpose native UI server.
+fn desktop_font(file: &str) -> Response {
+    let bytes: &[u8] = match file {
+        "Cinzel.ttf" => include_bytes!("../../../../ui/fonts/Cinzel.ttf"),
+        "Inter.ttf" => include_bytes!("../../../../ui/fonts/Inter.ttf"),
+        "IBMPlexMono.ttf" => include_bytes!("../../../../ui/fonts/IBMPlexMono.ttf"),
+        _ => return error(StatusCode::NOT_FOUND, "asset not found"),
+    };
+    ([(header::CONTENT_TYPE, "font/ttf")], Body::from(bytes)).into_response()
 }
 
 #[derive(Deserialize)]
