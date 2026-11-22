@@ -62,7 +62,9 @@ def trusted_owner(request):
 
 
 def internal_identity_headers(request):
-    # Created only AFTER the external socket and ForwardAuth subject pass.
+    # A private caller cannot bypass the middleware by reaching browser helpers.
+    if not trusted_owner(request):
+        raise web.HTTPForbidden(text="Untrusted gateway authentication")
     return {"Host": request.app["authority"],
             "Remote-User": "esben", "X-Forwarded-Proto": "https",
             "X-Muninn-Gateway-Auth": request.app["gateway_secret"]}
@@ -127,11 +129,11 @@ async def proxy(request):
     # lifecycle, CSRF checks and media transfer semantics. Private capture port is
     # never a forwarding target, and arbitrary URLs/headers are not accepted.
     headers = {key: value for key, value in request.headers.items()
-               if key.lower() in {"host", "origin", "cookie", "content-type", "range", "if-range", "x-muninn-client", "accept"}}
+               if key.lower() in {"host", "origin", "cookie", "content-type", "range", "if-range", "x-muninn-client", "accept"}
+               and (request.app["auth_mode"] != "authelia" or key.lower() != "cookie")}
     if request.app["auth_mode"] == "authelia":
         # Ingress identity is never forwarded verbatim. Reissue it locally only
         # after trusted_owner has verified the real TCP peer and owner.
-        headers.pop("Cookie", None)
         headers.update(internal_identity_headers(request))
     body = await request.read()
     url = "http://127.0.0.1:47872" + request.raw_path
