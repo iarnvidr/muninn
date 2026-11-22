@@ -2,14 +2,16 @@
 import asyncio
 import json
 import os
+import ipaddress
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from aiohttp import web
+from multidict import CIMultiDict
 from browser import Browser
-from gateway import validate_request, authenticated
+from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers
 from policy import *
 
 
@@ -65,6 +67,44 @@ class PolicyTests(unittest.TestCase):
         validate_request(req('GET',origin=None,header=None),'https://preview.test','preview.test')
         for r in [req(host='evil.test'),req(origin='https://evil.test'),req(origin=None),req(header=None)]:
             with self.assertRaises(web.HTTPForbidden):validate_request(r,'https://preview.test','preview.test')
+
+
+class GatewayAutheliaTests(unittest.TestCase):
+    def request(self, peer="172.29.0.2", user="esben", proto="https"):
+        class Transport:
+            def get_extra_info(self, name):
+                return (peer, 55000) if name == "peername" else None
+        h = CIMultiDict({"Host": "muninn-preview.example.test"})
+        if user is not None: h.add("Remote-User", user)
+        if proto is not None: h.add("X-Forwarded-Proto", proto)
+        return SimpleNamespace(
+            transport=Transport(),
+            headers=h,
+            app={"auth_mode": "authelia",
+                 "authority": "muninn-preview.example.test",
+                 "proxy_ips": {ipaddress.ip_address("172.29.0.2")},
+                 "gateway_secret": "a" * 64},
+        )
+
+    def test_gateway_auth_is_not_a_spoofable_forwarded_header(self):
+        valid = self.request()
+        self.assertTrue(trusted_owner(valid))
+        self.assertEqual(internal_identity_headers(valid)["X-Muninn-Gateway-Auth"], "a" * 64)
+        for req in [self.request(peer="172.29.0.3"), self.request(peer="127.0.0.1"),
+                    self.request(user=None), self.request(user="alice"),
+                    self.request(proto="http"), self.request(proto=None)]:
+            self.assertFalse(trusted_owner(req))
+            with self.assertRaises(web.HTTPForbidden):
+                internal_identity_headers(req)
+        duplicate = self.request()
+        duplicate.headers.add("Remote-User", "esben")
+        self.assertFalse(trusted_owner(duplicate))
+        duplicate = self.request()
+        duplicate.headers.add("X-Forwarded-Proto", "https")
+        self.assertFalse(trusted_owner(duplicate))
+        forged = self.request()
+        forged.headers["X-Muninn-Gateway-Auth"] = "a" * 64
+        self.assertFalse(trusted_owner(forged))
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):

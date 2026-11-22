@@ -58,14 +58,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let config = match std::env::var("MUNINN_WEB_AUTH") {
         Ok(mode) if mode == "authelia" => {
-            // Resolve the fixed Traefik service on the private Docker network.
-            // The server rejects every forwarded identity from a different
-            // socket peer, including a direct request with forged headers.
-            let mut peers = ("traefik", 8082).to_socket_addrs()?
-                .map(|addr| addr.ip()).collect::<Vec<_>>();
-            peers.sort_unstable();
-            peers.dedup();
-            web::Config::authelia(&origin, peers)?
+            // The preview image has a Python gateway in front of this loopback
+            // Rust adapter. Only the gateway validates the actual Traefik TCP
+            // peer, and each internal request carries a per-start random secret.
+            // A direct Rust deployment instead pins the Traefik socket itself.
+            match std::env::var("MUNINN_WEB_GATEWAY_SECRET") {
+                Ok(secret) => {
+                    if !addr.ip().is_loopback() {
+                        return Err("an authenticated internal gateway requires a loopback-only Rust listener".into());
+                    }
+                    web::Config::authelia_gateway(&origin, &secret)?
+                }
+                Err(std::env::VarError::NotPresent) => {
+                    let mut peers = ("traefik", 8082).to_socket_addrs()?
+                        .map(|addr| addr.ip()).collect::<Vec<_>>();
+                    peers.sort_unstable();
+                    peers.dedup();
+                    web::Config::authelia(&origin, peers)?
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
         Ok(mode) if mode != "token" => {
             return Err("MUNINN_WEB_AUTH must be token or authelia".into());
