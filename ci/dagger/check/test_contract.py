@@ -141,7 +141,7 @@ class DaggerContract(unittest.TestCase):
         self.assertIn('source: cargoSeed', self.source)
         self.assertEqual(self.source.count('.withMountedCache("/cache", cargoCache)'), 4)
         self.assertIn('ws.directory("/ci/cache/linux-cargo"', self.source)
-        self.assertIn("export-cargo-cache --nonce", self.linux)
+        self.assertIn('--nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo', self.linux)
         self.assertIn("api call export-crate-packages", self.linux)
         self.assertIn("pub exportCratePackages(nonce: String!, sourceSha: String!): Directory!", self.source)
         self.assertLess(self.linux.index("api call export-crate-packages"),
