@@ -3,7 +3,7 @@
 //! local-path imports, updater/tool installers and capture proxy are not exposed.
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{connect_info::ConnectInfo, DefaultBodyLimit, Request, State},
     http::{header, HeaderValue, Method, StatusCode, Uri},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
@@ -13,7 +13,7 @@ use axum::{
 use muninn_core::{util::{ct_eq, random_token}, Core};
 use serde::Deserialize;
 use serde_json::json;
-use std::{collections::HashMap, sync::{Arc, Mutex}, time::{Duration, Instant}};
+use std::{collections::HashMap, net::{IpAddr, SocketAddr}, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use tower::ServiceExt;
 
 const SESSION_TTL: Duration = Duration::from_secs(86_400);
@@ -21,15 +21,21 @@ const MAX_SESSIONS: usize = 32;
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const MAX_LOGIN_ATTEMPTS: usize = 10;
 
+struct Authelia {
+    proxy_ips: Vec<IpAddr>,
+    // Never accept an owner name from a browser, forwarded claim or env var.
+    expected_user: &'static str,
+}
 pub struct Config {
     pub origin: String,
     authority: String,
     secure: bool,
-    secret: String,
+    secret: Option<String>,
+    authelia: Option<Authelia>,
 }
 impl Config {
     /// An exact public origin, never inferred from untrusted forwarded headers.
-    pub fn new(origin: &str, secret: &str) -> Result<Self, String> {
+    fn parse_origin(origin: &str) -> Result<(String, String, bool), String> {
         let uri: Uri = origin.parse().map_err(|_| "invalid public origin")?;
         let authority = uri.authority().ok_or("origin needs a host")?;
         let scheme = uri.scheme_str().ok_or("origin needs http or https")?;
@@ -42,13 +48,28 @@ impl Config {
         if scheme != "https" && !(scheme == "http" && loopback) {
             return Err("remote access requires an HTTPS public origin; HTTP is loopback-only".into());
         }
+        let authority = authority.as_str().to_ascii_lowercase();
+        Ok((format!("{scheme}://{authority}"), authority, scheme == "https"))
+    }
+    pub fn new(origin: &str, secret: &str) -> Result<Self, String> {
+        let (origin, authority, secure) = Self::parse_origin(origin)?;
         let secret = secret.trim();
         if !(32..=256).contains(&secret.len()) || !secret.bytes().all(|b| b.is_ascii_graphic()) {
             return Err("token file must contain a random 32–256 character ASCII secret".into());
         }
-        let authority = authority.as_str().to_ascii_lowercase();
-        Ok(Self { origin: format!("{scheme}://{authority}"), authority,
-            secure: scheme == "https", secret: secret.to_owned() })
+        Ok(Self { origin, authority, secure, secret: Some(secret.to_owned()), authelia: None })
+    }
+    pub fn authelia(origin: &str, proxy_ips: Vec<IpAddr>) -> Result<Self, String> {
+        let (origin, authority, secure) = Self::parse_origin(origin)?;
+        if !secure { return Err("Authelia requires an exact HTTPS origin".into()); }
+        if proxy_ips.is_empty() || proxy_ips.iter().any(IpAddr::is_loopback) {
+            return Err("Authelia requires non-loopback resolved Traefik peer addresses".into());
+        }
+        Ok(Self { origin, authority, secure, secret: None,
+            authelia: Some(Authelia { proxy_ips, expected_user: "esben" }) })
+    }
+    fn auth_mode(&self) -> &'static str {
+        if self.authelia.is_some() { "authelia" } else { "token" }
     }
     fn cookie_name(&self) -> &'static str {
         if self.secure { "__Host-muninn_session" } else { "muninn_dev_session" }
@@ -80,11 +101,32 @@ fn session_token(req: &Request, state: &WebState) -> Option<String> {
     })
 }
 fn authenticated(req: &Request, state: &WebState) -> bool {
+    if state.config.authelia.is_some() { return authelia_authorized(req, &state.config); }
     let Some(token) = session_token(req, state) else { return false };
     let mut sessions = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
     sessions.active.retain(|_, until| *until > now);
     sessions.active.contains_key(&token)
+}
+
+// Authentication is tied to the actual inbound socket peer, not a spoofable
+// X-Forwarded-For header. Traefik ForwardAuth replaces Remote-User and strips
+// any untrusted browser supplied identity before forwarding.
+fn authelia_authorized(req: &Request, config: &Config) -> bool {
+    let Some(auth) = config.authelia.as_ref() else { return false };
+    let peer = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|v| v.0);
+    let Some(peer) = peer else { return false };
+    let headers = req.headers();
+    auth.proxy_ips.contains(&peer.ip())
+        && headers.get_all(header::HOST).iter().count() == 1
+        && headers.get(header::HOST).is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(config.authority.as_bytes()))
+        && headers.get_all("remote-user").iter().count() == 1
+        && headers.get("remote-user").is_some_and(|v| v.as_bytes() == auth.expected_user.as_bytes())
+        && headers.get_all("x-forwarded-proto").iter().count() == 1
+        && headers.get("x-forwarded-proto").is_some_and(|v| v == "https")
+        && headers.get_all(header::ORIGIN).iter().count() <= 1
+        && (matches!(*req.method(), Method::GET | Method::HEAD)
+            || headers.get(header::ORIGIN).is_some_and(|v| v == config.origin.as_str()))
 }
 
 /// No CORS. Exact Host + Origin and a custom header protect cookie-authenticated
@@ -97,8 +139,10 @@ async fn boundary(State(state): State<App>, req: Request, next: Next) -> Respons
         && origin.is_none_or(|o| o == state.config.origin)
         && (read || (origin == Some(state.config.origin.as_str())
             && req.headers().get("x-muninn-client").is_some_and(|v| v == "pwa")));
-    let mut response = if !valid {
-        error(StatusCode::FORBIDDEN, "request origin not allowed")
+    let authelia_ok = req.uri().path() == "/health" || state.config.authelia.is_none()
+        || authelia_authorized(&req, &state.config);
+    let mut response = if !valid || !authelia_ok {
+        error(StatusCode::FORBIDDEN, "request origin or trusted identity not allowed")
     } else { next.run(req).await };
     let headers = response.headers_mut();
     for name in [header::ACCESS_CONTROL_ALLOW_ORIGIN, header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -118,8 +162,10 @@ pub fn router(core: Arc<Core>, config: Config) -> Router {
         .route("/", get(|| async { Redirect::temporary("/app/") }))
         .route("/health", get(|| async { Json(json!({"ok":true,"mode":"server-pwa","version":muninn_core::VERSION})) }))
         .route("/app", get(|| async { Redirect::permanent("/app/") }))
-        .route("/app/", get(|| async { asset("index.html") }))
-        .route("/app/{file}", get(|axum::extract::Path(file): axum::extract::Path<String>| async move { asset(&file) }))
+        .route("/app/", get(|State(state): State<App>| async move { index(&state.config) }))
+        .route("/app/{file}", get(|State(state): State<App>, axum::extract::Path(file): axum::extract::Path<String>| async move {
+            if file == "index.html" { index(&state.config) } else { asset(&file) }
+        }))
         .route("/api/session", get(session).post(login).delete(logout))
         .fallback(bridge)
         .layer(DefaultBodyLimit::max(16 * 1024))
@@ -127,6 +173,13 @@ pub fn router(core: Arc<Core>, config: Config) -> Router {
         .with_state(state)
 }
 
+fn index(config: &Config) -> Response {
+    // The server stamps auth mode before JavaScript executes, so a failed
+    // Authelia API request can never cause a fallback access-token prompt.
+    let html = include_str!("../../../../ui/pwa/index.html")
+        .replace("__MUNINN_AUTH_MODE__", config.auth_mode());
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], Body::from(html)).into_response()
+}
 fn asset(file: &str) -> Response {
     let (mime, bytes): (&str, &[u8]) = match file {
         "index.html" => ("text/html; charset=utf-8", include_bytes!("../../../../ui/pwa/index.html")),
@@ -148,6 +201,9 @@ fn asset(file: &str) -> Response {
 #[serde(deny_unknown_fields)]
 struct Login { token: String }
 async fn login(State(state): State<App>, Json(login): Json<Login>) -> Response {
+    if state.config.authelia.is_some() {
+        return error(StatusCode::NOT_FOUND, "a second browser login is disabled");
+    }
     let mut sessions = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
     sessions.attempts.retain(|t| now.duration_since(*t) < LOGIN_WINDOW);
@@ -157,7 +213,7 @@ async fn login(State(state): State<App>, Json(login): Json<Login>) -> Response {
         return response;
     }
     sessions.attempts.push(now);
-    if !ct_eq(login.token.trim(), &state.config.secret) {
+    if !state.config.secret.as_deref().is_some_and(|secret| ct_eq(login.token.trim(), secret)) {
         return error(StatusCode::UNAUTHORIZED, "invalid token");
     }
     sessions.active.retain(|_, until| *until > now);
@@ -173,9 +229,13 @@ async fn login(State(state): State<App>, Json(login): Json<Login>) -> Response {
 }
 async fn session(State(state): State<App>, req: Request) -> Response {
     if !authenticated(&req, &state) { return error(StatusCode::UNAUTHORIZED, "sign in to the server"); }
-    Json(json!({"ok":true,"mode":"server-pwa","version":muninn_core::VERSION})).into_response()
+    Json(json!({"ok":true,"mode":"server-pwa","auth_mode":state.config.auth_mode(),
+        "login_required":false,"version":muninn_core::VERSION})).into_response()
 }
 async fn logout(State(state): State<App>, req: Request) -> Response {
+    if state.config.authelia.is_some() {
+        return error(StatusCode::NOT_FOUND, "use Authelia to sign out");
+    }
     if let Some(token) = session_token(&req, &state) {
         state.sessions.lock().unwrap_or_else(|e| e.into_inner()).active.remove(&token);
     }
