@@ -21,7 +21,7 @@ def event(**overrides):
     run = {
         "id": 42430719763,
         "path": ".github/workflows/accept-native.yml",
-        "event": "push",
+        "event": "workflow_dispatch",
         "head_branch": "main",
         "status": "completed",
         "conclusion": "success",
