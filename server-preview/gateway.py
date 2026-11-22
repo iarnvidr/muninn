@@ -124,17 +124,24 @@ async def asset(request):
     return web.Response(body=(ROOT / name).read_bytes(), content_type=mime)
 
 
-async def proxy(request):
-    # The Rust remote adapter still owns its existing operation allowlist, session
-    # lifecycle, CSRF checks and media transfer semantics. Private capture port is
-    # never a forwarding target, and arbitrary URLs/headers are not accepted.
+def upstream_headers(request):
+    # Rust exposes only /health anonymously; the container's Docker HEALTHCHECK
+    # arrives from loopback with no Authelia forwarded identity. Keep every other
+    # upstream route authenticated using the verified Traefik socket peer.
     headers = {key: value for key, value in request.headers.items()
                if key.lower() in {"host", "origin", "cookie", "content-type", "range", "if-range", "x-muninn-client", "accept"}
                and (request.app["auth_mode"] != "authelia" or key.lower() != "cookie")}
-    if request.app["auth_mode"] == "authelia":
-        # Ingress identity is never forwarded verbatim. Reissue it locally only
-        # after trusted_owner has verified the real TCP peer and owner.
+    if request.app["auth_mode"] == "authelia" and request.path != "/health":
+        # Never forward arbitrary identity headers; issue internal authentication
+        # only for a trusted owner on a non-health endpoint.
         headers.update(internal_identity_headers(request))
+    return headers
+
+
+async def proxy(request):
+    # The Rust remote adapter still owns its operation allowlist, session
+    # lifecycle, CSRF checks and media transfer semantics.
+    headers = upstream_headers(request)
     body = await request.read()
     url = "http://127.0.0.1:47872" + request.raw_path
     async with request.app["http"].request(request.method, url, headers=headers, data=body or None, allow_redirects=False) as upstream:

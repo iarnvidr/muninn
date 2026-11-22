@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 from aiohttp import web
 from multidict import CIMultiDict
 from browser import Browser
-from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers
+from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers
 from policy import *
 
 
@@ -105,6 +105,24 @@ class GatewayAutheliaTests(unittest.TestCase):
         forged = self.request()
         forged.headers["X-Muninn-Gateway-Auth"] = "a" * 64
         self.assertFalse(trusted_owner(forged))
+
+    def test_authelia_healthcheck_remains_anonymous_without_opening_any_other_route(self):
+        # Production Docker healthcheck originates in the container and has no
+        # forward-auth identity. Rust exposes only this exact path anonymously.
+        health = self.request(peer="127.0.0.1", user=None, proto=None)
+        health.path = "/health"
+        self.assertEqual(upstream_headers(health), {"Host": "muninn-preview.example.test"})
+        for path in ("/health/", "/api/session", "/api/entries", "/app/", "/media/nonexistent"):
+            health.path = path
+            with self.assertRaises(web.HTTPForbidden):
+                upstream_headers(health)
+        owner = self.request()
+        owner.path = "/api/session"
+        headers = upstream_headers(owner)
+        self.assertEqual(headers["Remote-User"], "esben")
+        self.assertEqual(headers["X-Muninn-Gateway-Auth"], "a" * 64)
+        self.assertNotIn("Cookie", headers)
+
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
