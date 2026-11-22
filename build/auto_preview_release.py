@@ -49,7 +49,7 @@ def release_versions(api_fn):
 def decision(event, checkout_sha, current_main_sha, source_version, published):
     run = event.get("workflow_run") or {}
     required = {
-        "path": MAPPING_WORKFLOW, "event": "push", "head_branch": "main",
+        "path": MAPPING_WORKFLOW, "event": "workflow_dispatch", "head_branch": "main",
         "status": "completed", "conclusion": "success",
         "head_sha": checkout_sha,
     }

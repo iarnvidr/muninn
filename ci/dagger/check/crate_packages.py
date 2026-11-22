@@ -258,6 +258,36 @@ def crate_outputs(target: Path, crate: str, source_root: Path, source: dict[str,
             # Build-script outputs must travel with the fingerprint and .rlib.
             for build in (profile / "build").glob(f"{crate}-{hash_suffix}") if (profile / "build").is_dir() else ():
                 outputs.update(f.relative_to(target).as_posix() for f in build.rglob("*") if f.is_file())
+    # Cargo 1.100+ can store compilation units under
+    # debug/build/<crate>/<unit-hash>/{fingerprint,out} instead of the
+    # historical debug/{.fingerprint,deps} layout. Keep both formats bound
+    # to real fingerprints, source mtimes and the validated package archive.
+    for build_dir in target.glob("**/build"):
+        for crate_dir in (build_dir / crate, build_dir / crate.replace("-", "_")):
+            if not crate_dir.is_dir():
+                continue
+            for unit in crate_dir.iterdir():
+                if not unit.is_dir() or not FINGERPRINT.fullmatch(unit.name):
+                    continue
+                fingerprint = unit / "fingerprint"
+                artifact_dir = unit / "out"
+                if not fingerprint.is_dir() or not artifact_dir.is_dir():
+                    continue
+                if not any(f.is_file() and f.suffix == ".json" for f in fingerprint.iterdir()):
+                    continue
+                compiled = max((f.stat().st_mtime_ns for f in fingerprint.iterdir() if f.is_file()), default=0)
+                if any(
+                    (source_root / path).exists() and (source_root / path).stat().st_mtime_ns > compiled + 2_000_000_000
+                    for path in source
+                ):
+                    continue
+                # Preserve the entire build unit, not just the rlib. Cargo
+                # needs its invocation fingerprint and any build-script run
+                # metadata for a genuine Fresh result after restoration.
+                files = [f for f in unit.rglob("*") if f.is_file()]
+                if not any(f.is_file() for f in artifact_dir.rglob("*")):
+                    continue
+                outputs.update(f.relative_to(target).as_posix() for f in files)
     return sorted(outputs)
 
 
@@ -418,7 +448,11 @@ def validate_index(folder: Path, root: Path, expected_platform: str | None = Non
         source_sha = index.get("source_sha", "")
         if not re.fullmatch(r"[a-f0-9]{40}", source_sha) or not re.fullmatch(r"[a-f0-9]{40}", head_sha):
             raise ValueError("Invalid source commit provenance")
-        actual = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+        try:
+            actual = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                             text=True, stderr=subprocess.DEVNULL).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise ValueError("Invalid source commit provenance: checkout unavailable") from exc
         if actual != source_sha:
             raise ValueError("Original CI checkout differs from published source")
         if event == "pull_request" and source_sha != head_sha:

@@ -1,16 +1,7 @@
-name: Apple Silicon build
+name: Apple Silicon build (on demand)
 on:
-  pull_request:
-  # Bootstrap native OCI packages automatically when the publisher/restore
-  # contract itself changes. Ordinary application PR merges reuse their
-  # already-validated native artifact; they do not rebuild a second time.
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/macos.yml'
-      - '.github/workflows/package-snapshots.yml'
-      - 'ci/dagger/check/crate_packages.py'
-  workflow_dispatch:
+  pull_request: # branch-rule status only; no macOS host on PRs
+  workflow_dispatch: # the only event that compiles or packages Apple Silicon
 permissions:
   contents: read
   packages: read
@@ -19,6 +10,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   package:
+    # Preserve the protected 'package' status without pretending native code ran.
+    # Release promotion independently requires an actual source-bound native receipt.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Record no native build on this PR
+        run: echo 'Apple Silicon was NOT built. Native packaging is explicitly on demand.' >> "$GITHUB_STEP_SUMMARY"
+  native-package:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -200,5 +201,5 @@ jobs:
             ${{ runner.temp }}/muninn-preview-evidence/**
           if-no-files-found: error
           retention-days: 90
-# PR builds are never releases. Only the later successful accepted-main mapping
-# can trigger trusted automatic preview publication; stable release stays protected.
+# A manual native build is not release acceptance. Only a separate manual
+# accepted-main mapping with verified artifact/check receipts can publish an update.

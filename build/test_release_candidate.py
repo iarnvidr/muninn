@@ -161,6 +161,56 @@ class NativeCandidateTests(unittest.TestCase):
         self.assertEqual(record["source_artifact_id"], 555)
         self.assertIn("Muninn.app/Contents/MacOS/Muninn", record["app_files"])
 
+    def manual_candidate(self):
+        root, data, artifact, run, pr, api = self.fixture()
+        # The historical PR is merged, but native builds now use an explicit
+        # dispatch on that exact protected-main merge, not a PR event.
+        run.update(event="workflow_dispatch", head_branch="main", head_sha="c" * 40)
+        with zipfile.ZipFile(io.BytesIO(data)) as original:
+            members = {name: original.read(name) for name in original.namelist()}
+        receipt = json.loads(members["native-receipt.json"])
+        receipt.update(event="workflow_dispatch", head_sha="c" * 40,
+                       base_sha=None, pr_number=None)
+        members["native-receipt.json"] = json.dumps(receipt).encode()
+        result = io.BytesIO()
+        with zipfile.ZipFile(result, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, value in members.items():
+                archive.writestr(name, value)
+        return root, result.getvalue(), artifact, run, pr, api
+
+    def test_manual_protected_main_native_candidate_is_source_bound(self):
+        root, data, artifact, run, pr, api = self.manual_candidate()
+        record = candidate.verify_candidate(
+            data, artifact, run, pr, "c" * 40, "c" * 40, root, api)
+        self.assertEqual(record["source_base_sha"], "f" * 40)
+        self.assertEqual(record["source_run_id"], 123)
+        self.assertEqual(record["accepted_commit"], "c" * 40)
+
+    def test_manual_native_build_rejects_wrong_branch_or_head(self):
+        root, data, artifact, run, pr, api = self.manual_candidate()
+        for overrides in ({"head_branch": "feature"}, {"head_sha": "a" * 40},
+                          {"event": "push"}, {"conclusion": "failure"}):
+            candidate_run = dict(run, **overrides)
+            with self.subTest(**overrides), self.assertRaises(ValueError):
+                candidate.verify_candidate(data, artifact, candidate_run, pr,
+                                           "c" * 40, "c" * 40, root, api)
+
+    def test_manual_native_build_rejects_mismatched_receipt(self):
+        root, data, artifact, run, pr, api = self.manual_candidate()
+        with zipfile.ZipFile(io.BytesIO(data)) as original:
+            members = {name: original.read(name) for name in original.namelist()}
+        for change in ({"event": "pull_request"}, {"head_sha": "a" * 40},
+                       {"pr_number": 44}, {"tested_tree": "a" * 40}):
+            receipt = json.loads(members["native-receipt.json"])
+            receipt.update(change)
+            changed = io.BytesIO()
+            with zipfile.ZipFile(changed, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("Muninn.app.tar.gz", members["Muninn.app.tar.gz"])
+                archive.writestr("native-receipt.json", json.dumps(receipt))
+            with self.subTest(**change), self.assertRaisesRegex(ValueError, "native receipt"):
+                candidate.verify_candidate(changed.getvalue(), artifact, run, pr,
+                                           "c" * 40, "c" * 40, root, api)
+
     def test_candidate_rejects_tree_mismatch_and_fork_producer(self):
         root, data, artifact, run, pr, api = self.fixture()
         with self.assertRaisesRegex(ValueError, "accepted merge tree"):
