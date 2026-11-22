@@ -144,3 +144,81 @@ async fn completed_files_keep_auth_and_streaming_range_semantics() {
     assert_eq!(response.headers()[header::CONTENT_LENGTH],"512");
     assert!(response.into_body().collect().await.unwrap().to_bytes().is_empty());
 }
+
+fn authelia_harness() -> Harness {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(CoreConfig { data_dir:dir.path().into(), spawn_workers:false,
+        tool_dirs:Some(vec![]), ..CoreConfig::default() }).unwrap();
+    let app = router(core.clone(), Config::authelia(ORIGIN,
+        vec!["172.29.0.2".parse().unwrap()]).unwrap());
+    Harness { _dir:dir, core, app }
+}
+fn authelia_request(method: &str, path: &str, peer: Option<&str>, user: Option<&str>) -> Request {
+    let mut req = request(method, path, None, if method == "POST" {"{}"} else {""});
+    req.headers_mut().insert("x-forwarded-proto", HeaderValue::from_static("https"));
+    if let Some(user) = user { req.headers_mut().insert("remote-user", user.parse().unwrap()); }
+    if let Some(peer) = peer {
+        req.extensions_mut().insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+    }
+    req
+}
+#[test]
+fn authelia_requires_a_real_nonloopback_proxy_and_https() {
+    assert!(Config::authelia("http://localhost:47872", vec!["172.29.0.2".parse().unwrap()]).is_err());
+    assert!(Config::authelia(ORIGIN, vec![]).is_err());
+    assert!(Config::authelia(ORIGIN, vec!["127.0.0.1".parse().unwrap()]).is_err());
+    assert!(Config::authelia(ORIGIN, vec!["172.29.0.2".parse().unwrap()]).is_ok());
+}
+#[tokio::test]
+async fn authelia_owner_has_one_login_and_real_private_library_access() {
+    let h = authelia_harness();
+    let good = || authelia_request("GET","/api/entries",Some("172.29.0.2:45454"),Some("esben"));
+    let response = h.send(good()).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    assert_eq!(response.into_body().collect().await.unwrap().to_bytes().as_ref(),b"[]");
+    let response = h.send(authelia_request("GET","/api/session",
+        Some("172.29.0.2:45454"),Some("esben"))).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let bytes=response.into_body().collect().await.unwrap().to_bytes();
+    let value:serde_json::Value=serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["auth_mode"],"authelia");
+    assert_eq!(value["login_required"],false);
+    let response=h.send(authelia_request("GET","/app/",
+        Some("172.29.0.2:45454"),Some("esben"))).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let html=response.into_body().collect().await.unwrap().to_bytes();
+    let html=String::from_utf8_lossy(&html);
+    assert!(html.contains("name=\"muninn-auth-mode\" content=\"authelia\""));
+    assert!(!html.contains("__MUNINN_AUTH_MODE__"));
+    let mut post = authelia_request("POST","/api/session",Some("172.29.0.2:45454"),Some("esben"));
+    *post.body_mut()=Body::from(json!({"token":SECRET}).to_string());
+    assert_eq!(h.send(post).await.status(),StatusCode::NOT_FOUND);
+    assert_eq!(h.send(authelia_request("DELETE","/api/session",
+        Some("172.29.0.2:45454"),Some("esben"))).await.status(),StatusCode::NOT_FOUND);
+}
+#[tokio::test]
+async fn authelia_rejects_direct_forged_identity_and_malformed_forwarding() {
+    let h=authelia_harness();
+    for (peer,user) in [(None,Some("esben")),(Some("127.0.0.1:1234"),Some("esben")),
+        (Some("172.29.0.3:1234"),Some("esben")),
+        (Some("172.29.0.2:1234"),Some("alice")),
+        (Some("172.29.0.2:1234"),None)] {
+        let response=h.send(authelia_request("GET","/api/entries",peer,user)).await;
+        assert_eq!(response.status(),StatusCode::FORBIDDEN,"peer {peer:?}, user {user:?}");
+    }
+    let mut duplicate=authelia_request("GET","/api/entries",Some("172.29.0.2:1234"),Some("esben"));
+    duplicate.headers_mut().append("remote-user",HeaderValue::from_static("esben"));
+    assert_eq!(h.send(duplicate).await.status(),StatusCode::FORBIDDEN);
+    let mut downgraded=authelia_request("GET","/api/entries",Some("172.29.0.2:1234"),Some("esben"));
+    downgraded.headers_mut().insert("x-forwarded-proto",HeaderValue::from_static("http"));
+    assert_eq!(h.send(downgraded).await.status(),StatusCode::FORBIDDEN);
+    let mut foreign=authelia_request("POST","/api/cache",Some("172.29.0.2:1234"),Some("esben"));
+    foreign.headers_mut().insert(header::ORIGIN,HeaderValue::from_static("https://evil.test"));
+    assert_eq!(h.send(foreign).await.status(),StatusCode::FORBIDDEN);
+    let mut no_origin=authelia_request("POST","/api/cache",Some("172.29.0.2:1234"),Some("esben"));
+    no_origin.headers_mut().remove(header::ORIGIN);
+    assert_eq!(h.send(no_origin).await.status(),StatusCode::FORBIDDEN);
+    let mut no_custom=authelia_request("POST","/api/cache",Some("172.29.0.2:1234"),Some("esben"));
+    no_custom.headers_mut().remove("x-muninn-client");
+    assert_eq!(h.send(no_custom).await.status(),StatusCode::FORBIDDEN);
+}
