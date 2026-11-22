@@ -119,6 +119,17 @@ class DaggerContract(unittest.TestCase):
         self.assertIn('withDirectory("/shell", ws.directory("/shell"))', desktop)
         self.assertIn('withFile("/LICENSE", ws.file("/LICENSE"))', desktop)
 
+    def test_javascript_pwa_sources_include_server_adapter_asserted_by_tests(self):
+        # The host checkout has every file, but Dagger runs JavaScript inside
+        # a deliberately scoped mount. A missing Rust web adapter made the
+        # new desktop-parity Node test fail only inside the required Dagger gate.
+        pwa_test = (ROOT / "ui/test/pwa.test.js").read_text()
+        self.assertIn("../../crates/server/src/web/mod.rs", pwa_test)
+        javascript = self.source.split("pub javascript: Void @check", 1)[1].split(
+            "pub packaging: Void @check", 1
+        )[0]
+        self.assertIn('"crates/server/src/web/mod.rs"', javascript)
+
     def test_cache_transport_is_explicit_and_not_a_result_receipt(self):
         self.assertIn("path: ci/cache/linux-cargo", self.linux)
         self.assertIn("restore-keys:", self.linux)

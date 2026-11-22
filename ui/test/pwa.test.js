@@ -96,9 +96,27 @@ test('device storage commits metadata and media together without secrets',()=>{
 test('PWA is a separate client with a blob-only player and visible feed filters',()=>{
   const source=file('app.js'),html=file('index.html');
   assert.match(source,/player.src=state.playerURL/);assert.match(source,/URL.createObjectURL\(blob\)/);
-  assert.doesNotMatch(source,/__TAURI|youtube\.com\/embed|player.src\s*=\s*['"]\/media|innerHTML|localStorage/);
+  assert.doesNotMatch(source,/__TAURI|youtube\.com\/embed|innerHTML|localStorage/);
   assert.doesNotMatch(html,/<select/);assert.match(html,/On this device/);assert.match(html,/playsinline/);
   for(const sourceName of ['app.js','model.js','store.js','sw.js'])assert.doesNotThrow(()=>new vm.Script(file(sourceName)),sourceName);
+});
+
+test('PWA uses the desktop shell and authenticates completed server media',()=>{
+  const html=file('index.html'),js=file('app.js'),css=file('style.css'),sw=file('sw.js');
+  const adapter=fs.readFileSync(path.join(__dirname,'../../crates/server/src/web/mod.rs'),'utf8');
+  assert.ok(html.includes('href="./desktop.css"'));
+  assert.ok(html.includes('class="app"'));
+  assert.ok(html.includes('class="muninn-brand"'));
+  assert.ok(html.includes('class="library-cards"'));
+  assert.ok(html.includes('id="side-toggle"'));
+  assert.ok(css.includes('desktop.css'));
+  assert.ok(sw.includes('/app/desktop.css'));
+  assert.ok(adapter.includes('"desktop.css"'));
+  assert.ok(adapter.includes('include_bytes!("../../../../ui/style.css")'));
+  assert.ok(js.includes("player.src='/media/'+encodeURIComponent(record.id)"));
+  assert.ok(js.includes('M.complete(record)'));
+  assert.ok(js.includes('player.src=state.playerURL'));
+  assert.doesNotMatch(js,/youtube\.com\/embed|tiktok\.com\/embed|__TAURI/);
 });
 
 test('PWA honors server-selected authentication without token fallback',()=>{
