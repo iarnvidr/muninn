@@ -145,7 +145,15 @@ class ProductionReleaseContract(unittest.TestCase):
         self.assertNotIn("GITHUB_RUN_ID", self.dagger_checks.split("pub exportCargoCache", 1)[0])
         self.assertLess(self.checks.index("run: dagger --progress logs check"),
                         self.checks.index("create-check --root"))
-        self.assertNotRegex(self.checks, r"(?m)^\s+continue-on-error:\s*true")
+        # Cache salvage is allowed to fail independently, but never the
+        # Dagger tests or the source-bound check receipt.
+        check = self.checks.split("- name: Rust, JavaScript, packaging, and publication checks", 1)[1].split("- name: Retrieve bounded failed-check diagnostics", 1)[0]
+        receipt = self.checks.split("- name: Record Dagger check receipt", 1)[1]
+        self.assertNotRegex(check, r"(?m)^\s+continue-on-error:\s*true")
+        self.assertNotRegex(receipt, r"(?m)^\s+continue-on-error:\s*true")
+        salvage = self.checks.split("- name: Export Linux Cargo cache after a failed check (bounded)", 1)[1].split("- name: Preserve compiled Cargo cache", 1)[0]
+        self.assertIn("continue-on-error: true", salvage)
+        self.assertIn("steps.dagger-checks.outcome == 'failure'", salvage)
 
     def test_receipt_pipeline_identity_matches_committed_dagger_configuration(self):
         pipeline = candidate.DAGGER_CHECK_PIPELINE
