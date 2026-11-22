@@ -1,7 +1,12 @@
 name: Publish accepted Muninn preview
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      recover:
+        description: Recover an interrupted, previously accepted signed release
+        type: boolean
+        required: true
+        default: false
   workflow_run:
     workflows: [Map accepted Muninn native artifact]
     types: [completed]
@@ -19,7 +24,7 @@ jobs:
   recover:
     # Resume an interrupted accepted preview from its retained signed review.
     # The old release tag is never moved to a newer CI-only fix merge.
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.recover == true
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -78,7 +83,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.repository.full_name == github.repository
     runs-on: macos-15

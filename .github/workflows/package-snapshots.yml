@@ -1,7 +1,7 @@
 name: Publish CI artifacts to GitHub Packages
 on:
   workflow_run:
-    workflows: [Checks, Apple Silicon build]
+    workflows: [Checks, Apple Silicon build (on demand)]
     types: [completed]
 
 # This privileged workflow runs the trusted default-branch script, with no PR
@@ -17,7 +17,7 @@ jobs:
     if: >-
       github.event.workflow_run.head_repository.full_name == 'iarnvidr/muninn' &&
       (github.event.workflow_run.name == 'Checks' ||
-       (github.event.workflow_run.name == 'Apple Silicon build' && github.event.workflow_run.conclusion == 'success'))
+       (github.event.workflow_run.name == 'Apple Silicon build (on demand)' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     concurrency:
@@ -155,7 +155,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == 'iarnvidr/muninn' &&
       (github.event.workflow_run.name == 'Checks' ||
-       github.event.workflow_run.name == 'Apple Silicon build')
+       (github.event.workflow_run.name == 'Apple Silicon build (on demand)' && github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     concurrency:
@@ -182,7 +182,7 @@ jobs:
           set -euo pipefail
           case "$WORKFLOW_NAME" in
             Checks) platform=linux ;;
-            'Apple Silicon build') platform=macos ;;
+            'Apple Silicon build (on demand)') platform=macos ;;
             *) exit 1 ;;
           esac
           mkdir -p "$RUNNER_TEMP/muninn-crate-packages"
@@ -225,7 +225,7 @@ jobs:
           printf '%s' "$GHCR_PUBLISH_TOKEN" | "$RUNNER_TEMP/oras" login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           case "$WORKFLOW_NAME" in
             Checks) platform=linux-amd64 ;;
-            'Apple Silicon build') platform=macos-arm64 ;;
+            'Apple Silicon build (on demand)') platform=macos-arm64 ;;
             *) exit 1 ;;
           esac
           python3 ci/dagger/check/crate_packages.py publish \

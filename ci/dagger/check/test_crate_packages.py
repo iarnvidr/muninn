@@ -254,6 +254,47 @@ class PublishedCrateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "originating CI build context|source commit provenance"):
             MODULE.validate_index(self.out, self.root, "linux-amd64", "999", "a" * 40, "pull_request")
 
+    def test_new_cargo_build_unit_layout_is_captured_and_restored(self):
+        # Cargo 1.100 places intermediary outputs under build/<pkg>/<hash>
+        # rather than the older .fingerprint/ + deps/ sibling directories.
+        target = self.base / "new-cargo-layout"
+        unit = target / "debug/build/alpha/1234567890abcdef"
+        self.assertFalse(target.exists())
+        (unit / "out").mkdir(parents=True)
+        (unit / "fingerprint").mkdir()
+        (unit / "out/libalpha-1234567890abcdef.rlib").write_bytes(b"actual compiled artifact")
+        (unit / "fingerprint/lib-alpha.json").write_text('{"features":"[]"}')
+        (unit / "fingerprint/lib-alpha").write_text("fingerprint")
+        outputs = MODULE.crate_outputs(target, "alpha", self.root, self.plan()["alpha"]["source"])
+        self.assertEqual(set(outputs), {
+            "debug/build/alpha/1234567890abcdef/out/libalpha-1234567890abcdef.rlib",
+            "debug/build/alpha/1234567890abcdef/fingerprint/lib-alpha.json",
+            "debug/build/alpha/1234567890abcdef/fingerprint/lib-alpha",
+        })
+        archive = self.base / "new-cargo-alpha.tar.gz"
+        plan = self.plan()["alpha"]
+        MODULE.save_package(archive, target, plan, outputs)
+        restored = self.base / "restored-new-layout"
+        self.assertEqual(MODULE.read_package(archive, plan, restored, self.root), 3)
+        self.assertEqual(
+            (restored / "debug/build/alpha/1234567890abcdef/out/libalpha-1234567890abcdef.rlib").read_bytes(),
+            b"actual compiled artifact",
+        )
+
+    def test_new_cargo_layout_rejects_stale_source(self):
+        target = self.base / "new-cargo-stale"
+        unit = target / "debug/build/alpha/1234567890abcdef"
+        (unit / "out").mkdir(parents=True)
+        (unit / "fingerprint").mkdir()
+        (unit / "out/libalpha-1234567890abcdef.rlib").write_bytes(b"stale compilation")
+        (unit / "fingerprint/lib-alpha.json").write_text('{"features":"[]"}')
+        future = time.time() + 3600
+        file = self.root / "crates/alpha/src/lib.rs"
+        os.utime(file, (future, future))
+        self.assertEqual(
+            MODULE.crate_outputs(target, "alpha", self.root, self.plan()["alpha"]["source"]), [],
+        )
+
     def test_stale_target_must_not_be_published_for_new_source(self):
         future = time.time() + 3600
         self.write("crates/alpha/src/lib.rs", "pub fn alpha() { panic!() }\n")

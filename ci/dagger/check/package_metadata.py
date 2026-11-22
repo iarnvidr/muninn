@@ -37,7 +37,8 @@ def package_metadata(event):
         image = "ghcr.io/iarnvidr/muninn-ci-cache"
         artifact = f"muninn-linux-cargo-snapshot-{run_id}-{attempt}"
         kind = "cargo-cache-v1"
-    elif workflow == "Apple Silicon build" and run.get("conclusion") == "success":
+    elif (workflow == "Apple Silicon build (on demand)" and trigger == "workflow_dispatch"
+          and run.get("conclusion") == "success"):
         image = "ghcr.io/iarnvidr/muninn-macos-candidate"
         artifact = "muninn-macos-arm64"
         kind = "macos-candidate-v1"

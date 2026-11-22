@@ -105,6 +105,59 @@ jobs:
         # Stream what the engine exposes. Some failed Cargo execs still give
         # only exit 101, so the desktop check also writes a retained log.
         run: dagger --progress logs check
+      # Export small per-crate logs first. Full Cargo-cache copies can stall.
+      - name: Retrieve bounded failed-check diagnostics from Dagger
+        id: diagnostic-export
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 180s \
+            dagger -m ci/dagger/check api call export-check-logs \
+            --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/muninn-check-logs"
+      - name: Report each failing Rust crate's captured output
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/muninn-check-logs"
+          if [[ ! -d "$dir" ]] || ! find "$dir" -maxdepth 1 -name '*.log' -type f | grep -q .; then
+            echo 'No per-crate Cargo diagnostics were exported; inspect Dagger infrastructure and check traces.'
+            exit 0
+          fi
+          while IFS= read -r -d '' log; do
+            echo "::group::$(basename "$log") (last 100 lines)"
+            tail -n 100 "$log"
+            echo '::endgroup::'
+          done < <(find "$dir" -maxdepth 1 -type f -name '*.log' -print0 | sort -z)
+      # Secondary host diagnostics only. The Dagger check remains authoritative;
+      # a host result can explain a failure but cannot promote a failed check.
+      - name: Diagnose JavaScript and release policy suites after Dagger failure
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          set +e
+          for suite in javascript python-release python-dagger python-updater; do
+            case "$suite" in
+              javascript) node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+              python-release) python3 -m unittest discover -s build -p 'test_*.py' -v > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+              python-dagger) python3 -m unittest discover -s ci/dagger/check -p 'test_*.py' -v > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+              python-updater) python3 build/updater-smoke/test_protocol.py > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+            esac
+            status=$?
+            echo "::group::$suite diagnostic exit=$status (not a CI gate)"
+            tail -n 120 "$RUNNER_TEMP/muninn-$suite.log"
+            echo '::endgroup::'
+          done
+          exit 0
+      - name: Retain failure diagnostics independently of Cargo cache
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muninn-check-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/muninn-check-logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
       - name: Export separate compiled crate packages
         id: crate-export
         if: ${{ steps.dagger-checks.outcome == 'success' && !cancelled() }}
@@ -124,38 +177,16 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
-      - name: Export Linux Cargo diagnostic cache after a failed check
+      # Best-effort compilation reuse; failure diagnostics are retained above.
+      - name: Export Linux Cargo cache after a failed check (bounded)
         id: cargo-export
         if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 4
         run: |
-          dagger -m ci/dagger/check api call export-cargo-cache --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
-      # Preserve failing logs separately, so a cache restored into a later run
-      # cannot accidentally report a previous run's error as current evidence.
-      - name: Separate diagnostic logs from reusable compilation cache
-        if: ${{ always() && steps.cargo-export.outcome == 'success' && !cancelled() }}
-        run: |
-          if [[ -d ci/cache/linux-cargo/check-logs ]]; then
-            mv ci/cache/linux-cargo/check-logs "$RUNNER_TEMP/muninn-check-logs"
-          fi
-      - name: Report failing desktop crate diagnostics
-        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
-        run: |
-          log="$RUNNER_TEMP/muninn-check-logs/desktop-tests.log"
-          if [[ -f "$log" ]]; then
-            echo '::group::Linux Tauri desktop Cargo output (last 200 lines)'
-            tail -n 200 "$log"
-            echo '::endgroup::'
-          else
-            echo 'Desktop Cargo log absent; the check may have failed before Cargo started.'
-          fi
-      - name: Retain failing desktop crate log
-        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && steps.cargo-export.outcome == 'success' && !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: muninn-desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/muninn-check-logs/desktop-tests.log
-          if-no-files-found: warn
-          retention-days: 14
+          timeout --signal=TERM --kill-after=10s 180s \
+            dagger -m ci/dagger/check api call export-cargo-cache \
+            --nonce "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output ci/cache/linux-cargo
       # Explicit restore/save (not the combined cache action) retains compiled
       # output even on failed checks. Cache entries are PR-scoped and remain
       # compilation inputs, never substitute green test receipts.

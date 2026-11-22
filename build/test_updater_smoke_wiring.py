@@ -28,13 +28,14 @@ assert 'healthy-result tampered-result evidence' in script
 workflow_text = (ROOT / ".github/workflows/macos.yml").read_text()
 if yaml:
     workflow = yaml.safe_load(workflow_text)
-    steps = workflow["jobs"]["package"]["steps"]
+    steps = workflow["jobs"]["native-package"]["steps"]
     by_id = {step.get("id"): step for step in steps}
 else:
     # Narrow fallback parser for environments without PyYAML.
+    native = workflow_text.split("  native-package:", 1)[1]
     steps = []
     current = None
-    for line in workflow_text.splitlines():
+    for line in native.splitlines():
         if re.match(r"^      - (?:id:|name:)", line):
             if current is not None:
                 steps.append(current)
