@@ -224,3 +224,32 @@ async fn authelia_rejects_direct_forged_identity_and_malformed_forwarding() {
     no_custom.headers_mut().remove("x-muninn-client");
     assert_eq!(h.send(no_custom).await.status(),StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn authelia_gateway_needs_both_loopback_socket_and_random_internal_secret() {
+    assert!(Config::authelia_gateway("http://localhost:47872", SECRET).is_err());
+    assert!(Config::authelia_gateway(ORIGIN, "short").is_err());
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(CoreConfig { data_dir:dir.path().into(), spawn_workers:false,
+        tool_dirs:Some(vec![]), ..CoreConfig::default() }).unwrap();
+    let app = router(core, Config::authelia_gateway(ORIGIN, SECRET).unwrap());
+    let send = |req| app.clone().oneshot(req);
+    let mut req = authelia_request("GET", "/api/session", Some("127.0.0.1:54321"), Some("esben"));
+    assert_eq!(send(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let mut req = authelia_request("GET", "/api/entries", Some("172.29.0.2:54321"), Some("esben"));
+    req.headers_mut().insert("x-muninn-gateway-auth", HeaderValue::from_static(SECRET));
+    assert_eq!(send(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let mut req = authelia_request("GET", "/api/entries", Some("127.0.0.1:54321"), Some("alice"));
+    req.headers_mut().insert("x-muninn-gateway-auth", HeaderValue::from_static(SECRET));
+    assert_eq!(send(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let mut req = authelia_request("GET", "/api/entries", Some("127.0.0.1:54321"), Some("esben"));
+    req.headers_mut().insert("x-muninn-gateway-auth", HeaderValue::from_static("wrong"));
+    assert_eq!(send(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let mut req = authelia_request("GET", "/api/entries", Some("127.0.0.1:54321"), Some("esben"));
+    req.headers_mut().insert("x-muninn-gateway-auth", HeaderValue::from_static(SECRET));
+    assert_eq!(send(req).await.unwrap().status(), StatusCode::OK);
+    let mut req = authelia_request("GET", "/api/entries", Some("127.0.0.1:54321"), Some("esben"));
+    req.headers_mut().append("x-muninn-gateway-auth", HeaderValue::from_static(SECRET));
+    req.headers_mut().append("x-muninn-gateway-auth", HeaderValue::from_static(SECRET));
+    assert_eq!(send(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+}
