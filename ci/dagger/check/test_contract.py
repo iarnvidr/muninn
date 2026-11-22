@@ -130,7 +130,13 @@ class DaggerContract(unittest.TestCase):
         self.assertIn("tar --format=posix --use-compress-program='zstd -1 -T2'", self.linux)
         self.assertIn("compression-level: 0", self.linux)
         self.assertIn("always() && steps.dagger-checks.outcome == 'failure'", self.linux)
-        self.assertNotIn("continue-on-error: true", self.linux)
+        # Only a failed-check cache EXPORT is best-effort. Test execution and
+        # receipt creation must remain hard-fail gates.
+        check_step = self.linux.split("- name: Rust, JavaScript, packaging, and publication checks", 1)[1].split("- name: Retrieve bounded failed-check diagnostics", 1)[0]
+        self.assertNotIn("continue-on-error", check_step)
+        export_step = self.linux.split("- name: Export Linux Cargo cache after a failed check (bounded)", 1)[1].split("- name: Preserve compiled Cargo cache", 1)[0]
+        self.assertIn("continue-on-error: true", export_step)
+        self.assertIn("steps.dagger-checks.outcome == 'failure'", export_step)
         self.assertIn("steps.dagger-checks.outcome == 'success'", self.linux)
         self.assertIn('source: cargoSeed', self.source)
         self.assertEqual(self.source.count('.withMountedCache("/cache", cargoCache)'), 3)
@@ -147,9 +153,9 @@ class DaggerContract(unittest.TestCase):
         self.assertIn('withEnvVariable("MUNINN_CACHE_EXPORT_NONCE", nonce)', self.source)
         self.assertIn('withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/desktop-tests.log")', self.source)
         self.assertIn('cp -a /cache/check-logs /snapshot/', self.source)
-        self.assertIn("Report failing desktop crate diagnostics", self.linux)
-        self.assertIn("Separate diagnostic logs from reusable compilation cache", self.linux)
-        self.assertIn("muninn-desktop-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)
+        self.assertIn("Retrieve bounded failed-check diagnostics from Dagger", self.linux)
+        self.assertIn("Report each failing Rust crate's captured output", self.linux)
+        self.assertIn("muninn-check-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}", self.linux)
         self.assertIn("steps.cargo-export.outcome == 'success'", self.linux)
         self.assertIn("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", self.linux)
         self.assertIn("steps.restore-cargo.outputs.cache-primary-key", self.linux)
@@ -179,7 +185,14 @@ class DaggerContract(unittest.TestCase):
 
     def test_mac_cache_is_native_and_preserves_smoke_workflow(self):
         self.assertIn("runs-on: macos-15", self.macos)
-        self.assertIn("      - '.github/workflows/package-snapshots.yml'", self.macos)
+        self.assertIn("workflow_dispatch: # the only event that compiles or packages Apple Silicon", self.macos)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", self.macos)
+        self.assertIn("if: github.event_name == 'pull_request'", self.macos)
+        package = self.macos.split("  package:", 1)[1].split("  native-package:", 1)[0]
+        self.assertIn("runs-on: ubuntu-24.04", package)
+        self.assertNotIn("macos-15", package)
+        native = self.macos.split("  native-package:", 1)[1]
+        self.assertIn("runs-on: macos-15", native)
         self.assertIn("MACOSX_DEPLOYMENT_TARGET: '14.0'", self.macos)
         for required in ("rustc -vV", "xcodebuild -version", "--show-sdk-version",
                          "~/.cargo/registry", "~/.cargo/git", "muninn-native-cargo-v1-",
