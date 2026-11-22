@@ -105,6 +105,25 @@ jobs:
         # Stream what the engine exposes. Some failed Cargo execs still give
         # only exit 101, so the desktop check also writes a retained log.
         run: dagger --progress logs check
+      # The beta CLI can return only exit 1 for a failed check without its
+      # per-check traceback in --progress logs. These probes run the *same*
+      # Dagger checks independently, retain the original failing gate, and
+      # make the failure actionable without treating host suites as evidence.
+      - name: Diagnose individual Dagger JS and packaging checks after failure
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        timeout-minutes: 8
+        run: |
+          set +e
+          dagger check -l --all --format=cli
+          for check in javascript packaging; do
+            echo "::group::Dagger $check (diagnosis only)"
+            timeout --signal=TERM --kill-after=10s 210s \
+              dagger --progress plain check --check="$check" 2>&1
+            code=$?
+            echo "Dagger $check diagnostic exit=$code (original Dagger gate remains authoritative)"
+            echo "::endgroup::"
+          done
+          exit 0
       # Export small per-crate logs first. Full Cargo-cache copies can stall.
       - name: Retrieve bounded failed-check diagnostics from Dagger
         id: diagnostic-export
