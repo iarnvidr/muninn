@@ -1,6 +1,10 @@
 (() => {
   'use strict';
   const M = window.MuninnWebModel, DB = window.MuninnWebStore, $ = s => document.querySelector(s);
+  // Read mode from the server-stamped HTML, never infer it from a failed API.
+  // A missing/stale marker must never enable a token form in production.
+  const authMode = document.querySelector('meta[name="muninn-auth-mode"]')?.content;
+  const tokenLogin = authMode === 'token';
   const state = {view:'server',signedIn:false,entries:[],device:[],feeds:[],feed:null,kind:'',
     transfer:null,playerURL:null,playing:null,epoch:0,refreshing:false};
   let installPrompt, progressWrite = 0;
@@ -19,7 +23,7 @@
     state.signedIn=signedIn;
     $('#connection').textContent=!navigator.onLine?'Offline · device copies available':signedIn?'Connected to server':'Server not connected';
     $('#login-panel').hidden=signedIn||!navigator.onLine;
-    $('#logout').hidden=!signedIn;
+    $('#logout').hidden=!signedIn||!tokenLogin;
     $('#queue-panel').hidden=!signedIn||state.view!=='server';
   }
   function stopPlayer() {
@@ -201,7 +205,15 @@
     }catch(error){notice(error.name==='AbortError'?'Device transfer cancelled; no partial copy retained.':error.message,true);}
     finally{state.transfer=null;$('#transfer-panel').hidden=true;}
   }
-  $('#login-form').addEventListener('submit',async event=>{
+  if(!tokenLogin) {
+    // An Authelia session is the only login. No redundant password form is
+    // present, even when the API responds with 401 or 403.
+    const panel=$('#login-panel');
+    panel.replaceChildren(el('h2','Reconnect through Authelia'),
+      el('p','Open the protected Muninn page to renew your owner session.'),
+      button('Reconnect',()=>window.location.assign('/app/')));
+  }
+  if(tokenLogin) $('#login-form').addEventListener('submit',async event=>{
     event.preventDefault();const field=$('#token'),token=field.value;field.value='';
     try{await api('/api/session',{method:'POST',body:{token}});notice('Connected.');await refresh();}catch(e){notice(e.message,true);}
   });
