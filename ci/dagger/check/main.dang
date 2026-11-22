@@ -247,6 +247,8 @@ type MuninnCi {
       .withMountedDirectory("/src", ws.directory("/", include: [
         "ui/**", "src-tauri/*.js", "src-tauri/test/**",
         "build/native-player-interactions.js", "build/test_native_player_interactions.js",
+        # UI/PWA tests assert Rust web-route coverage against the actual adapter.
+        "crates/server/src/web/mod.rs",
       ], exclude: ["**/node_modules"]))
       .withWorkdir("/src")
       .withExec(["sh", "-ec", "node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js"])
