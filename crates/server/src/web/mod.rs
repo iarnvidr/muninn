@@ -25,6 +25,9 @@ struct Authelia {
     proxy_ips: Vec<IpAddr>,
     // Never accept an owner name from a browser, forwarded claim or env var.
     expected_user: &'static str,
+    // Only the in-container Python gateway knows this random, per-start
+    // secret. The gateway itself pins the external Traefik TCP peer.
+    gateway_secret: Option<String>,
 }
 pub struct Config {
     pub origin: String,
@@ -66,7 +69,19 @@ impl Config {
             return Err("Authelia requires non-loopback resolved Traefik peer addresses".into());
         }
         Ok(Self { origin, authority, secure, secret: None,
-            authelia: Some(Authelia { proxy_ips, expected_user: "esben" }) })
+            authelia: Some(Authelia { proxy_ips, expected_user: "esben", gateway_secret: None }) })
+    }
+    pub fn authelia_gateway(origin: &str, secret: &str) -> Result<Self, String> {
+        let (origin, authority, secure) = Self::parse_origin(origin)?;
+        if !secure { return Err("Gateway Authelia requires HTTPS".into()); }
+        if !(32..=256).contains(&secret.len()) || !secret.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err("Gateway requires an unpredictable 32–256 character secret".into());
+        }
+        Ok(Self { origin, authority, secure, secret: None,
+            authelia: Some(Authelia {
+                proxy_ips: vec![IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
+                expected_user: "esben", gateway_secret: Some(secret.to_owned()),
+            }) })
     }
     fn auth_mode(&self) -> &'static str {
         if self.authelia.is_some() { "authelia" } else { "token" }
@@ -117,7 +132,16 @@ fn authelia_authorized(req: &Request, config: &Config) -> bool {
     let peer = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|v| v.0);
     let Some(peer) = peer else { return false };
     let headers = req.headers();
-    auth.proxy_ips.contains(&peer.ip())
+    let gateway_valid = match auth.gateway_secret.as_deref() {
+        Some(secret) => {
+            headers.get_all("x-muninn-gateway-auth").iter().count() == 1
+                && headers.get("x-muninn-gateway-auth")
+                    .and_then(|v| v.to_str().ok()).is_some_and(|provided| ct_eq(provided, secret))
+        }
+        None => headers.get_all("x-muninn-gateway-auth").iter().next().is_none(),
+    };
+    gateway_valid
+        && auth.proxy_ips.contains(&peer.ip())
         && headers.get_all(header::HOST).iter().count() == 1
         && headers.get(header::HOST).is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(config.authority.as_bytes()))
         && headers.get_all("remote-user").iter().count() == 1
