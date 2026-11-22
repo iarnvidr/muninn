@@ -100,3 +100,15 @@ test('PWA is a separate client with a blob-only player and visible feed filters'
   assert.doesNotMatch(html,/<select/);assert.match(html,/On this device/);assert.match(html,/playsinline/);
   for(const sourceName of ['app.js','model.js','store.js','sw.js'])assert.doesNotThrow(()=>new vm.Script(file(sourceName)),sourceName);
 });
+
+test('PWA honors server-selected authentication without token fallback',()=>{
+  const html=file('index.html'),js=file('app.js');
+  assert.match(html,/name="muninn-auth-mode" content="__MUNINN_AUTH_MODE__"/);
+  assert.match(js,/const tokenLogin = authMode === 'token'/);
+  assert.match(js,/if\(!tokenLogin\) \{/);
+  assert.match(js,/panel\.replaceChildren\(/);
+  assert.match(js,/Reconnect through Authelia/);
+  assert.match(js,/if\(tokenLogin\) \$\('#login-form'\)\.addEventListener/);
+  assert.match(js,/!signedIn\|\|!tokenLogin/);
+  assert.doesNotMatch(js,/localStorage|sessionStorage|document\.cookie/);
+});
