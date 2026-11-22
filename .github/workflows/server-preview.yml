@@ -74,6 +74,60 @@ jobs:
           done
           test "$state" = healthy
           docker exec muninn-preview-smoke python3 /opt/muninn-preview/smoke.py
+      - name: Exercise Authelia gateway health and trusted Docker peer
+        run: |
+          set -euo pipefail
+          image="$(docker image ls --no-trunc --filter "label=org.opencontainers.image.revision=$GITHUB_SHA" --format '{{.ID}}' | head -n1)"
+          test -n "$image"
+          docker network create muninn-sso-smoke-network
+          trap 'docker rm -fv muninn-sso-smoke muninn-sso-traefik >/dev/null 2>&1 || true; docker network rm muninn-sso-smoke-network >/dev/null 2>&1 || true' EXIT
+          # Model the actual socket-peer boundary; forwarding headers alone are
+          # insufficient. Nothing is published on a host port.
+          docker run -d --name muninn-sso-traefik --network muninn-sso-smoke-network \
+            --network-alias traefik --entrypoint python3 "$image" -c 'import time; time.sleep(600)'
+          docker run -d --name muninn-sso-smoke --network muninn-sso-smoke-network \
+            --init --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --security-opt "seccomp=$PWD/server-preview/chromium-seccomp.json" \
+            --pids-limit 512 --memory 3g --shm-size 512m --tmpfs /tmp:size=1g,mode=1777 \
+            --mount type=volume,dst=/var/lib/muninn \
+            -e MUNINN_WEB_AUTH=authelia -e MUNINN_WEB_ORIGIN=https://muninn-preview.example.test "$image"
+          for i in $(seq 1 60); do
+            state="$(docker inspect -f '{{.State.Health.Status}}' muninn-sso-smoke)"
+            [ "$state" != healthy ] || break
+            [ "$state" != unhealthy ] || break
+            sleep 2
+          done
+          test "$state" = healthy || { echo 'Authelia gateway did not pass container healthcheck'; exit 1; }
+          docker exec muninn-sso-smoke python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          base = 'http://127.0.0.1:8080'
+          host = {'Host': 'muninn-preview.example.test'}
+          with urllib.request.urlopen(urllib.request.Request(base+'/health', headers=host), timeout=5) as r:
+              assert json.load(r)['ok'] is True
+          # Even forged owner headers from an untrusted socket must fail.
+          for path in ('/api/session','/api/entries','/app/'):
+              h = {**host, 'Remote-User':'esben', 'X-Forwarded-Proto':'https'}
+              try: urllib.request.urlopen(urllib.request.Request(base+path, headers=h), timeout=5)
+              except urllib.error.HTTPError as e: assert e.code == 403, (path,e.code)
+              else: raise AssertionError('Forged identity accepted at '+path)
+          PY
+          docker exec muninn-sso-traefik python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          base = 'http://muninn-sso-smoke:8080'
+          host = {'Host':'muninn-preview.example.test', 'Remote-User':'esben', 'X-Forwarded-Proto':'https'}
+          def get(path, headers=host):
+              return urllib.request.urlopen(urllib.request.Request(base+path, headers=headers), timeout=8)
+          with get('/api/session') as r:
+              sess=json.load(r)
+              assert sess['ok'] is True and sess['auth_mode']=='authelia' and sess['login_required'] is False
+          with get('/app/') as r:
+              assert '<meta name="muninn-auth-mode" content="authelia">' in r.read(500000).decode()
+          with get('/api/entries') as r: assert isinstance(json.load(r), list)
+          for wrong in ({**host,'Remote-User':'alice'}, {'Host':host['Host'],'X-Forwarded-Proto':'https'}):
+              try: get('/api/session', wrong)
+              except urllib.error.HTTPError as e: assert e.code==403
+              else: raise AssertionError('Untrusted owner accepted')
+          PY
       - name: Publish immutable checked preview
         if: github.event_name == 'push'
         env:
