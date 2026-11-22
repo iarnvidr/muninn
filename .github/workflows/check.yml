@@ -130,6 +130,26 @@ jobs:
             tail -n 100 "$log"
             echo '::endgroup::'
           done < <(find "$dir" -maxdepth 1 -type f -name '*.log' -print0 | sort -z)
+      # Secondary host diagnostics only. The Dagger check remains authoritative;
+      # a host result can explain a failure but cannot promote a failed check.
+      - name: Diagnose JavaScript and release policy suites after Dagger failure
+        if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          set +e
+          for suite in javascript python-release python-dagger python-updater; do
+            case "$suite" in
+              javascript) node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+              python-release) python3 -m unittest discover -s build -p 'test_*.py' -v > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+              python-dagger) python3 -m unittest discover -s ci/dagger/check -p 'test_*.py' -v > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+              python-updater) python3 build/updater-smoke/test_protocol.py > "$RUNNER_TEMP/muninn-$suite.log" 2>&1 ;;
+            esac
+            status=$?
+            echo "::group::$suite diagnostic exit=$status (not a CI gate)"
+            tail -n 120 "$RUNNER_TEMP/muninn-$suite.log"
+            echo '::endgroup::'
+          done
+          exit 0
       - name: Retain failure diagnostics independently of Cargo cache
         if: ${{ always() && steps.dagger-checks.outcome == 'failure' && !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
