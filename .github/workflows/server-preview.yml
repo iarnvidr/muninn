@@ -98,7 +98,7 @@ jobs:
             sleep 2
           done
           test "$state" = healthy || { echo 'Authelia gateway did not pass container healthcheck'; exit 1; }
-          docker exec muninn-sso-smoke python3 - <<'PY'
+          docker exec -i muninn-sso-smoke python3 - <<'PY'
           import json, urllib.request, urllib.error
           base = 'http://127.0.0.1:8080'
           host = {'Host': 'muninn-preview.example.test'}
@@ -111,7 +111,7 @@ jobs:
               except urllib.error.HTTPError as e: assert e.code == 403, (path,e.code)
               else: raise AssertionError('Forged identity accepted at '+path)
           PY
-          docker exec muninn-sso-traefik python3 - <<'PY'
+          docker exec -i muninn-sso-traefik python3 - <<'PY'
           import json, urllib.request, urllib.error
           base = 'http://muninn-sso-smoke:8080'
           host = {'Host':'muninn-preview.example.test', 'Remote-User':'esben', 'X-Forwarded-Proto':'https'}
