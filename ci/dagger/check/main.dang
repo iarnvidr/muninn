@@ -149,72 +149,84 @@ type MuninnCi {
   # prevent other check results from being recorded.
   pub domainTests: Void @check {
     rustBase.withMountedDirectory("/input", domainSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/domain-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "bash", "-euc", "cargo test --locked -p muninn-domain --no-default-features && cargo test --locked -p muninn-domain"])
       .sync
     null
   }
   pub policyTests: Void @check {
     rustBase.withMountedDirectory("/input", policySource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/policy-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-policy"])
       .sync
     null
   }
   pub captureTests: Void @check {
     rustBase.withMountedDirectory("/input", captureSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/capture-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-capture"])
       .sync
     null
   }
   pub storageTests: Void @check {
     rustBase.withMountedDirectory("/input", storageSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/storage-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-storage"])
       .sync
     null
   }
   pub mediaTests: Void @check {
     rustBase.withMountedDirectory("/input", mediaSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/media-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-media"])
       .sync
     null
   }
   pub navigationTests: Void @check {
     rustBase.withMountedDirectory("/input", navigationSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/navigation-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-navigation"])
       .sync
     null
   }
   pub protocolTests: Void @check {
     rustBase.withMountedDirectory("/input", protocolSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/protocol-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-protocol"])
       .sync
     null
   }
   pub clientTests: Void @check {
     rustBase.withMountedDirectory("/input", clientSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/client-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-client"])
       .sync
     null
   }
   pub coreTests: Void @check {
     rustBase.withMountedDirectory("/input", coreSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/core-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-core"])
       .sync
     null
   }
   pub uiAssetsTests: Void @check {
     rustBase.withMountedDirectory("/input", uiAssetsSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/uiAssets-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-ui-assets"])
       .sync
     null
   }
   pub serverTests: Void @check {
     rustBase.withMountedDirectory("/input", serverSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/server-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-server"])
       .sync
     null
   }
   pub cliTests: Void @check {
     rustBase.withMountedDirectory("/input", cliSource)
+      .withEnvVariable("MUNINN_CARGO_LOG", "/cache/check-logs/cli-tests.log")
       .withExec(["bash", "/run-rust.sh", "/input", "/cache", "cargo", "test", "--locked", "-p", "muninn-cli"])
       .sync
     null
@@ -298,6 +310,16 @@ type MuninnCi {
   Pass a fresh nonce only here; never add a run ID or commit to the build cache key.
   This does not rerun tests, grant a check success, or produce release evidence.
   """
+  # Export diagnostics alone before the potentially multi-gigabyte Cargo cache.
+  # A failed Dagger @check must not hide test failures behind a large cache copy.
+  pub exportCheckLogs(nonce: String!): Directory! {
+    rustTools
+      .withMountedCache("/cache", cargoCache)
+      .withEnvVariable("MUNINN_CHECK_LOG_EXPORT_NONCE", nonce)
+      .withExec(["sh", "-ec", "mkdir -p /check-logs; if test -d /cache/check-logs; then cp -a /cache/check-logs/. /check-logs/; fi"])
+      .directory("/check-logs")
+  }
+
   pub exportCargoCache(nonce: String!): Directory! {
     rustTools
       .withMountedCache("/cache", cargoCache)
