@@ -228,10 +228,19 @@ def verify_candidate(data, metadata, run, pr, merge_sha, merge_tree, root, api_f
     if (run.get("repository", {}).get("full_name") != REPOSITORY
             or run.get("head_repository", {}).get("full_name") != REPOSITORY
             or run.get("path") != NATIVE_WORKFLOW
-            or run.get("conclusion") != "success"
-            or run.get("event") != "pull_request"
-            or run["head_sha"] != pr["head"]["sha"]):
-        raise ValueError("native producer is not the successful same-repository PR run")
+            or run.get("conclusion") != "success"):
+        raise ValueError("native producer is not a trusted successful workflow")
+    # Historical accepted native PRs remain verifiable. All NEW native builds
+    # are manually dispatched on protected main and independently bound to the
+    # same exact merge tree and immutable artifact inventory.
+    manual_main = run.get("event") == "workflow_dispatch"
+    if manual_main:
+        if (run.get("head_branch") != "main"
+                or run.get("head_sha") != merge_sha):
+            raise ValueError("manual native build must target the exact protected-main merge")
+    elif (run.get("event") != "pull_request"
+            or run.get("head_sha") != pr["head"]["sha"]):
+        raise ValueError("native producer is neither manual main nor a historical PR build")
     if (not pr.get("merged") or pr.get("base", {}).get("ref") != "main"
             or pr.get("base", {}).get("repo", {}).get("full_name") != REPOSITORY
             or pr.get("head", {}).get("repo", {}).get("full_name") != REPOSITORY
@@ -244,9 +253,11 @@ def verify_candidate(data, metadata, run, pr, merge_sha, merge_tree, root, api_f
     expected = {
         "schema": 1, "repository": REPOSITORY, "workflow_path": NATIVE_WORKFLOW,
         "run_id": run["id"], "run_attempt": run["run_attempt"],
-        "event": "pull_request", "head_sha": run["head_sha"],
-        "base_sha": pr.get("base", {}).get("sha"),
-        "pr_number": pr["number"], "tested_tree": merge_tree,
+        "event": "workflow_dispatch" if manual_main else "pull_request",
+        "head_sha": merge_sha if manual_main else run["head_sha"],
+        "base_sha": None if manual_main else pr.get("base", {}).get("sha"),
+        "pr_number": None if manual_main else pr["number"],
+        "tested_tree": merge_tree,
         "version": version(root), "platform": "darwin-arm64",
         "files": {"Muninn.app.tar.gz": sha(members["Muninn.app.tar.gz"])},
     }
@@ -299,7 +310,7 @@ def verify_candidate(data, metadata, run, pr, merge_sha, merge_tree, root, api_f
         "source_run_attempt": run["run_attempt"], "source_artifact_id": metadata["id"],
         "source_artifact_digest": metadata["digest"], "source_artifact_name": artifact_name,
         "workflow_path": NATIVE_WORKFLOW, "workflow_sha": workflow_sha,
-        "source_base_sha": receipt["base_sha"],
+        "source_base_sha": pr["base"]["sha"] if manual_main else receipt["base_sha"],
         "version": version(root), "platform": "darwin-arm64",
         "files": expected["files"], "app_files": receipt["app_files"],
     }
@@ -435,17 +446,30 @@ def promote(root, merge_sha):
         raise ValueError("fork-produced artifacts cannot be promoted to a release")
     require_checks(pr["head"]["sha"])
     runs = []
+    # Prefer a freshly requested, protected-main native build of this exact
+    # merge. Keep the historical PR artifact path for previously built commits.
     for page in range(1, 11):
-        query = urllib.parse.urlencode({"head_sha": pr["head"]["sha"], "event": "pull_request",
+        query = urllib.parse.urlencode({"head_sha": merge_sha, "event": "workflow_dispatch",
                                         "status": "success", "per_page": 100, "page": page})
         batch = api(f"repos/{REPOSITORY}/actions/workflows/macos.yml/runs?{query}")["workflow_runs"]
         runs.extend(x for x in batch if x.get("path") == NATIVE_WORKFLOW
-                    and x.get("head_sha") == pr["head"]["sha"]
+                    and x.get("head_branch") == "main"
+                    and x.get("head_sha") == merge_sha
                     and x.get("conclusion") == "success")
         if len(batch) < 100:
             break
     if not runs:
-        raise ValueError("no successful native PR run for the exact merged head")
+        for page in range(1, 11):
+            query = urllib.parse.urlencode({"head_sha": pr["head"]["sha"], "event": "pull_request",
+                                            "status": "success", "per_page": 100, "page": page})
+            batch = api(f"repos/{REPOSITORY}/actions/workflows/macos.yml/runs?{query}")["workflow_runs"]
+            runs.extend(x for x in batch if x.get("path") == NATIVE_WORKFLOW
+                        and x.get("head_sha") == pr["head"]["sha"]
+                        and x.get("conclusion") == "success")
+            if len(batch) < 100:
+                break
+    if not runs:
+        raise ValueError("no verified on-demand main native build or historical native PR artifact")
     run = max(runs, key=lambda x: (x["id"], x["run_attempt"]))
     artifacts = api(f"repos/{REPOSITORY}/actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
     name = f"{NATIVE_ARTIFACT_PREFIX}-{run['id']}-{run['run_attempt']}"
@@ -465,7 +489,8 @@ def mapping(root, mapping_run_id, expected_commit):
         raise ValueError("mapping run id must be numeric")
     run = api(f"repos/{REPOSITORY}/actions/runs/{mapping_run_id}")
     if (run.get("repository", {}).get("full_name") != REPOSITORY
-            or run.get("path") != MAPPING_WORKFLOW or run.get("event") != "push"
+            or run.get("path") != MAPPING_WORKFLOW
+            or run.get("event") not in ("push", "workflow_dispatch")
             or run.get("head_branch") != "main" or run.get("head_sha") != expected_commit
             or run.get("conclusion") != "success"):
         raise ValueError("mapping run is not the successful trusted main promotion for this commit")
