@@ -70,7 +70,7 @@ class PreviewReleasePlanTests(unittest.TestCase):
     def test_event_must_be_successful_trusted_main_mapping(self):
         invalid = [
             {"conclusion": "failure"}, {"status": "in_progress"},
-            {"head_branch": "feature"}, {"event": "pull_request"},
+            {"head_branch": "feature"}, {"event": "pull_request"}, {"event": "push"},
             {"path": ".github/workflows/macos.yml"},
             {"repository": {"full_name": "outsider/muninn"}},
             {"head_repository": {"full_name": "outsider/muninn"}},
@@ -183,6 +183,9 @@ class PreviewWorkflowContractTests(unittest.TestCase):
                        "release_needed == 'true'"):
             self.assertIn(string, auto)
         self.assertNotIn("pull_request_target:", auto)
+        self.assertNotIn("  push:", auto)
+        self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", auto)
+        self.assertIn("github.event_name == 'workflow_dispatch'", auto)
         self.assertNotIn("cargo build", auto)
         self.assertNotIn("--clobber", publisher)
         self.assertIn('repos/$GH_REPO/releases?per_page=100', publisher)
@@ -193,6 +196,35 @@ class PreviewWorkflowContractTests(unittest.TestCase):
         self.assertIn("name: muninn-release", protected)
         self.assertIn("workflow_dispatch:", protected)
         self.assertNotIn("workflow_run:", protected)
+
+
+class OnDemandNativeWorkflowContractTests(unittest.TestCase):
+    def test_mac_host_is_manual_and_pr_status_is_linux_only(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/macos.yml").read_text()
+        self.assertIn("  pull_request:", workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertNotIn("  push:", workflow)
+        self.assertIn("  package:\\n    # Preserve", workflow)
+        self.assertIn("if: github.event_name == 'pull_request'\\n    runs-on: ubuntu-24.04", workflow)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'\\n    runs-on: macos-15", workflow)
+        self.assertEqual(workflow.count("runs-on: macos-15"), 1)
+
+    def test_mapping_and_signed_publication_require_manual_approval(self):
+        root = Path(__file__).resolve().parents[1]
+        mapping = (root / ".github/workflows/accept-native.yml").read_text()
+        publisher = (root / ".github/workflows/auto-preview-release.yml").read_text()
+        snapshot = (root / ".github/workflows/package-snapshots.yml").read_text()
+        self.assertIn("  workflow_dispatch:", mapping)
+        self.assertNotIn("  push:", mapping)
+        self.assertIn("github.ref == 'refs/heads/main'", mapping)
+        self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", publisher)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", publisher)
+        self.assertNotIn("  push:", publisher)
+        self.assertIn("github.event_name == 'workflow_dispatch'", publisher)
+        self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", snapshot)
+        self.assertIn("Apple Silicon build (on demand)", snapshot)
+
 
 
 @unittest.skipUnless(shutil.which("jq"), "publisher requires jq on Ubuntu runners")
