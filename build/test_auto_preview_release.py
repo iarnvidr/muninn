@@ -205,9 +205,9 @@ class OnDemandNativeWorkflowContractTests(unittest.TestCase):
         self.assertIn("  pull_request:", workflow)
         self.assertIn("  workflow_dispatch:", workflow)
         self.assertNotIn("  push:", workflow)
-        self.assertIn("  package:\\n    # Preserve", workflow)
-        self.assertIn("if: github.event_name == 'pull_request'\\n    runs-on: ubuntu-24.04", workflow)
-        self.assertIn("if: github.event_name == 'workflow_dispatch'\\n    runs-on: macos-15", workflow)
+        self.assertIn("  package:\n    # Preserve", workflow)
+        self.assertIn("if: github.event_name == 'pull_request'\n    runs-on: ubuntu-24.04", workflow)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'\n    runs-on: macos-15", workflow)
         self.assertEqual(workflow.count("runs-on: macos-15"), 1)
 
     def test_mapping_and_signed_publication_require_manual_approval(self):
