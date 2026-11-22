@@ -45,7 +45,8 @@ fn configuration_requires_exact_secure_origin_and_a_strong_token() {
 #[tokio::test]
 async fn shell_is_public_and_api_and_media_are_not() {
     let h=harness();
-    for path in ["/app/","/app/manifest.webmanifest","/app/sw.js","/app/icon-192.png","/health"] {
+    for path in ["/app/","/app/manifest.webmanifest","/app/sw.js","/app/desktop.css","/app/raven.png",
+        "/ui/Cinzel.ttf","/ui/Inter.ttf","/ui/IBMPlexMono.ttf","/app/icon-192.png","/health"] {
         assert_eq!(h.send(request("GET",path,None,"")).await.status(),StatusCode::OK,"{path}");
     }
     for path in ["/api/entries","/api/jobs","/api/session","/media/example","/thumb/aaaaaaaaaaa"] {
@@ -91,7 +92,8 @@ async fn login_attempts_are_bounded() {
 #[tokio::test]
 async fn native_admin_and_incomplete_playback_are_not_exposed() {
     let h=harness();let cookie=h.login().await;
-    for (method,path) in [("POST","/api/import/media"),("POST","/api/tools/ytdlp/install"),
+    for (method,path) in [("GET","/ui/app.js"),("GET","/ui/index.html"),
+        ("POST","/api/import/media"),("POST","/api/tools/ytdlp/install"),
         ("GET","/api/proxy"),("POST","/api/open"),("POST","/api/watch/aaaaaaaaaaa"),("GET","/ui/"),
         ("GET","/s/secret/video/0"),("GET","/api/settings")] {
         assert_eq!(h.send(request(method,path,Some(&cookie),"{}")).await.status(),StatusCode::NOT_FOUND,"{path}");

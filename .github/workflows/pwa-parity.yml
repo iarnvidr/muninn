@@ -1,0 +1,28 @@
+name: PWA desktop parity quick checks
+on:
+  pull_request:
+    paths:
+      - 'ui/pwa/**'
+      - 'ui/test/pwa*.test.js'
+      - 'crates/server/src/web/**'
+      - '.github/workflows/pwa-parity.yml'
+permissions:
+  contents: read
+jobs:
+  javascript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: PWA data and browser contracts
+        run: node --test ui/test/pwa*.test.js
+      - name: JS syntax and source boundaries
+        run: |
+          node --check ui/pwa/app.js
+          node --check ui/pwa/model.js
+          node --check ui/pwa/store.js
+          node --check ui/pwa/sw.js
+          node -e "const fs=require('fs');const s=fs.readFileSync('ui/pwa/index.html','utf8'); if(!s.includes('desktop.css')||s.includes('__TAURI'))process.exit(1)"
