@@ -4,7 +4,7 @@ mod web;
 #[path = "../web/browser_capture.rs"]
 mod browser_capture;
 use muninn_core::{Core, CoreConfig};
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::{SocketAddr, ToSocketAddrs}, path::PathBuf};
 
 fn main() {
     if let Err(error) = run() {
@@ -56,10 +56,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !addr.ip().is_loopback() && !origin.starts_with("https://") {
         return Err("non-loopback listeners require an HTTPS public origin and a trusted TLS reverse proxy".into());
     }
-    let path = token_file.ok_or("--token-file is required; create one with --init-token first")?;
-    let metadata = std::fs::metadata(&path)?;
-    if !metadata.is_file() || metadata.len() > 1024 { return Err("invalid token file".into()); }
-    let config = web::Config::new(&origin, &std::fs::read_to_string(path)?)?;
+    let config = match std::env::var("MUNINN_WEB_AUTH") {
+        Ok(mode) if mode == "authelia" => {
+            // Resolve the fixed Traefik service on the private Docker network.
+            // The server rejects every forwarded identity from a different
+            // socket peer, including a direct request with forged headers.
+            let mut peers = ("traefik", 8082).to_socket_addrs()?
+                .map(|addr| addr.ip()).collect::<Vec<_>>();
+            peers.sort_unstable();
+            peers.dedup();
+            web::Config::authelia(&origin, peers)?
+        }
+        Ok(mode) if mode != "token" => {
+            return Err("MUNINN_WEB_AUTH must be token or authelia".into());
+        }
+        Err(error) if error != std::env::VarError::NotPresent => return Err(error.into()),
+        _ => {
+            let path = token_file.ok_or("--token-file is required for token mode; create one with --init-token first")?;
+            let metadata = std::fs::metadata(&path)?;
+            if !metadata.is_file() || metadata.len() > 1024 { return Err("invalid token file".into()); }
+            web::Config::new(&origin, &std::fs::read_to_string(path)?)?
+        }
+    };
     // Bind both listeners before starting workers. The capture adapter is never
     // public, even when the public PWA listener is explicitly non-loopback.
     let socket = std::net::TcpListener::bind(addr)?;
@@ -82,10 +100,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(socket) = capture_socket {
             let private = tokio::net::TcpListener::from_std(socket)?;
             tokio::select! {
-                result = axum::serve(listener, app).into_future() => result,
+                result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).into_future() => result,
                 result = axum::serve(private, capture_app).into_future() => result,
             }
-        } else { axum::serve(listener, app).await }
+        } else { axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await }
     });
     core.shutdown();
     result?;
