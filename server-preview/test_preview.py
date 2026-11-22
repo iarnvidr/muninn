@@ -74,14 +74,14 @@ class GatewayAutheliaTests(unittest.TestCase):
         class Transport:
             def get_extra_info(self, name):
                 return (peer, 55000) if name == "peername" else None
-        h = CIMultiDict({"Host": "muninn-preview.ginnungagaps.xyz"})
+        h = CIMultiDict({"Host": "muninn-preview.example.test"})
         if user is not None: h.add("Remote-User", user)
         if proto is not None: h.add("X-Forwarded-Proto", proto)
         return SimpleNamespace(
             transport=Transport(),
             headers=h,
             app={"auth_mode": "authelia",
-                 "authority": "muninn-preview.ginnungagaps.xyz",
+                 "authority": "muninn-preview.example.test",
                  "proxy_ips": {ipaddress.ip_address("172.29.0.2")},
                  "gateway_secret": "a" * 64},
         )
