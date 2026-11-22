@@ -4,6 +4,9 @@ import asyncio
 import contextlib
 import json
 import os
+import ipaddress
+import secrets
+import socket
 from pathlib import Path
 from urllib.parse import urlsplit
 from aiohttp import web, ClientSession, ClientTimeout
@@ -35,9 +38,42 @@ def validate_request(request, origin: str, authority: str):
         raise web.HTTPForbidden(text="Browser action requires same-origin PWA request")
 
 
+def resolve_trusted_traefik():
+    # This is the actual Docker network peer, never X-Forwarded-For.
+    peers = {ipaddress.ip_address(info[4][0]) for info in
+             socket.getaddrinfo("traefik", 8082, type=socket.SOCK_STREAM)}
+    if not peers or any(peer.is_loopback or peer.is_unspecified for peer in peers):
+        raise RuntimeError("Missing non-loopback Traefik network peer")
+    return peers
+
+
+def trusted_owner(request):
+    transport = request.transport
+    address = transport.get_extra_info("peername") if transport else None
+    try:
+        peer = ipaddress.ip_address(address[0]) if address else None
+    except ValueError:
+        return False
+    # ForwardAuth must replace Remote-User, not merely append a browser value.
+    return (peer in request.app.get("proxy_ips", set())
+            and request.headers.getall("Remote-User", []) == ["esben"]
+            and request.headers.getall("X-Forwarded-Proto", []) == ["https"]
+            and not request.headers.getall("X-Muninn-Gateway-Auth", []))
+
+
+def internal_identity_headers(request):
+    # Created only AFTER the external socket and ForwardAuth subject pass.
+    return {"Host": request.app["authority"],
+            "Remote-User": "esben", "X-Forwarded-Proto": "https",
+            "X-Muninn-Gateway-Auth": request.app["gateway_secret"]}
+
+
 @web.middleware
 async def boundary(request, handler):
     validate_request(request, request.app["origin"], request.app["authority"])
+    if (request.app["auth_mode"] == "authelia" and request.path != "/health"
+            and not trusted_owner(request)):
+        raise web.HTTPForbidden(text="Untrusted proxy or owner identity")
     try:
         response = await handler(request)
     except web.HTTPException:
@@ -53,7 +89,9 @@ async def boundary(request, handler):
 
 
 async def authenticated(request):
-    headers = {"Host": request.app["authority"], "Cookie": request.headers.get("Cookie", "")}
+    headers = (internal_identity_headers(request)
+               if request.app.get("auth_mode") == "authelia"
+               else {"Host": request.app["authority"], "Cookie": request.headers.get("Cookie", "")})
     async with request.app["http"].get("http://127.0.0.1:47872/api/session", headers=headers, allow_redirects=False) as response:
         if response.status != 200:
             raise web.HTTPUnauthorized(text="Connect to Muninn before using the server browser")
@@ -90,6 +128,11 @@ async def proxy(request):
     # never a forwarding target, and arbitrary URLs/headers are not accepted.
     headers = {key: value for key, value in request.headers.items()
                if key.lower() in {"host", "origin", "cookie", "content-type", "range", "if-range", "x-muninn-client", "accept"}}
+    if request.app["auth_mode"] == "authelia":
+        # Ingress identity is never forwarded verbatim. Reissue it locally only
+        # after trusted_owner has verified the real TCP peer and owner.
+        headers.pop("Cookie", None)
+        headers.update(internal_identity_headers(request))
     body = await request.read()
     url = "http://127.0.0.1:47872" + request.raw_path
     async with request.app["http"].request(request.method, url, headers=headers, data=body or None, allow_redirects=False) as upstream:
@@ -117,13 +160,21 @@ async def lifecycle(app):
     data = Path(os.environ.get("MUNINN_DATA_DIR", "/var/lib/muninn"))
     private = data / "browser"
     private.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Token comes from an operator-managed file; no generated default password.
-    token_file = Path(os.environ["MUNINN_WEB_TOKEN_FILE"])
-    if not token_file.is_file():
-        raise RuntimeError("Missing Muninn access-token file")
     env = {**os.environ, "MUNINN_WEB_BIND": "127.0.0.1:47872", "MUNINN_BROWSER_CAPTURE": "1",
            "MUNINN_BROWSER_COOKIE_FILE": str(private / "youtube-cookies.json"),
            "MUNINN_BROWSER_TIKTOK_COOKIE_FILE": str(private / "tiktok-cookies.json")}
+    if app["auth_mode"] == "authelia":
+        # Do not mint or mount another user-facing access token. The gateway
+        # pins the Traefik socket peer; a fresh secret binds it to loopback Rust.
+        app["proxy_ips"] = resolve_trusted_traefik()
+        app["gateway_secret"] = secrets.token_hex(32)
+        env["MUNINN_WEB_GATEWAY_SECRET"] = app["gateway_secret"]
+        env.pop("MUNINN_WEB_TOKEN_FILE", None)
+    else:
+        token_file = Path(os.environ["MUNINN_WEB_TOKEN_FILE"])
+        if not token_file.is_file():
+            raise RuntimeError("Missing Muninn access-token file")
+        env.pop("MUNINN_WEB_GATEWAY_SECRET", None)
     child = await asyncio.create_subprocess_exec("muninn-web", env=env)
     http = ClientSession(timeout=ClientTimeout(total=None, connect=10, sock_read=60), auto_decompress=False)
     app["http"] = http
@@ -172,6 +223,10 @@ def create_app():
     origin, authority = config()
     app = web.Application(middlewares=[boundary], client_max_size=16 * 1024)
     app["origin"], app["authority"] = origin, authority
+    mode = os.environ.get("MUNINN_WEB_AUTH", "token")
+    if mode not in {"token", "authelia"}:
+        raise RuntimeError("MUNINN_WEB_AUTH must be token or authelia")
+    app["auth_mode"] = mode
     app.cleanup_ctx.append(lifecycle)
     app.router.add_get("/browser/state", browser_state)
     app.router.add_post("/browser/action", browser_action)
