@@ -39,13 +39,22 @@ class PackagePublisherContract(unittest.TestCase):
         self.assertNotIn(" main", package_metadata(event)["tags"])
 
     def test_mac_package_is_not_a_release_and_needs_a_successful_build(self):
-        event = workflow_run(name="Apple Silicon build", conclusion="success")
+        event = workflow_run(name="Apple Silicon build (on demand)", event="workflow_dispatch", conclusion="success")
         data = package_metadata(event)
         self.assertEqual(data["kind"], "macos-candidate-v1")
         self.assertEqual(data["artifact"], "muninn-macos-arm64")
         event["workflow_run"]["conclusion"] = "failure"
         with self.assertRaisesRegex(ValueError, "no publishable artifact"):
             package_metadata(event)
+
+    def test_non_manual_native_runs_cannot_publish_candidates(self):
+        for trigger in ("pull_request", "push"):
+            with self.assertRaisesRegex(ValueError, "no publishable artifact"):
+                package_metadata(workflow_run(
+                    name="Apple Silicon build (on demand)", event=trigger, conclusion="success"))
+        with self.assertRaisesRegex(ValueError, "no publishable artifact"):
+            package_metadata(workflow_run(
+                name="Apple Silicon build", event="workflow_dispatch", conclusion="success"))
 
     def test_fork_is_rejected_even_if_it_copies_the_workflow_name(self):
         event = workflow_run()
