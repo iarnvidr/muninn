@@ -220,7 +220,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
 
 test('mobile server-browser canvas remains readable and can pan horizontally',()=>{
   const css=fs.readFileSync(path.join(__dirname,'../../server-preview/client.css'),'utf8');
-  assert.match(css,/remote-frame-viewport\\{[^}]*overflow-x:auto/);
+  assert.match(css,/remote-frame-viewport\{[^}]*overflow-x:auto/);
   assert.match(css,/touch-action:pan-x/);
-  assert.match(css,/@media\\(max-width:600px\\)\\{[\\s\\S]*?remote-frame\\{width:960px/);
+  assert.match(css,/@media\(max-width:600px\)\{[\s\S]*?remote-frame\{width:960px/);
 });
