@@ -16,6 +16,20 @@ from policy import *
 
 
 class PolicyTests(unittest.TestCase):
+    def test_preview_mounts_browser_as_main_pwa_view(self):
+        repo = Path(__file__).resolve().parent.parent
+        html = (repo / "ui/pwa/index.html").read_text()
+        browser = (repo / "server-preview/client.js").read_text()
+        gateway = (repo / "server-preview/gateway.py").read_text()
+        self.assertIn('id="browser-host"', html)
+        self.assertIn('data-view="browse"', html)
+        self.assertIn("querySelector('#browser-host')", browser)
+        self.assertNotIn("querySelector('nav.tabs')", browser)
+        self.assertIn('name="muninn-source-browser" content="enabled"', gateway)
+        self.assertIn('muninn-pwa-shell-browser-v3', gateway)
+        self.assertIn('https://www.tiktok.com/search?q=', browser)
+        self.assertIn('https://www.youtube.com/results?search_query=', browser)
+
     def test_navigation_and_resource_boundary(self):
         for url in ['https://www.youtube.com/', 'https://accounts.google.com/ServiceLogin', 'https://youtu.be/aaaaaaaaaaa',
                     'https://www.tiktok.com/foryou', 'https://vm.tiktok.com/ZMexample/']:

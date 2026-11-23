@@ -130,3 +130,22 @@ test('PWA honors server-selected authentication without token fallback',()=>{
   assert.match(js,/!signedIn\|\|!tokenLogin/);
   assert.doesNotMatch(js,/localStorage|sessionStorage|document\.cookie/);
 });
+
+test('the guarded source browser has a first-class default Browse view instead of the legacy detached tab',()=>{
+  const html=file('index.html'),app=file('app.js');
+  const browser=fs.readFileSync(path.join(__dirname,'../../server-preview/client.js'),'utf8');
+  const gateway=fs.readFileSync(path.join(__dirname,'../../server-preview/gateway.py'),'utf8');
+  assert.match(html,/id="browser-host"/);
+  assert.match(html,/data-view="browse"/);
+  assert.match(app,/muninn-source-browser/);
+  assert.match(app,/view:browserEnabled && navigator\.onLine \? 'browse'/);
+  assert.match(app,/muninn:view-change/);
+  assert.match(browser,/querySelector\('#browser-host'\)/);
+  assert.doesNotMatch(browser,/querySelector\('nav\.tabs'\)/);
+  for(const command of ['YouTube Home','Subscriptions','TikTok For You','TikTok Following','Search YouTube','Search TikTok','Save current video']) {
+    assert.ok(browser.includes(command),command);
+  }
+  assert.match(gateway,/muninn-source-browser/);
+  assert.match(gateway,/muninn-pwa-shell-browser-v3/);
+  assert.doesNotMatch(browser,/youtube\.com\/embed|tiktok\.com\/embed|innerHTML|localStorage/);
+});

@@ -2,20 +2,28 @@
 (() => {
   'use strict';
   const node = (tag, text, cls) => {const n=document.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n;};
-  const panel=node('section',null,'panel remote-browser');panel.hidden=true;
-  const tabs=document.querySelector('nav.tabs');
-  const browse=node('button','Source browser');browse.type='button';browse.setAttribute('aria-pressed','false');tabs.append(browse);
-  tabs.after(panel);
+  // The desktop-parity PWA has a sidebar + tabstrip, not the obsolete
+  // nav.tabs placeholder. Mount in its dedicated first-class Browse view.
+  const host=document.querySelector('#browser-host');
+  if(!host)return;
+  const panel=node('section',null,'pwa-panel remote-browser');
+  host.append(panel);
   let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0;
-  const heading=node('h2','YouTube + TikTok · server browser');
-  const explanation=node('p','Browse YouTube or TikTok on the server. Both feed captures and video URLs enter the same Muninn cache and local-only player; provider media is blocked in the browsing canvas.','hint');
+  const heading=node('h2','YouTube and TikTok');
+  const explanation=node('p','Browse the real provider pages through your private server browser. Muninn captures feeds and video links, but upstream video playback is blocked in the browsing canvas; downloaded videos play in Muninn.','hint');
   const status=node('p','Start the private browser to capture feeds and opened videos.','hint');status.setAttribute('role','status');
   const controls=node('div',null,'actions');
   const makeButton=(title,fn)=>{const b=node('button',title);b.type='button';b.addEventListener('click',()=>fn().catch(error=>{status.textContent=error.message;}));return b;};
   const tabBar=node('div',null,'tabs compact');tabBar.setAttribute('aria-label','Server browser tabs');
   const navigation=node('form',null,'input-row');
-  const url=node('input');url.type='url';url.placeholder='https://www.youtube.com/ or https://www.tiktok.com/';url.setAttribute('aria-label','YouTube or TikTok URL');
-  const go=node('button','Open');go.type='submit';navigation.append(url,go);
+  const url=node('input');url.type='url';url.placeholder='YouTube or TikTok page URL';url.setAttribute('aria-label','YouTube or TikTok URL');
+  const go=node('button','Go');go.type='submit';navigation.append(url,go);
+  const search=node('form',null,'input-row remote-search');
+  const query=node('input');query.type='search';query.maxLength=120;
+  query.placeholder='Search YouTube or TikTok';query.setAttribute('aria-label','Search videos and creators');
+  const ytSearch=node('button','Search YouTube');ytSearch.type='submit';ytSearch.value='youtube';ytSearch.name='provider';
+  const ttSearch=node('button','Search TikTok');ttSearch.type='submit';ttSearch.value='tiktok';ttSearch.name='provider';
+  search.append(query,ytSearch,ttSearch);
   const image=node('img');image.alt='Interactive server-side provider browser';image.tabIndex=0;image.width=1280;image.height=800;image.className='remote-frame';image.hidden=true;
   const input=node('form',null,'input-row');
   const text=node('input');text.type='password';text.autocomplete='off';text.placeholder='Type into the selected browser field';text.setAttribute('aria-label','Text sent to the server browser');
@@ -24,7 +32,7 @@
   for(const key of ['Tab','Enter','Backspace','Escape'])keyboard.append(makeButton(key,()=>action('key',{key})));
   keyboard.append(makeButton('Scroll up',()=>action('scroll',{dy:-600})),makeButton('Scroll down',()=>action('scroll',{dy:600})));
   const warning=node('p','Single-owner preview: signing into Google or TikTok stores those sessions on this server, not on your Mac or phone. Anyone allowed into this preview and paired to Muninn can operate it. Reset removes both sessions.','hint');
-  panel.append(heading,explanation,controls,tabBar,navigation,image,input,keyboard,status,warning);
+  panel.append(heading,explanation,controls,search,tabBar,navigation,image,input,keyboard,status,warning);
 
   async function request(path, body) {
     const response=await fetch('/browser/'+path,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',
@@ -70,12 +78,36 @@
     if(target!==active||!shown)return;
     const next=URL.createObjectURL(blob);const old=frameURL;frameURL=next;image.src=next;if(old)URL.revokeObjectURL(old);
   }
-  controls.append(makeButton('Start browser',()=>action('start')),makeButton('New tab',()=>action('new',{url:'https://www.youtube.com/'})),
-    makeButton('Subscriptions',()=>action(active?'navigate':'new',{url:'https://www.youtube.com/feed/subscriptions'})),
-    makeButton('TikTok For You',()=>action(active?'navigate':'new',{url:'https://www.tiktok.com/foryou'})),
-    makeButton('TikTok Following',()=>action(active?'navigate':'new',{url:'https://www.tiktok.com/following'})),
-    makeButton('Back',()=>action('back')),makeButton('Reload',()=>action('reload')),makeButton('Close tab',()=>action('close')),
-    makeButton('Reset server browser',async()=>{if(confirm('Remove the server browser profile and YouTube/TikTok sign-in? Downloaded videos are kept.'))await action('reset');}));
+  const goTo=url=>action(active?'navigate':'new',{url});
+  controls.append(makeButton('YouTube Home',()=>goTo('https://www.youtube.com/')),
+    makeButton('Subscriptions',()=>goTo('https://www.youtube.com/feed/subscriptions')),
+    makeButton('TikTok For You',()=>goTo('https://www.tiktok.com/foryou')),
+    makeButton('TikTok Following',()=>goTo('https://www.tiktok.com/following')),
+    makeButton('New tab',()=>action('new',{url:'https://www.youtube.com/'})),
+    makeButton('Back',()=>action('back')),makeButton('Reload',()=>action('reload')),
+    makeButton('Save current video',async()=>{
+      const tab=lastState?.tabs.find(t=>t.id===active);
+      if(!tab?.video_id)throw new Error('Open a YouTube or TikTok video before saving it.');
+      const response=await fetch('/api/cache',{method:'POST',credentials:'same-origin',cache:'no-store',
+        headers:{'X-Muninn-Client':'pwa','Content-Type':'application/json'},
+        body:JSON.stringify({video_id:tab.video_id,quality:'720',title:tab.title,protect:true})});
+      if(!response.ok)throw new Error('Unable to queue video ('+response.status+').');
+      document.dispatchEvent(new CustomEvent('muninn:video-queued',{detail:{id:tab.video_id}}));
+      status.textContent='Video queued. Open Library to monitor and play the downloaded copy.';
+    }),
+    makeButton('Close tab',()=>action('close')),
+    makeButton('Reset browser login',async()=>{
+      if(confirm('Remove server browser sessions for YouTube and TikTok? Downloaded videos are kept.'))await action('reset');
+    }));
+  search.addEventListener('submit',event=>{
+    event.preventDefault();
+    const term=query.value.trim();
+    if(!term)return;
+    const provider=event.submitter?.value==='tiktok'?'tiktok':'youtube';
+    const target=provider==='tiktok'?'https://www.tiktok.com/search?q='+encodeURIComponent(term):
+      'https://www.youtube.com/results?search_query='+encodeURIComponent(term);
+    goTo(target).catch(e=>status.textContent=e.message);
+  });
   navigation.addEventListener('submit',event=>{event.preventDefault();action(active?'navigate':'new',{url:url.value}).catch(e=>status.textContent=e.message);});
   input.addEventListener('submit',event=>{event.preventDefault();const value=text.value;text.value='';action('text',{text:value}).catch(e=>status.textContent=e.message);});
   image.addEventListener('click',event=>{const r=image.getBoundingClientRect();action('click',{x:(event.clientX-r.left)*1280/r.width,y:(event.clientY-r.top)*800/r.height}).catch(e=>status.textContent=e.message);image.focus();});
@@ -85,11 +117,22 @@
     if(named.includes(event.key)){event.preventDefault();action('key',{key:event.key}).catch(e=>status.textContent=e.message);}
     else if(event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey){event.preventDefault();action('text',{text:event.key}).catch(e=>status.textContent=e.message);}
   });
-  browse.addEventListener('click',async()=>{
-    shown=!shown;panel.hidden=!shown;browse.setAttribute('aria-pressed',String(shown));
-    if(!shown){image.removeAttribute('src');if(frameURL)URL.revokeObjectURL(frameURL);frameURL=null;return;}
-    try{render(await request('state'));await frame();}catch(error){status.textContent=error.message;}
-  });
+  async function setVisible(visible){
+    if(visible===shown)return;
+    shown=visible;
+    if(!shown){
+      image.removeAttribute('src');
+      if(frameURL)URL.revokeObjectURL(frameURL);
+      frameURL=null;return;
+    }
+    try{
+      const state=await request('state');render(state);
+      if(!state.tabs.length)await action('start');
+      else await frame();
+    }catch(error){status.textContent=error.message;}
+  }
+  document.addEventListener('muninn:view-change',event=>{setVisible(event.detail?.visible===true);});
+  setVisible(!host.hidden);
   document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;panel.hidden=true;image.removeAttribute('src');if(frameURL)URL.revokeObjectURL(frameURL);frameURL=null;});
   async function tick(){
     try{if(shown&&!busy&&!document.hidden&&navigator.onLine){render(await request('state'));await frame();}}
