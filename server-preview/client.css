@@ -14,7 +14,8 @@
 .remote-browser .tabs{display:flex;gap:5px;overflow-x:auto;margin:10px 0}
 .remote-browser .tabs button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent)}
 .remote-browser .remote-search input{flex:1}
-.remote-browser .remote-frame{touch-action:pan-x;max-height:min(70vh,800px)}
+/* Keep the rendered frame at 8:5; a height-only cap letterboxes object-fit:contain and breaks click coordinates. */
+.remote-browser .remote-frame{touch-action:pan-x;width:min(100%,112vh);height:auto;max-height:none}
 .remote-browser .remote-frame-viewport{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
 .remote-browser .remote-touch-hint{display:none}
 @media(max-width:600px){
