@@ -17,12 +17,12 @@ from policy import *
 
 class PolicyTests(unittest.TestCase):
     def test_preview_mounts_browser_as_main_pwa_view(self):
-        repo = Path(__file__).resolve().parent.parent
-        html = (repo / "ui/pwa/index.html").read_text()
-        browser = (repo / "server-preview/client.js").read_text()
-        gateway = (repo / "server-preview/gateway.py").read_text()
-        self.assertIn('id="browser-host"', html)
-        self.assertIn('data-view="browse"', html)
+        # The final OCI image contains /opt/muninn-preview only. The PWA
+        # HTML is embedded into the Rust binary, and JS source tests cover it.
+        # This image test must validate the actual packaged browser assets.
+        preview = Path(__file__).resolve().parent
+        browser = (preview / "client.js").read_text()
+        gateway = (preview / "gateway.py").read_text()
         self.assertIn("querySelector('#browser-host')", browser)
         self.assertNotIn("querySelector('nav.tabs')", browser)
         self.assertIn('name="muninn-source-browser" content="enabled"', gateway)
