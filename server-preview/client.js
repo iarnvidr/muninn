@@ -110,7 +110,38 @@
   });
   navigation.addEventListener('submit',event=>{event.preventDefault();action(active?'navigate':'new',{url:url.value}).catch(e=>status.textContent=e.message);});
   input.addEventListener('submit',event=>{event.preventDefault();const value=text.value;text.value='';action('text',{text:value}).catch(e=>status.textContent=e.message);});
-  image.addEventListener('click',event=>{const r=image.getBoundingClientRect();action('click',{x:(event.clientX-r.left)*1280/r.width,y:(event.clientY-r.top)*800/r.height}).catch(e=>status.textContent=e.message);image.focus();});
+  // Wheel/trackpad and mobile swipes scroll the remote provider page, not
+  // the PWA document. Native upstream video is still blocked by policy.py.
+  image.addEventListener('wheel',event=>{
+    if(!shown)return;
+    event.preventDefault();
+    action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,event.deltaY)))})
+      .catch(e=>status.textContent=e.message);
+  },{passive:false});
+  let touchY=null,touchMoved=false;
+  image.addEventListener('touchstart',event=>{
+    touchY=event.touches.length===1?event.touches[0].clientY:null;
+    touchMoved=false;
+  },{passive:true});
+  image.addEventListener('touchmove',event=>{
+    if(!shown||touchY===null||event.touches.length!==1)return;
+    const next=event.touches[0].clientY,delta=touchY-next;
+    if(Math.abs(delta)<7)return;
+    event.preventDefault();touchMoved=true;touchY=next;
+    action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,delta*3)))})
+      .catch(e=>status.textContent=e.message);
+  },{passive:false});
+  image.addEventListener('touchend',event=>{
+    if(touchMoved)event.preventDefault();
+    touchY=null;
+  },{passive:false});
+  image.addEventListener('click',event=>{
+    if(touchMoved){touchMoved=false;return;}
+    const r=image.getBoundingClientRect();
+    action('click',{x:(event.clientX-r.left)*1280/r.width,y:(event.clientY-r.top)*800/r.height})
+      .catch(e=>status.textContent=e.message);
+    image.focus();
+  });
   image.addEventListener('keydown',event=>{
     if(event.key==='Tab'&&!event.shiftKey)return; // Tab exits the canvas; explicit Tab button controls remote focus.
     const named=['Enter','Backspace','Delete','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'];
