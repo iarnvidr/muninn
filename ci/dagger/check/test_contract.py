@@ -43,6 +43,14 @@ class DaggerContract(unittest.TestCase):
         ])
         self.assertNotIn("@check", self.source.split("pub exportCargoCache", 1)[1])
 
+    def test_dagger_js_mount_includes_browser_sources_read_by_pwa_tests(self):
+        # The container runs Node tests from a source-filtered workspace.
+        # A host-side pass cannot substitute for missing JS/CSS/gateway inputs.
+        source = self.source.split("pub javascript: Void @check", 1)[1].split("pub packaging: Void @check", 1)[0]
+        for required in ("server-preview/client.js", "server-preview/client.css",
+                         "server-preview/gateway.py", "crates/server/src/web/mod.rs"):
+            self.assertIn('"' + required + '"', source)
+
     def test_cargo_check_selection_covers_every_workspace_package(self):
         workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]
         packages = set()
