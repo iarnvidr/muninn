@@ -37,8 +37,12 @@
         const handle = url.pathname.match(/^\/@([\w.-]{1,30})\/video\/\d{15,22}\/?$/)?.[1];
         return handle ? 'https://www.tiktok.com/@' + handle + '/video/' + id.slice(3) : videoURL(id);
       }
-      if (/^\/(?:$|foryou\/?$|following\/?$|search\/?$|@[\w.-]{1,30}\/?$)/.test(url.pathname))
-        return 'https://www.tiktok.com' + url.pathname;
+      if (/^\/(?:$|foryou\/?$|following\/?$|search\/?$|@[\w.-]{1,30}\/?$)/.test(url.pathname)) {
+        // Search terms distinguish captured searches; never retain tracking or login tokens.
+        const term = /^\/search\/?$/.test(url.pathname) ? url.searchParams.get('q') : null;
+        return 'https://www.tiktok.com' + url.pathname +
+          (term ? '?q=' + encodeURIComponent(term.slice(0,120)) : '');
+      }
       return null;
     }
     if (!['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com','youtu.be'].includes(url.hostname)) return null;
@@ -64,7 +68,8 @@
       const handle = src && new URL(src).pathname.match(/^\/(@[\w.-]+)/)?.[1];
       return ({'tiktok-for-you':'TikTok · For You','tiktok-following':'TikTok · Following',
         'tiktok-profile':handle ? 'TikTok · '+handle : 'TikTok · Creator',
-        'tiktok-search':'TikTok · Search','tiktok-related':'TikTok · Related'})[feed.kind] || 'TikTok feed';
+        'tiktok-search':src && new URL(src).searchParams.get('q') ? 'TikTok · Search: '+new URL(src).searchParams.get('q') : 'TikTok · Search',
+        'tiktok-related':'TikTok · Related'})[feed.kind] || 'TikTok feed';
     }
     return ({home:'Home',subscriptions:'Subscriptions'})[feed.kind] || 'Captured feed';
   }
