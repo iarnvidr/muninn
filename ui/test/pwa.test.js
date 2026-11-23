@@ -187,6 +187,9 @@ test('the private Chromium browsing client mounts and starts against the real PW
   const all=node=>[node,...node.children.flatMap(all)];
   const search=all(host).find(node=>node.className==='input-row remote-search');
   assert.ok(search,'both providers need an accessible search form');
+  const viewport=all(host).find(node=>node.className==='remote-frame-viewport');
+  assert.ok(viewport,'mobile provider screenshots must be horizontally pannable');
+  const remote=viewport.children[0];
   search.children[0].value='Rust engineering';
   search.listeners.submit[0]({preventDefault(){},submitter:{value:'tiktok'}});
   await flush();
@@ -196,7 +199,29 @@ test('the private Chromium browsing client mounts and starts against the real PW
   await flush();
   assert.ok(calls.some(call=>call.url==='/browser/action' &&
     JSON.parse(call.options.body).url==='https://www.youtube.com/results?search_query=Rust%20engineering'));
+  const before=()=>calls.filter(call=>call.url==='/browser/action' && JSON.parse(call.options.body).action==='scroll').length;
+  let prevented=false;
+  const beforePan=before();
+  remote.listeners.touchstart[0]({touches:[{clientX:160,clientY:100}]});
+  remote.listeners.touchmove[0]({touches:[{clientX:90,clientY:98}],preventDefault(){prevented=true;}});
+  await flush();
+  assert.equal(prevented,false,'horizontal mobile pan must remain native');
+  assert.equal(before(),beforePan,'horizontal pan must not queue remote scrolling');
+  remote.listeners.touchstart[0]({touches:[{clientX:160,clientY:200}]});
+  remote.listeners.touchmove[0]({touches:[{clientX:159,clientY:160}],preventDefault(){prevented=true;}});
+  await flush();
+  assert.equal(prevented,true,'vertical swipe must scroll remote page instead of PWA');
+  assert.ok(before()>beforePan,'vertical swipe must send a remote scroll action');
   events['muninn:view-change']({detail:{visible:false}});
   await flush();
   assert.ok(events['muninn:view-change'],'browser responds to PWA navigation changes');
+});
+
+
+test('mobile server-browser canvas remains readable and can pan horizontally',()=>{
+  const css=fs.readFileSync(path.join(__dirname,'../../server-preview/client.css'),'utf8');
+  assert.match(css,/remote-frame-viewport\{[^}]*overflow-x:auto/);
+  assert.match(css,/touch-action:pan-x;width:min\(100%,112vh\)/);
+  assert.match(css,/max-height:none/);
+  assert.match(css,/@media\(max-width:600px\)\{[\s\S]*?remote-frame\{width:960px/);
 });

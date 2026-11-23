@@ -25,6 +25,8 @@
   const ttSearch=node('button','Search TikTok');ttSearch.type='submit';ttSearch.value='tiktok';ttSearch.name='provider';
   search.append(query,ytSearch,ttSearch);
   const image=node('img');image.alt='Interactive server-side provider browser';image.tabIndex=0;image.width=1280;image.height=800;image.className='remote-frame';image.hidden=true;
+  const viewport=node('div',null,'remote-frame-viewport');viewport.append(image);
+  const mobileHint=node('p','On a phone, drag sideways to pan across the page, swipe vertically to scroll YouTube or TikTok, and tap to open a video.','hint remote-touch-hint');
   const input=node('form',null,'input-row');
   const text=node('input');text.type='password';text.autocomplete='off';text.placeholder='Type into the selected browser field';text.setAttribute('aria-label','Text sent to the server browser');
   const send=node('button','Type text');send.type='submit';input.append(text,send);
@@ -32,7 +34,7 @@
   for(const key of ['Tab','Enter','Backspace','Escape'])keyboard.append(makeButton(key,()=>action('key',{key})));
   keyboard.append(makeButton('Scroll up',()=>action('scroll',{dy:-600})),makeButton('Scroll down',()=>action('scroll',{dy:600})));
   const warning=node('p','Single-owner preview: signing into Google or TikTok stores those sessions on this server, not on your Mac or phone. Anyone allowed into this preview and paired to Muninn can operate it. Reset removes both sessions.','hint');
-  panel.append(heading,explanation,controls,search,tabBar,navigation,image,input,keyboard,status,warning);
+  panel.append(heading,explanation,controls,search,tabBar,navigation,viewport,mobileHint,input,keyboard,status,warning);
 
   async function request(path, body) {
     const response=await fetch('/browser/'+path,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',
@@ -118,22 +120,32 @@
     action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,event.deltaY)))})
       .catch(e=>status.textContent=e.message);
   },{passive:false});
-  let touchY=null,touchMoved=false;
+  // The screenshot is a 1280px Chromium viewport. A phone needs horizontal
+  // panning to read it, while vertical gestures must scroll the remote site.
+  // Lock each gesture's axis so a sideways pan cannot queue remote scrolls.
+  let touchX=null,touchY=null,touchAxis=null,touchMoved=false;
   image.addEventListener('touchstart',event=>{
-    touchY=event.touches.length===1?event.touches[0].clientY:null;
-    touchMoved=false;
+    const touch=event.touches.length===1?event.touches[0]:null;
+    touchX=touch?.clientX??null;touchY=touch?.clientY??null;
+    touchAxis=null;touchMoved=false;
   },{passive:true});
   image.addEventListener('touchmove',event=>{
-    if(!shown||touchY===null||event.touches.length!==1)return;
-    const next=event.touches[0].clientY,delta=touchY-next;
-    if(Math.abs(delta)<7)return;
-    event.preventDefault();touchMoved=true;touchY=next;
-    action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,delta*3)))})
+    if(!shown||touchX===null||touchY===null||event.touches.length!==1)return;
+    const nextX=event.touches[0].clientX,nextY=event.touches[0].clientY;
+    const dx=touchX-nextX,dy=touchY-nextY;
+    if(!touchAxis){
+      if(Math.max(Math.abs(dx),Math.abs(dy))<7)return;
+      touchAxis=Math.abs(dx)>Math.abs(dy)?'horizontal':'vertical';
+    }
+    touchMoved=true;
+    if(touchAxis==='horizontal')return; // Native scrolling inside the image viewport.
+    event.preventDefault();touchX=nextX;touchY=nextY;
+    action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,dy*3)))})
       .catch(e=>status.textContent=e.message);
   },{passive:false});
   image.addEventListener('touchend',event=>{
-    if(touchMoved)event.preventDefault();
-    touchY=null;
+    if(touchMoved&&touchAxis==='vertical')event.preventDefault();
+    touchX=null;touchY=null;touchAxis=null;
   },{passive:false});
   image.addEventListener('click',event=>{
     if(touchMoved){touchMoved=false;return;}

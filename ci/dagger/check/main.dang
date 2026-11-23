@@ -251,8 +251,9 @@ type MuninnCi {
         "crates/server/src/web/mod.rs",
         # The browser regression test loads the real gated server-browser client
         # and gateway implementation; excluding them makes the Dagger JS check
-        # fail even when host-side Node checks pass.
-        "server-preview/client.js", "server-preview/gateway.py",
+        # fail even when host-side Node checks pass. Keep CSS here because
+        # mobile Browse interaction tests read the real responsive styles.
+        "server-preview/client.js", "server-preview/client.css", "server-preview/gateway.py",
       ], exclude: ["**/node_modules"]))
       .withWorkdir("/src")
       .withExec(["sh", "-ec", "node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js"])
