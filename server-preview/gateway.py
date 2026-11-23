@@ -148,11 +148,15 @@ async def proxy(request):
         copied = [(key, value) for key, value in upstream.headers.items() if key.lower() not in HOP]
         if request.path in {"/app/", "/app/index.html"} and upstream.status == 200:
             text = await upstream.text()
-            text = text.replace("</head>", '<link rel="stylesheet" href="/app/browser.css"><script src="/app/browser.js" defer></script></head>')
+            text = text.replace("</head>", '<meta name="muninn-source-browser" content="enabled"><link rel="stylesheet" href="/app/browser.css"><script src="/app/browser.js" defer></script></head>')
             return web.Response(body=text.encode(), status=upstream.status, headers=copied)
         if request.path == "/app/sw.js" and upstream.status == 200:
             text = await upstream.text()
-            text = text.replace("muninn-pwa-shell-v1", "muninn-pwa-shell-browser-v1").replace("const SHELL = [", "const SHELL = ['/app/browser.js','/app/browser.css',")
+            # The browser edition must have a distinct cache identity, and
+            # only its static JS/CSS join the shell; screenshots stay private.
+            if "muninn-pwa-shell-v2" not in text or "const SHELL = [" not in text:
+                raise web.HTTPInternalServerError(text="PWA shell version mismatch")
+            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v3").replace("const SHELL = [", "const SHELL = ['/app/browser.js','/app/browser.css',")
             return web.Response(body=text.encode(), headers=copied)
         response = web.StreamResponse(status=upstream.status, headers=copied)
         if "Content-Length" in upstream.headers:

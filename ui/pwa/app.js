@@ -5,9 +5,18 @@
   // A missing/stale marker must never enable a token form in production.
   const authMode = document.querySelector('meta[name="muninn-auth-mode"]')?.content;
   const tokenLogin = authMode === 'token';
-  const state = {view:'server',signedIn:false,entries:[],device:[],feeds:[],feed:null,kind:'',
+  // The source browser is available only when injected by the guarded
+  // Chromium gateway. Standalone Rust PWA and offline-only clients do not
+  // expose nonfunctional browsing controls.
+  const browserEnabled = document.querySelector('meta[name="muninn-source-browser"]')?.content === 'enabled';
+  const state = {view:browserEnabled && navigator.onLine ? 'browse' : navigator.onLine ? 'server' : 'device',signedIn:false,entries:[],device:[],feeds:[],feed:null,kind:'',
     transfer:null,playerURL:null,playing:null,epoch:0,refreshing:false};
   let installPrompt, progressWrite = 0;
+  if(browserEnabled) {
+    for(const b of document.querySelectorAll('[data-view]')) if(b.dataset.view === 'browse') b.hidden=false;
+    const brand=$('#muninn-home');brand.dataset.view='browse';brand.title='Browse YouTube and TikTok';
+    brand.setAttribute('aria-label','Muninn · Browse');
+  }
   const notice = (text, bad=false) => { $('#notice').textContent=text; $('#notice').classList.toggle('error',bad); };
   const el = (tag, text, className) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(className)n.className=className; return n; };
   const button = (text, action) => { const n=el('button',text); n.type='button'; n.addEventListener('click',()=>Promise.resolve().then(action).catch(e=>notice(e.message,true))); return n; };
@@ -112,16 +121,24 @@
         if(selected)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');
       }
     }
-    const device=state.view==='device',feeds=state.view==='feeds';
-    $('#view-title').textContent=device?'On this device':feeds?'Feeds':'Library';
-    $('#view-hint').textContent=device?'Your complete offline video copies, with playback positions saved locally.':feeds?
+    const browsing=browserEnabled && state.view==='browse',device=state.view==='device',feeds=state.view==='feeds';
+    $('#view-title').textContent=browsing?'Browse':device?'On this device':feeds?'Feeds':'Library';
+    $('#view-hint').textContent=browsing?
+      'Explore YouTube and TikTok through Muninn’s private server browser, not an embedded video player.':
+      device?'Your complete offline video copies, with playback positions saved locally.':feeds?
       'Explore captured sources from YouTube and TikTok.':
       'Downloads, saved videos and provider captures from your Muninn server.';
     $('#view-meta').textContent=device?state.device.length+' device copies':feeds?state.feeds.length+' captured sources':state.entries.length+' server videos';
     $('#persist').hidden=!device;$('#feed-list').hidden=!feeds;$('#feed-filters').hidden=!feeds;
     $('#queue-panel').hidden=!state.signedIn||state.view!=='server';
     $('#server-count').textContent=state.entries.length;
-    const content=$('#content');content.replaceChildren();
+    if(browserEnabled) {
+      $('#browser-host').hidden=!browsing;
+      document.querySelector('.pwa-library-actions').hidden=browsing;
+      document.dispatchEvent(new CustomEvent('muninn:view-change',{detail:{visible:browsing}}));
+    }
+    const content=$('#content');content.hidden=browsing;content.replaceChildren();
+    if(browsing)return;
     if(feeds){renderFeeds();return;}
     const records=device?state.device:state.entries;
     for(const item of records)content.append(card(item,device));
@@ -227,6 +244,9 @@
     const label=$('#side-toggle .side-label');if(label)label.textContent=collapsed?'Collapse sidebar':'Expand sidebar';
   });
   $('#refresh').addEventListener('click',refresh);
+  if(browserEnabled) document.addEventListener('muninn:video-queued',()=>{
+    notice('Video queued in the Muninn library.');refresh();
+  });
   $('#close-player').addEventListener('click',stopPlayer);
   $('#cancel-transfer').addEventListener('click',()=>state.transfer?.abort());
   $('#close-copy').addEventListener('click',()=>{$('#copy-fallback').hidden=true;});

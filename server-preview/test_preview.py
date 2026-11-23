@@ -16,6 +16,20 @@ from policy import *
 
 
 class PolicyTests(unittest.TestCase):
+    def test_preview_mounts_browser_as_main_pwa_view(self):
+        # The final OCI image contains /opt/muninn-preview only. The PWA
+        # HTML is embedded into the Rust binary, and JS source tests cover it.
+        # This image test must validate the actual packaged browser assets.
+        preview = Path(__file__).resolve().parent
+        browser = (preview / "client.js").read_text()
+        gateway = (preview / "gateway.py").read_text()
+        self.assertIn("querySelector('#browser-host')", browser)
+        self.assertNotIn("querySelector('nav.tabs')", browser)
+        self.assertIn('name="muninn-source-browser" content="enabled"', gateway)
+        self.assertIn('muninn-pwa-shell-browser-v3', gateway)
+        self.assertIn('https://www.tiktok.com/search?q=', browser)
+        self.assertIn('https://www.youtube.com/results?search_query=', browser)
+
     def test_navigation_and_resource_boundary(self):
         for url in ['https://www.youtube.com/', 'https://accounts.google.com/ServiceLogin', 'https://youtu.be/aaaaaaaaaaa',
                     'https://www.tiktok.com/foryou', 'https://vm.tiktok.com/ZMexample/']:
