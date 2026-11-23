@@ -149,3 +149,54 @@ test('the guarded source browser has a first-class default Browse view instead o
   assert.match(gateway,/muninn-pwa-shell-browser-v3/);
   assert.doesNotMatch(browser,/youtube\.com\/embed|tiktok\.com\/embed|innerHTML|localStorage/);
 });
+
+test('the private Chromium browsing client mounts and starts against the real PWA host',async()=>{
+  const browser=fs.readFileSync(path.join(__dirname,'../../server-preview/client.js'),'utf8');
+  class Element{
+    constructor(tag='div'){this.tag=tag;this.children=[];this.listeners={};this.hidden=false;this.value='';this.textContent='';this.className='';}
+    append(...children){this.children.push(...children);}
+    replaceChildren(...children){this.children=children;}
+    setAttribute(){}removeAttribute(){}focus(){}
+    addEventListener(name,callback){(this.listeners[name]??=[]).push(callback);}
+  }
+  const host=new Element(),events={},calls=[],page={id:'tab1',title:'YouTube Home',url:'https://www.youtube.com/',video_id:null};
+  host.hidden=false;
+  const document={
+    hidden:false,activeElement:null,
+    querySelector:selector=>selector==='#browser-host'?host:null,
+    createElement:tag=>new Element(tag),
+    addEventListener:(name,fn)=>events[name]=fn
+  };
+  const context={document,navigator:{onLine:true},confirm:()=>false,setTimeout:()=>0,
+    URL:{createObjectURL:()=>'blob:frame',revokeObjectURL:()=>{}},
+    fetch:async(url,options={})=>{
+      calls.push({url,options});
+      if(url==='/browser/state')return {ok:true,json:async()=>({running:false,tabs:[],captured:0,dropped:0,failures:0})};
+      if(url==='/browser/action')return {ok:true,json:async()=>({running:true,tabs:[page],captured:0,dropped:0,failures:0})};
+      if(url.startsWith('/browser/frame?tab='))return {ok:true,blob:async()=>new Blob(['jpeg'])};
+      throw new Error('Unexpected browser request '+url);
+    }
+  };
+  vm.runInNewContext(browser,context);
+  const flush=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
+  await flush();
+  assert.equal(host.children.length,1,'real Browse container should receive the browser canvas');
+  assert.ok(calls.some(call=>call.url==='/browser/state'));
+  assert.ok(calls.some(call=>call.url==='/browser/action'&&JSON.parse(call.options.body).action==='start'));
+  assert.ok(calls.some(call=>call.url.startsWith('/browser/frame?tab=')));
+  const all=node=>[node,...node.children.flatMap(all)];
+  const search=all(host).find(node=>node.className==='input-row remote-search');
+  assert.ok(search,'both providers need an accessible search form');
+  search.children[0].value='Rust engineering';
+  search.listeners.submit[0]({preventDefault(){},submitter:{value:'tiktok'}});
+  await flush();
+  assert.ok(calls.some(call=>call.url==='/browser/action' &&
+    JSON.parse(call.options.body).url==='https://www.tiktok.com/search?q=Rust%20engineering'));
+  search.listeners.submit[0]({preventDefault(){},submitter:{value:'youtube'}});
+  await flush();
+  assert.ok(calls.some(call=>call.url==='/browser/action' &&
+    JSON.parse(call.options.body).url==='https://www.youtube.com/results?search_query=Rust%20engineering'));
+  events['muninn:view-change']({detail:{visible:false}});
+  await flush();
+  assert.ok(events['muninn:view-change'],'browser responds to PWA navigation changes');
+});
