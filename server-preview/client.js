@@ -58,15 +58,19 @@
   function action(name, extra={}) {
     if(pending>=32)return Promise.reject(new Error('Input queue is full; wait for the browser to catch up.'));
     pending++;
-    const task=actionTail.then(()=>performAction(name,extra));
+    // Bind queued input to the tab the user was looking at when it occurred.
+    // Changing tabs while a prior request is slow must not retarget a click,
+    // scroll or keystroke (including text entered into a provider sign-in form).
+    const target=active;
+    const task=actionTail.then(()=>performAction(name,extra,target));
     actionTail=task.catch(()=>{});
     return task.finally(()=>{pending--;});
   }
-  async function performAction(name, extra) {
+  async function performAction(name, extra, target) {
     busy=true;
     try{
       const previous=new Set(lastState?.tabs.map(t=>t.id)||[]);
-      const state=await request('action',{action:name,tab:active,...extra});
+      const state=await request('action',{action:name,...extra,tab:target});
       if(name==='new')active=state.tabs.find(t=>!previous.has(t.id))?.id||active;
       render(state);await frame();
     }finally{busy=false;}
