@@ -14,6 +14,8 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.ref != 'codex/muninn-initial-server-pwa' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.publish-image.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -129,6 +131,7 @@ jobs:
               else: raise AssertionError('Untrusted owner accepted')
           PY
       - name: Publish immutable checked preview
+        id: publish-image
         if: github.event_name == 'push'
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -144,6 +147,8 @@ jobs:
           with open('server-preview-image.json','w') as f:
               json.dump({'schema':1,'repository':'iarnvidr/muninn','source_sha':os.environ['GITHUB_SHA'],
                          'image':image,'workflow_run_id':int(os.environ['GITHUB_RUN_ID'])},f,indent=2)
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output:
+              output.write('digest='+image.split('@',1)[1]+'\n')
           PY
           echo "Checked preview: $image" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -153,3 +158,22 @@ jobs:
           path: server-preview-image.json
           if-no-files-found: error
           retention-days: 90
+
+  attest:
+    # Only trusted main can mint the identity/signature. Never expose OIDC
+    # or attestations:write to pull-request code and never require macOS.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Sign source-bound immutable server image digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/iarnvidr/muninn-server
+          subject-digest: ${{ needs.image.outputs.digest }}
