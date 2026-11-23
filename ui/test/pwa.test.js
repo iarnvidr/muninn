@@ -163,7 +163,9 @@ test('the private Chromium browsing client mounts and starts against the real PW
     setAttribute(){}removeAttribute(){}focus(){}
     addEventListener(name,callback){(this.listeners[name]??=[]).push(callback);}
   }
-  const host=new Element(),events={},calls=[],page={id:'tab1',title:'YouTube Home',url:'https://www.youtube.com/',video_id:null};
+  const host=new Element(),events={},calls=[],page={id:'tab1',title:'Provider tab A',url:'https://www.youtube.com/',video_id:null};
+  const other={id:'tab2',title:'Provider tab B',url:'https://www.tiktok.com/foryou',video_id:null};
+  let holdNextAction=false, releaseAction;
   host.hidden=false;
   const document={
     hidden:false,activeElement:null,
@@ -176,7 +178,10 @@ test('the private Chromium browsing client mounts and starts against the real PW
     fetch:async(url,options={})=>{
       calls.push({url,options});
       if(url==='/browser/state')return {ok:true,json:async()=>({running:false,tabs:[],captured:0,dropped:0,failures:0})};
-      if(url==='/browser/action')return {ok:true,json:async()=>({running:true,tabs:[page],captured:0,dropped:0,failures:0})};
+      if(url==='/browser/action'){
+        if(holdNextAction){holdNextAction=false;await new Promise(resolve=>{releaseAction=resolve;});}
+        return {ok:true,json:async()=>({running:true,tabs:[page,other],captured:0,dropped:0,failures:0})};
+      }
       if(url.startsWith('/browser/frame?tab='))return {ok:true,blob:async()=>new Blob(['jpeg'])};
       throw new Error('Unexpected browser request '+url);
     }
@@ -216,6 +221,20 @@ test('the private Chromium browsing client mounts and starts against the real PW
   await flush();
   assert.equal(prevented,true,'vertical swipe must scroll remote page instead of PWA');
   assert.ok(before()>beforePan,'vertical swipe must send a remote scroll action');
+  // A slow action can leave scrolls/text in the client queue while the user
+  // switches tabs. No queued input may be redirected to the new provider.
+  const tabButton=title=>all(host).find(node=>node.tag==='button'&&node.textContent===title);
+  tabButton('Provider tab A').listeners.click[0]();await flush();
+  const offset=calls.length;
+  holdNextAction=true;
+  remote.listeners.wheel[0]({deltaY:40,preventDefault(){}});await flush();
+  assert.equal(typeof releaseAction,'function');
+  remote.listeners.keydown[0]({key:'x',preventDefault(){}});
+  tabButton('Provider tab B').listeners.click[0]();await flush();
+  releaseAction();await flush();
+  const queued=calls.slice(offset).filter(call=>call.url==='/browser/action').map(call=>JSON.parse(call.options.body));
+  assert.deepEqual(queued.map(x=>[x.action,x.tab]),[['scroll','tab1'],['text','tab1']],
+    'queued input must target the original tab, not whichever tab is selected at delivery');
   events['muninn:view-change']({detail:{visible:false}});
   await flush();
   assert.ok(events['muninn:view-change'],'browser responds to PWA navigation changes');
