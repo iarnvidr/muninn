@@ -14,7 +14,7 @@
 .remote-browser .tabs{display:flex;gap:5px;overflow-x:auto;margin:10px 0}
 .remote-browser .tabs button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent)}
 .remote-browser .remote-search input{flex:1}
-.remote-browser .remote-frame{touch-action:manipulation;max-height:min(70vh,800px)}
+.remote-browser .remote-frame{touch-action:none;max-height:min(70vh,800px)}
 @media(max-width:600px){
   .remote-browser .remote-frame{max-height:none}
   .remote-browser .input-row{flex-direction:column}
