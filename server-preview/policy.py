@@ -75,7 +75,12 @@ def public_url(value: str) -> str:
         return ""
     if p.hostname not in NAV_HOSTS:
         return ""
-    query = urlencode([(k, v) for k, v in parse_qsl(p.query) if k in {"v", "list", "index", "search_query"}]) if p.hostname.endswith("youtube.com") or p.hostname == "youtu.be" else ""
+    if p.hostname in TIKTOK_HOSTS:
+        # Persist only explicit search terms, never TikTok tracking/auth query parameters.
+        # The PWA search field already caps terms at 120 characters.
+        query = urlencode([("q", v[:120]) for k, v in parse_qsl(p.query) if k == "q" and v]) if p.path.rstrip("/") == "/search" else ""
+    else:
+        query = urlencode([(k, v) for k, v in parse_qsl(p.query) if k in {"v", "list", "index", "search_query"}]) if p.hostname.endswith("youtube.com") or p.hostname == "youtu.be" else ""
     return urlunsplit((p.scheme, p.netloc, p.path or "/", query, ""))
 
 
