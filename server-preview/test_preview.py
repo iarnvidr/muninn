@@ -69,6 +69,10 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(video_id('https://www.tiktok.com.evil.test/@maker/video/7668090902816017671'))
         self.assertEqual(public_url('https://www.tiktok.com/@maker/video/7668090902816017671?msToken=private'),
                          'https://www.tiktok.com/@maker/video/7668090902816017671')
+        self.assertEqual(public_url('https://www.tiktok.com/search?q=Rust%20media&msToken=private&secUid=private'),
+                         'https://www.tiktok.com/search?q=Rust+media')
+        self.assertEqual(public_url('https://www.tiktok.com/foryou?q=private&msToken=private'),
+                         'https://www.tiktok.com/foryou')
         self.assertFalse(key_allowed('Control+Shift+J'))
 
     def test_exact_origin_and_csrf(self):

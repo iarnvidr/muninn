@@ -20,6 +20,10 @@ test('TikTok is a native provider ID and never a YouTube URL',()=>{
   assert.equal(M.sourceURL('https://www.tiktok.com/@creator/video/7668090902816017671?foo=private'),
     'https://www.tiktok.com/@creator/video/7668090902816017671');
   assert.equal(M.sourceURL('https://www.tiktok.com/foryou?msToken=private'),'https://www.tiktok.com/foryou');
+  assert.equal(M.sourceURL('https://www.tiktok.com/search?q=Rust%20media&msToken=private'),
+    'https://www.tiktok.com/search?q=Rust%20media');
+  assert.equal(M.feedTitle({kind:'tiktok-search',source_url:'https://www.tiktok.com/search?q=Rust%20media'}),
+    'TikTok · Search: Rust media');
   assert.equal(M.feedTitle({kind:'tiktok-profile',source_url:'https://www.tiktok.com/@creator'}),'TikTok · @creator');
   for(const url of ['https://tiktok.com.evil.test/@creator/video/7668090902816017671',
     'https://user:secret@tiktok.com/@creator/video/7668090902816017671',
