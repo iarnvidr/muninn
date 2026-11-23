@@ -357,8 +357,32 @@
   function feedsPage() {
     const S = { kind: '', list: [], selected: null, data: null, listSig: '', sig: '', refreshing: null, attempted: new Set(), view: 'cards', graphKey: '', graphData: null };
     let pol = null;
-    const kind = h('select', { 'aria-label': 'Feed kind', onchange: (ev) => { S.kind = ev.target.value; S.selected = null; S.listSig = ''; S.sig = ''; S.graphKey = ''; syncRefresh(); pol.kick(); } },
-      [['', 'All kinds'], ['home', 'Home'], ['subscriptions', 'Subscriptions'], ['search', 'Search'], ['channel', 'Channel'], ['related', 'Related'], ['other', 'Other']].map(([v, t]) => h('option', { value: v, text: t })));
+    // Visible filters are quicker to understand than an opaque native dropdown.
+    const kinds=[['','All'],['home','Home'],['subscriptions','Subscriptions'],
+      ['search','Search'],['channel','Channels'],['related','Related'],['other','Other']];
+    const kindButtons=new Map();
+    const kindFilters=h('div',{class:'feed-kind-filters',role:'group','aria-label':'Feed categories'},
+      ...kinds.map(([value,label])=>{
+        const button=h('button',{type:'button',class:'feed-kind-chip',text:label,
+          'aria-pressed':String(value===S.kind),onclick:()=>chooseKind(value)});
+        kindButtons.set(value,button);return button;
+      }));
+    function syncKindFilters(){
+      for(const [name,button] of kindButtons)
+        setAttr(button,'aria-pressed',String(name===S.kind));
+    }
+    function chooseKind(value){
+      if(S.kind===value)return;
+      S.kind=value;S.selected=null;S.listSig='';S.sig='';S.graphKey='';
+      syncKindFilters();syncRefresh();pol?.kick();
+    }
+    async function copySourceUrl(url){
+      if(!url)return;
+      try{
+        await navigator.clipboard.writeText(url);
+        M.flash('info','Copied YouTube URL');
+      }catch(error){M.flashError(error);}
+    }
     const list = h('ul', { class: 'snaplist' });
     const listEmpty = h('p', { class: 'muted small-note', hidden: true, text: 'No snapshots yet. Browse YouTube and Muninn keeps what it sees.' });
     const title = h('h2', { class: 'h2', text: 'Feed' });
@@ -367,6 +391,13 @@
     const grid = h('div', { class: 'vgrid' });
     const note = h('p', { class: 'empty-note', hidden: true });
     const sourceNote = h('p', { class: 'feed-source muted', role: 'note' });
+    const copySelected = h('button',{type:'button',class:'feed-copy-source',text:'Copy URL',
+      'aria-label':'Copy feed source URL',hidden:true,
+      onclick:()=>copySourceUrl(L.feedProvenance(S.data).url)});
+    const openSelected = h('button',{type:'button',class:'feed-open-source',text:'Open source',
+      'aria-label':'Open feed source in Muninn',hidden:true,
+      onclick:()=>{const url=L.feedProvenance(S.data).url;if(url)M.newTab(url);}});
+    const sourceTools = h('div',{class:'feed-source-tools'},sourceNote,copySelected,openSelected);
     const graphHost = h('div', { class: 'feed-graph', hidden: true });
     const cardsButton = h('button', {type:'button',text:'Cards', 'aria-pressed':'true',
       onclick:()=>setView('cards')});
@@ -417,7 +448,7 @@
       if (S.refreshing) return;
       if(S.kind && S.kind!=='home' && S.kind!=='subscriptions') {syncRefresh();return;}
       const feedKind = S.kind === 'home' ? 'home' : 'subscriptions';
-      S.kind = feedKind; kind.value = feedKind; S.selected = null; S.graphKey='';
+      S.kind = feedKind; syncKindFilters(); S.selected = null; S.graphKey='';
       S.attempted.add(feedKind); refreshButton.disabled = true;
       setText(refreshNote, 'Loading ' + feedKind + ' using your signed-in YouTube session…');
       try {
@@ -432,27 +463,38 @@
     }
 
     function renderList() {
-      const sig = JSON.stringify(S.list.map((s) => [s.id, s.count, s.captured_at])) + '|' + S.selected;
-      if (sig === S.listSig) return;
-      S.listSig = sig;
-      list.replaceChildren(...S.list.map((s) => h('li', null, h('button', {
-        type:'button', 'aria-current':s.id===S.selected?'true':'false',
-        title:L.feedProvenance(s).origin,
-        onclick:()=>{S.selected=s.id; S.sig='';renderList();pol.kick();}
-      },
-        h('span', {class:'k',text:L.feedProvenance(s).label}),
-        h('span', {class:'n',text:s.count+' videos'}),
-        h('span', {class:'s',text:L.relTime(s.captured_at)}),
-        h('span', {class:'feed-list-origin',text:L.feedProvenance(s).origin})))));
-      setHidden(listEmpty, S.list.length > 0);
+      const sig = JSON.stringify(S.list.map(s=>[s.id,s.count,s.captured_at,s.source_url,s.query,s.source_title]))+'|'+S.selected;
+      if(sig===S.listSig)return;
+      S.listSig=sig;
+      list.replaceChildren(...S.list.map(s=>{
+        const provenance=L.feedProvenance(s);
+        return h('li',{class:'feed-snapshot-row'},
+          h('button',{type:'button',class:'feed-snapshot-select',
+            'aria-current':s.id===S.selected?'true':'false',
+            title:provenance.label+' · '+provenance.origin,
+            onclick:()=>{S.selected=s.id;S.sig='';renderList();pol.kick();}},
+            h('span',{class:'k',text:provenance.label}),
+            h('span',{class:'n',text:s.count+' videos'}),
+            h('span',{class:'s',text:L.feedCapturedAt(s.captured_at)+' · '+L.relTime(s.captured_at)}),
+            h('span',{class:'feed-list-origin',text:provenance.origin})),
+          provenance.url?h('button',{type:'button',class:'feed-snapshot-copy',
+            text:'Copy','aria-label':'Copy source URL for '+provenance.label,
+            title:provenance.url,
+            onclick:()=>copySourceUrl(provenance.url)}):null);
+      }));
+      setHidden(listEmpty,S.list.length>0);
     }
     function renderFeed() {
       const d = S.data;
-      if (!d) { setText(title,'Feed'); setText(meta,'');setText(sourceNote,'No captured source selected.');setHidden(stale,true);grid.replaceChildren(); S.sig='';setText(note,'Nothing to show yet.');setHidden(note,S.view==='graph');return; }
+      if (!d) { setText(title,'Feed'); setText(meta,'');setText(sourceNote,'No captured source selected.');setHidden(copySelected,true);setHidden(openSelected,true);setHidden(stale,true);grid.replaceChildren(); S.sig='';setText(note,'Nothing to show yet.');setHidden(note,S.view==='graph');return; }
       const items = d.items || [];
-      setText(title,L.feedProvenance(d).label);
-      setText(sourceNote,'Captured from: '+L.feedProvenance(d).origin);
-      setText(meta, `${items.length} videos, captured ${L.relTime(d.captured_at)}`);
+      const provenance=L.feedProvenance(d);
+      setText(title,provenance.label);
+      setAttr(title,'title',provenance.label);
+      setText(sourceNote,provenance.hasSource?'Captured from: '+provenance.origin:provenance.origin);
+      setHidden(copySelected,!provenance.url);
+      setHidden(openSelected,!provenance.url);
+      setText(meta, `${items.length} videos · ${L.feedCapturedAt(d.captured_at)} (${L.relTime(d.captured_at)})`);
       setHidden(stale, !d.stale);
       const sig = d.id + '|' + items.map((i) => i.video_id + ':' + (i.cached ? i.cached.state + i.cached.progress : '')).join(',');
       if (sig !== S.sig) { S.sig = sig; grid.replaceChildren(...items.map((it) => M.videoCard(it, (x) => M.openVideo(x.video_id)))); }
@@ -483,9 +525,9 @@
       mount(el) {
         el.append(pageHead('Feeds', 'See where captures came from and how snapshots, videos and channels connect. Every connection comes from recorded YouTube data.'),
           h('div', { class: 'split' },
-            h('aside', { class: 'side-box', 'aria-label': 'Feed snapshots' }, h('label', { class: 'field' }, h('span', { text: 'Kind' }), kind), refreshButton, refreshNote, list, listEmpty),
+            h('aside', { class: 'side-box', 'aria-label': 'Feed snapshots' }, h('span', {class:'feed-kind-caption',text:'Filter feeds'}), kindFilters, refreshButton, refreshNote, list, listEmpty),
             h('div', { class:'feed-main' }, h('div', {class:'feed-head'},title,stale,meta),
-              sourceNote, views, note, grid, graphHost)));
+              sourceTools, views, note, grid, graphHost)));
         graph = window.MuninnFeedGraph.mount(graphHost,{
           onSelect(node) {
             if(node.snapshot_id!=null) {

@@ -72,6 +72,7 @@
   const SVG = (inner, fill) => `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="${fill ? 'currentColor' : 'none'}" stroke="${fill ? 'none' : 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
   const ICONS = {
     plus: SVG('<path d="M12 5v14M5 12h14"/>'),
+    copy: SVG('<rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>'),
     back: SVG('<path d="M15 18l-6-6 6-6"/>'),
     forward: SVG('<path d="M9 18l6-6-6-6"/>'),
     reload: SVG('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>'),
@@ -518,6 +519,13 @@
 
   const addr = $('#address');
   let addrDirty = false, addrPending = null;
+  $('#copy-tab-url').addEventListener('click', async()=>{
+    // Copy the actual open tab URL, never uncommitted address-bar text.
+    const url=L.addressText(activeTab());
+    if(!/^https?:\/\//i.test(url))return;
+    try{await navigator.clipboard.writeText(url);M.flash('info','Copied tab URL');}
+    catch(error){M.flashError(error);}
+  });
 
   function syncAddress(force) {
     if (!force && document.activeElement === addr && addrDirty) return;
@@ -583,6 +591,7 @@
     const reloadTitle=browsing?'Reload (Cmd+R)':player?'Restart playback':'Refresh '+(M.pages[M.page]?.title||'page');
     setAttr($('#nav-reload'),'title',reloadTitle);setAttr($('#nav-reload'),'aria-label',reloadTitle);
     addr.disabled = false;
+    $('#copy-tab-url').disabled = !/^https?:\/\//i.test(L.addressText(tab));
     syncAddress();
   }
 

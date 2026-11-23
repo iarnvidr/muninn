@@ -34,7 +34,16 @@
       const kind=Object.prototype.hasOwnProperty.call(KINDS,s.kind)?s.kind:'other';
       const source='source:'+kind,snapshot='snapshot:'+numeric;
       const query=nameOf(s.query);
-      const label=KINDS[kind]+(query?' · '+shorten(query,52):'');
+      // Use the same provenance labels as Feeds Cards so the graph's snapshot
+      // hubs identify the actual search, channel, or parent watch video.
+      const provenance=root?.MuninnLib?.feedProvenance?.(s);
+      let label=provenance?.label||KINDS[kind]+(query?' · '+shorten(query,52):'');
+      if((kind==='home'||kind==='subscriptions')&&Number(s.captured_at)>0){
+        const timestamp=Number(s.captured_at);
+        const date=new Date(timestamp<1e11?timestamp*1000:timestamp);
+        if(!Number.isNaN(date.valueOf()))
+          label+=' · '+date.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+      }
       add(source,'source',KINDS[kind],{kindName:kind});
       add(snapshot,'snapshot',label,{snapshot_id:numeric,source_url:nameOf(s.source_url),
         captured_at:s.captured_at,count:s.count,query,kindName:kind});
@@ -59,9 +68,13 @@
         if(!channels.has(channelId)&&channels.size>=MAX_CHANNELS){truncated=true;continue;}
         channels.add(channelId);
         const known=validChannel(rawId);
-        add(channelId,'channel',channelName||(known?rawId:'Channel not recorded'),{
+        add(channelId,'channel',channelName||(known?'Channel ID '+rawId:'Channel name not recorded'),{
           channel_id:known?rawId:null,verified_id:known,
           explanation:known?'Channel ID recorded by YouTube':'Channel ID not recorded; grouped within this capture only'});
+        // A later captured video can supply the name of a previously anonymous
+        // channel ID. Do not keep the opaque ID label when verified metadata exists.
+        if(channelName&&nodes.get(channelId)?.label.startsWith('Channel ID '))
+          nodes.get(channelId).label=shorten(channelName,220);
         edge(channelId,video,'published');
       }
     }
@@ -237,6 +250,17 @@
   let cytoscapeModule;
   const graphEngine=()=>cytoscapeModule||=import('/ui/vendor/cytoscape.esm.min.mjs').then(m=>m.default);
 
+  function copyableNodeUrl(node) {
+    if(!node)return null;
+    if(node.kind==='video'&&validVideo(node.video_id||''))
+      return 'https://www.youtube.com/watch?v='+node.video_id;
+    if(node.kind==='channel'&&validChannel(node.channel_id||''))
+      return 'https://www.youtube.com/channel/'+node.channel_id;
+    if(node.kind==='snapshot')
+      return root?.MuninnLib?.feedProvenance?.({...node,kind:node.kindName})?.url||null;
+    return null;
+  }
+
   function mount(container,callbacks={}) {
     const doc=container.ownerDocument;
     const el=(tag,klass,text)=>{
@@ -316,6 +340,18 @@
         (items.length-cap)+' more. Search or select a connection to explore them.'));
     }
     const message=(text,klass)=>detail.append(el('p',klass||'',text));
+    function appendCopyUrl(node) {
+      const url=copyableNodeUrl(node);
+      if(!url)return;
+      const button=btn('Copy URL',async()=>{
+        try{await navigator.clipboard.writeText(url);button.textContent='Copied URL';}
+        catch(_){button.textContent='Copy failed';}
+      });
+      button.className='feed-network-copy-url';
+      button.title=url;
+      button.setAttribute('aria-label','Copy URL for '+node.label);
+      detail.append(button);
+    }
     function inspect(node,edge=null) {
       detail.replaceChildren();inspector.hidden=false;
       if(edge){
@@ -335,6 +371,7 @@
           if(!Number.isNaN(d.valueOf()))message('Captured '+d.toLocaleString());
         }
         detail.append(btn('View video cards',()=>callbacks.onOpen?.(node)));
+        appendCopyUrl(node);
         const matches=prepared?.nodes.filter(n=>n.kind==='channel')||[];
         list(detail,'Channels in this view',matches.slice(0,40),n=>focusNode(n.id),20);
       }else if(node.kind==='channel'){
@@ -344,11 +381,13 @@
         const relevant=vids.filter(v=>prepared?.index.videoCaptures.get(v.id)?.size>0);
         message(relevant.length+' recorded videos linked to this channel.');
         if(node.channel_id)detail.append(btn('Open channel',()=>callbacks.onOpen?.(node)));
+        appendCopyUrl(node);
         list(detail,'Recorded videos',relevant.sort((a,b)=>a.label.localeCompare(b.label)),
           n=>focusNode(n.id),40);
       }else if(node.kind==='video'){
         message('Recorded video · '+node.video_id);
         detail.append(btn('Play in Muninn',()=>callbacks.onOpen?.(node)));
+        appendCopyUrl(node);
         list(detail,'Appears in captured feeds',
           [...(prepared?.index.videoCaptures.get(node.id)||[])].map(id=>prepared.index.nodes.get(id)).filter(Boolean),
           n=>focusNode(n.id),20);
@@ -555,7 +594,7 @@
     };
   }
 
-  const api={build,positions,overview,relationships,prepareNetwork,mount};
+  const api={build,positions,overview,relationships,prepareNetwork,copyableNodeUrl,mount};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root)root.MuninnFeedGraph=api;
 })(typeof window!=='undefined'?window:null);
