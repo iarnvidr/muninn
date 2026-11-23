@@ -14,9 +14,13 @@
 .remote-browser .tabs{display:flex;gap:5px;overflow-x:auto;margin:10px 0}
 .remote-browser .tabs button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent)}
 .remote-browser .remote-search input{flex:1}
-.remote-browser .remote-frame{touch-action:none;max-height:min(70vh,800px)}
+.remote-browser .remote-frame{touch-action:pan-x;max-height:min(70vh,800px)}
+.remote-browser .remote-frame-viewport{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+.remote-browser .remote-touch-hint{display:none}
 @media(max-width:600px){
-  .remote-browser .remote-frame{max-height:none}
+  /* Readable 960px canvas rather than shrinking 1280px to a 350px phone. */
+  .remote-browser .remote-frame{width:960px;max-width:none;max-height:none}
+  .remote-browser .remote-touch-hint{display:block}
   .remote-browser .input-row{flex-direction:column}
   .remote-browser .input-row button{width:100%}
 }
