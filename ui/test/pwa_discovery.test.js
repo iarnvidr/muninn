@@ -88,6 +88,11 @@ test('real provider captures are rendered as native Muninn cards, while site con
   assert.equal(requests.filter(x=>x.url.startsWith('/browser/frame')).length,0,'native view never requests remote screenshots');
   assert.equal(requests.filter(x=>x.url==='/browser/action').length,0,'already captured content does not start unnecessary Chromium navigation');
   assert.ok(!textIn(refs['#browser-host']).some(x=>x.includes('Start the private browser')));
+  const initialCard=all(refs['#browser-host']).find(e=>e.className==='muninn-discover-card');
+  const initialOpen=all(initialCard).find(e=>e.className==='muninn-discover-art-button');
+  poll();await flush();
+  assert.equal(all(refs['#browser-host']).find(e=>e.className==='muninn-discover-card'),initialCard,'unchanged feed polls preserve card DOM');
+  assert.equal(all(initialCard).find(e=>e.className==='muninn-discover-art-button'),initialOpen,'tap/focus target is preserved');
 
   refs['#pwa-menu-toggle'].click();
   assert.equal(refs['#app'].dataset.menu,'open');
@@ -132,6 +137,13 @@ test('real provider captures are rendered as native Muninn cards, while site con
   poll();await flush();
   assert.equal(all(refs['#browser-host']).find(e=>e.tag==='video'),video);
   assert.equal(video.src,'/media/queued');
+  document.dispatchEvent({type:'muninn:view-change',detail:{visible:false}});
+  assert.equal(video.paused,true,'leaving Browse stops the old detail player');
+  document.dispatchEvent({type:'muninn:view-change',detail:{visible:true}});
+  await flush();
+  assert.equal(all(refs['#browser-host']).find(e=>e.className==='muninn-discover-grid').hidden,false);
+  assert.equal(all(refs['#browser-host']).find(e=>e.className==='muninn-discover-watch').hidden,true);
+  assert.ok(textIn(refs['#browser-host']).includes('Play'),'return to collection reflects live cached status');
 
   refs['#pwa-advanced-toggle'].click();
   assert.ok(dispatched.includes('muninn:advanced-browser'),'explicitly opt in to screenshot/sign-in tool');
