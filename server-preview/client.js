@@ -44,6 +44,7 @@
   }
   function clearFrame() {
     frameSequence++;frameTab=null;image.hidden=true;image.removeAttribute('src');
+    if(touchX!==null){touchMoved=true;touchX=null;touchY=null;touchAxis=null;}
     if(frameURL)URL.revokeObjectURL(frameURL);
     frameURL=null;
   }

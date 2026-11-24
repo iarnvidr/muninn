@@ -25,3 +25,6 @@
   .remote-browser .input-row{flex-direction:column}
   .remote-browser .input-row button{width:100%}
 }
+
+/* The canvas has display:block above; honor hidden during tab switches. */
+.remote-browser .remote-frame[hidden]{display:none}
