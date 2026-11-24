@@ -100,6 +100,8 @@
     advanced.setAttribute('aria-expanded',String(state.advanced));
   }
   function showCollection() {
+    const player=watch.querySelector('video');
+    if(player){player.pause();player.removeAttribute('src');player.load();}
     watch.hidden=true; grid.hidden=false; heading.hidden=false; message.hidden=false;
     state.selected=null;
   }
@@ -111,6 +113,8 @@
     if (!sources[source] && !['search','tiktok-search'].includes(source)) return;
     if (!navigator.onLine) { setMessage('Connect to your Muninn server to browse. Your offline library is still available.'); return; }
     state.source=source;state.query=query;state.snapshot=null;state.lastError=null;
+    state.advanced=false;
+    document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:false}}));
     state.routeEpoch++;state.readEpoch++;
     const wasVisible=state.visible;
     renderNav();showCollection();openMenu(false);browseView();draw();
@@ -166,6 +170,10 @@
     await request('/api/cache',{video_id:item.video_id,quality:'720',title:item.title,
       channel:item.channel||undefined,protect:true});
     setMessage('Saved to the Muninn download queue. Library will show progress.');
+    if(!watch.hidden && state.selected?.video_id===item.video_id) {
+      const status=watch.querySelector('.muninn-watch-feedback');
+      if(status)status.textContent='Added to your Muninn library. The download continues in the background.';
+    }
     document.dispatchEvent(new CustomEvent('muninn:video-queued',{detail:{id:item.video_id}}));
   }
   function play(item,entry) {
@@ -199,7 +207,7 @@
       await navigator.clipboard.writeText(url);
       setMessage('Video URL copied.');
     }));
-    watch.append(actions);
+    watch.append(actions,el('p',undefined,'muninn-watch-feedback'));
   }
   function draw() {
     if(!state.visible)return;
