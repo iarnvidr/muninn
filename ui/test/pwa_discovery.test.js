@@ -67,7 +67,7 @@ test('real provider captures are rendered as native Muninn cards, while site con
   const fetch=async(url,options={})=>{
     requests.push({url,options});
     let data;
-    if(url==='/api/feeds?limit=100')data=snapshots;
+    if(url.startsWith('/api/feeds?kind='))data=snapshots;
     else if(url==='/api/feeds/1')data=feeds[1];
     else if(url==='/api/feeds/2')data=feeds[2];
     else if(url==='/api/entries')data=[];
