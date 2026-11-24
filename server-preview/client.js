@@ -185,7 +185,7 @@
   });
   async function setVisible(visible){
     if(visible===shown)return;
-    shown=visible;const epoch=++stateEpoch;
+    shown=visible;let epoch=++stateEpoch;
     if(!shown){
       clearFrame();return;
     }
@@ -195,8 +195,9 @@
       // provider action may supersede this response before it arrives.
       if(!shown||epoch!==stateEpoch)return;
       render(state);
-      if(!state.tabs.length)await action('start');
-      else await frame();
+      if(!state.tabs.length){
+        const start=action('start');epoch=stateEpoch;await start;
+      }else await frame();
     }catch(error){if(shown&&epoch===stateEpoch)status.textContent=error.message;}
   }
   document.addEventListener('muninn:view-change',event=>{setVisible(event.detail?.visible===true);});
