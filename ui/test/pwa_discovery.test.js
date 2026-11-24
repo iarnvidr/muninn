@@ -99,6 +99,13 @@ test('real provider captures are rendered as native Muninn cards, while site con
     JSON.parse(x.options.body).url==='https://www.tiktok.com/foryou'),
     'source navigation asks Chromium for a new capture rather than displaying its pixels');
   assert.ok(requests.every(x=>!x.url.startsWith('/browser/frame')));
+  // An already open YouTube tab with no captured feed must not leave the
+  // native view empty forever. Reload it once to acquire fresh responses.
+  snapshots.splice(snapshots.findIndex(s=>s.kind==='home'),1);
+  sources[0].click();await flush();
+  assert.ok(requests.some(x=>x.url==='/browser/action'&&
+    JSON.parse(x.options.body).action==='reload'&&JSON.parse(x.options.body).tab==='a'));
+  sources[2].click();await flush();
   const card=all(refs['#browser-host']).find(e=>e.className==='muninn-discover-card');
   assert.ok(card,'captured feed item should be an interactive Muninn card');
   const open=all(card).find(e=>e.className==='muninn-discover-art-button');

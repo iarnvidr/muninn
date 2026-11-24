@@ -281,7 +281,9 @@
         const tabs=Array.isArray(remote.tabs)?remote.tabs:[];
         const match=tabs.find(tab=>tab.url===target);
         if(match) {
-          if(force)await request('/browser/action',{action:'reload',tab:match.id});
+          // An existing provider tab is not proof of a usable capture. A restarted
+          // capture pipeline or failed earlier acquisition may leave it empty.
+          if(force || !state.snapshot)await request('/browser/action',{action:'reload',tab:match.id});
         }else if(tabs.length<4)await request('/browser/action',{action:'new',url:target});
         else {
           // At the four-tab limit recycle only the oldest tab in this
