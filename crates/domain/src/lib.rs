@@ -13,3 +13,11 @@ pub mod settings;
 pub mod util;
 
 pub use error::{Error, Result};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn hex_encodes_bytes_as_lowercase() {
+        assert_eq!(super::util::ci_feedback_probe_missing_helper(&[0x00, 0xab, 0xff]), "00abff");
+    }
+}
