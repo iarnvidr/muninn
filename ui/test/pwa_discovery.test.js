@@ -47,7 +47,7 @@ test('real provider captures are rendered as native Muninn cards, while site con
   refs['#pwa-discover-menu'].querySelectorAll=selector=>selector==='[data-browse-source]'?sources:[];
   const browseButton=new Element('button');
   const events={},requests=[],dispatched=[],navigator={onLine:true,clipboard:{writeText:async()=>{}}};
-  const now=Date.now();
+  const now=Date.now(),entries=[];let poll;
   const snapshots=[
     {id:1,kind:'home',captured_at:now,source_url:'https://www.youtube.com/'},
     {id:2,kind:'tiktok-for-you',captured_at:now,source_url:'https://www.tiktok.com/foryou'},
@@ -70,7 +70,7 @@ test('real provider captures are rendered as native Muninn cards, while site con
     if(url.startsWith('/api/feeds?kind='))data=snapshots;
     else if(url==='/api/feeds/1')data=feeds[1];
     else if(url==='/api/feeds/2')data=feeds[2];
-    else if(url==='/api/entries')data=[];
+    else if(url==='/api/entries')data=entries;
     else if(url==='/browser/state')data={running:true,tabs:[{id:'a',url:'https://www.youtube.com/'}]};
     else if(url==='/browser/action')data={running:true,tabs:[]};
     else if(url==='/api/cache')data={ok:true,entry:{id:'queued'}};
@@ -78,7 +78,7 @@ test('real provider captures are rendered as native Muninn cards, while site con
     return {ok:true,status:200,json:async()=>data};
   };
   const context={document,navigator,window:{MuninnWebModel:model},fetch,
-    setInterval:()=>0,CustomEvent:class CustomEvent{constructor(type,options){this.type=type;this.detail=options?.detail;}},
+    setInterval:fn=>{poll=fn;return 0;},CustomEvent:class CustomEvent{constructor(type,options){this.type=type;this.detail=options?.detail;}},
     Date,Promise,console};
   vm.runInNewContext(source,context);
   await flush();
@@ -116,6 +116,22 @@ test('real provider captures are rendered as native Muninn cards, while site con
   assert.ok(requests.some(x=>x.url==='/api/cache'&&
     JSON.parse(x.options.body).video_id===TT&&JSON.parse(x.options.body).protect===true));
   assert.ok(dispatched.includes('muninn:video-queued'));
+  // Capture metadata can predate the cache request. Follow the live entry by
+  // provider ID, even while the detail is open, and do not restart its player.
+  entries.push({id:'queued',video_id:TT,status:'downloading'});
+  poll();await flush();
+  assert.equal(save.textContent,'Download in progress');
+  assert.equal(save.disabled,true);
+  entries[0].status='complete';
+  poll();await flush();
+  assert.equal(save.textContent,'Play in Muninn');
+  assert.equal(save.disabled,false);
+  save.click();await flush();
+  const video=all(refs['#browser-host']).find(e=>e.tag==='video');
+  assert.equal(video.src,'/media/queued');
+  poll();await flush();
+  assert.equal(all(refs['#browser-host']).find(e=>e.tag==='video'),video);
+  assert.equal(video.src,'/media/queued');
 
   refs['#pwa-advanced-toggle'].click();
   assert.ok(dispatched.includes('muninn:advanced-browser'),'explicitly opt in to screenshot/sign-in tool');
