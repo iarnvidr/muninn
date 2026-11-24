@@ -135,10 +135,15 @@
   input.addEventListener('submit',event=>{event.preventDefault();const value=text.value;text.value='';action('text',{text:value}).catch(e=>status.textContent=e.message);});
   // Wheel/trackpad and mobile swipes scroll the remote provider page, not
   // the PWA document. Native upstream video is still blocked by policy.py.
+  function canvasPoint(clientX,clientY){
+    const r=image.getBoundingClientRect();
+    return {x:Math.max(0,Math.min(1279,(clientX-r.left)*1280/r.width)),
+      y:Math.max(0,Math.min(799,(clientY-r.top)*800/r.height))};
+  }
   image.addEventListener('wheel',event=>{
     if(!canvasReady())return;
     event.preventDefault();
-    action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,event.deltaY)))})
+    action('scroll',{...canvasPoint(event.clientX,event.clientY),dy:Math.round(Math.max(-1600,Math.min(1600,event.deltaY)))})
       .catch(e=>status.textContent=e.message);
   },{passive:false});
   // The screenshot is a 1280px Chromium viewport. A phone needs horizontal
@@ -161,7 +166,7 @@
     touchMoved=true;
     if(touchAxis==='horizontal')return; // Native scrolling inside the image viewport.
     event.preventDefault();touchX=nextX;touchY=nextY;
-    action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,dy*3)))})
+    action('scroll',{...canvasPoint(nextX,nextY),dy:Math.round(Math.max(-1600,Math.min(1600,dy*3)))})
       .catch(e=>status.textContent=e.message);
   },{passive:false});
   image.addEventListener('touchend',event=>{
