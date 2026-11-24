@@ -161,10 +161,22 @@
     if(!large && Number(item.duration_seconds)>0)artwork.append(el('span',minutes(item.duration_seconds),'muninn-discover-duration'));
     return artwork;
   }
+  function entriesFor(item) {
+    return state.entries.filter(x=>x.video_id===item.video_id ||
+      (item.cached?.id && x.id===item.cached.id));
+  }
   function cachedEntry(item) {
-    if (!item.cached?.id) return null;
-    const entry=state.entries.find(x=>x.id===item.cached.id);
-    return entry?.status==='complete' ? entry : null;
+    return entriesFor(item).find(x=>x.status==='complete') || null;
+  }
+  function downloadPending(item) {
+    return entriesFor(item).some(x=>['queued','downloading'].includes(x.status));
+  }
+  function updateWatchAction() {
+    const action=watch.querySelector('.muninn-watch-primary');
+    if(!action || !state.selected)return;
+    const ready=cachedEntry(state.selected), pending=!ready&&downloadPending(state.selected);
+    action.textContent=ready?'Play in Muninn':pending?'Download in progress':'Save video to Muninn';
+    action.disabled=pending;
   }
   async function save(item) {
     if(!M.validId(item.video_id))throw new Error('This video has no valid provider ID.');
@@ -176,6 +188,7 @@
       if(status)status.textContent='Added to your Muninn library. The download continues in the background.';
     }
     document.dispatchEvent(new CustomEvent('muninn:video-queued',{detail:{id:item.video_id}}));
+    await loadSnapshot();
   }
   function play(item,entry) {
     showDetail(item);
@@ -199,9 +212,11 @@
     watch.append(el('h2',item.title||'Untitled video'));
     watch.append(el('p',captureMeta(item),'muninn-watch-meta'));
     const actions=el('div',undefined,'muninn-watch-actions');
-    const entry=cachedEntry(item);
-    if(entry)actions.append(button('Play in Muninn',()=>play(item,entry)));
-    else actions.append(button(item.cached?.id?'Download in progress':'Save video to Muninn',()=>save(item)));
+    actions.append(button('Save video to Muninn',()=>{
+      const entry=cachedEntry(item);
+      if(entry)return play(item,entry);
+      if(!downloadPending(item))return save(item);
+    },'muninn-watch-primary'));
     actions.append(button('Copy source URL',async()=>{
       const url=M.videoURL(item.video_id);
       if(!url)return;
@@ -209,6 +224,7 @@
       setMessage('Video URL copied.');
     }));
     watch.append(actions,el('p',undefined,'muninn-watch-feedback'));
+    updateWatchAction();
   }
   function draw() {
     if(!state.visible)return;
@@ -217,7 +233,7 @@
       ? 'Captured search results, presented in Muninn'
       : 'Videos captured by your private '+(state.source.startsWith('tiktok')?'TikTok':'YouTube')+' browser';
     renderNav();
-    if(state.selected)return;
+    if(state.selected){updateWatchAction();return;}
     grid.replaceChildren();
     const items=(state.snapshot?.items||[]).filter(isValidItem);
     if(!items.length){
@@ -238,7 +254,11 @@
         const actions=el('div',undefined,'muninn-discover-actions');
         const entry=cachedEntry(item);
         if(entry)actions.append(button('Play',()=>play(item,entry)));
-        else actions.append(button(item.cached?.id?'Downloading…':'Save',()=>save(item)));
+        else {
+          const pending=downloadPending(item);
+          const action=button(pending?'Downloading…':'Save',()=>save(item));
+          action.disabled=pending;actions.append(action);
+        }
         copy.append(actions);card.append(open,copy);grid.append(card);
       }
     }
