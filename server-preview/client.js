@@ -185,19 +185,23 @@
   });
   async function setVisible(visible){
     if(visible===shown)return;
-    shown=visible;stateEpoch++;
+    shown=visible;const epoch=++stateEpoch;
     if(!shown){
       clearFrame();return;
     }
     try{
-      const state=await request('state');render(state);
+      const state=await request('state');
+      // Opening Browse is asynchronous too. A previous visit or a newer
+      // provider action may supersede this response before it arrives.
+      if(!shown||epoch!==stateEpoch)return;
+      render(state);
       if(!state.tabs.length)await action('start');
       else await frame();
-    }catch(error){status.textContent=error.message;}
+    }catch(error){if(shown&&epoch===stateEpoch)status.textContent=error.message;}
   }
   document.addEventListener('muninn:view-change',event=>{setVisible(event.detail?.visible===true);});
   setVisible(!host.hidden);
-  document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;panel.hidden=true;clearFrame();});
+  document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;stateEpoch++;panel.hidden=true;clearFrame();});
   async function tick(){
     try{
       if(shown&&!busy&&!pending&&!document.hidden&&navigator.onLine){
