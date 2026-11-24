@@ -8,7 +8,7 @@
   if(!host)return;
   const panel=node('section',null,'pwa-panel remote-browser');
   host.append(panel);
-  let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0;
+  let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0, frameTab=null, frameSequence=0;
   const heading=node('h2','YouTube and TikTok');
   const explanation=node('p','Browse the real provider pages through your private server browser. Muninn captures feeds and video links, but upstream video playback is blocked in the browsing canvas; downloaded videos play in Muninn.','hint');
   const status=node('p','Start the private browser to capture feeds and opened videos.','hint');status.setAttribute('role','status');
@@ -42,18 +42,28 @@
     if(!response.ok)throw new Error(response.status===401?'Connect to Muninn first.':response.status===403?'Access refused. Reopen the preview through Authelia.':'Browser request failed ('+response.status+').');
     return response.json();
   }
+  function clearFrame() {
+    frameSequence++;frameTab=null;image.hidden=true;image.removeAttribute('src');
+    if(touchX!==null){touchMoved=true;touchX=null;touchY=null;touchAxis=null;}
+    if(frameURL)URL.revokeObjectURL(frameURL);
+    frameURL=null;
+  }
+  function selectTab(target) {
+    if(target!==active){clearFrame();active=target;}
+  }
+  function canvasReady(){return shown&&active!==null&&frameTab===active;}
   function render(state) {
     lastState=state;
-    if(!state.tabs.some(t=>t.id===active))active=state.tabs.at(-1)?.id||null;
+    if(!state.tabs.some(t=>t.id===active))selectTab(state.tabs.at(-1)?.id||null);
     tabBar.replaceChildren();
     for(const tab of state.tabs){
-      const b=makeButton(tab.title||'New tab',async()=>{active=tab.id;render(state);await frame();});
+      const b=makeButton(tab.title||'New tab',async()=>{selectTab(tab.id);render(state);await frame();});
       b.setAttribute('aria-pressed',String(tab.id===active));tabBar.append(b);
     }
     const tab=state.tabs.find(t=>t.id===active);
     if(document.activeElement!==url)url.value=tab?.url||'https://www.youtube.com/';
     status.textContent=state.running?`${state.captured} captures · ${state.dropped} skipped · ${state.failures} capture errors`:'Browser stopped. Start it to browse YouTube or TikTok.';
-    image.hidden=!tab;
+    image.hidden=!tab||!canvasReady();
   }
   function action(name, extra={}) {
     if(pending>=32)return Promise.reject(new Error('Input queue is full; wait for the browser to catch up.'));
@@ -71,18 +81,25 @@
     try{
       const previous=new Set(lastState?.tabs.map(t=>t.id)||[]);
       const state=await request('action',{action:name,...extra,tab:target});
-      if(name==='new')active=state.tabs.find(t=>!previous.has(t.id))?.id||active;
+      if(name==='new')selectTab(state.tabs.find(t=>!previous.has(t.id))?.id||active);
       render(state);await frame();
     }finally{busy=false;}
   }
   async function frame(){
     if(!shown||!active||document.hidden||!navigator.onLine)return;
-    const target=active;
+    const target=active, sequence=++frameSequence;
     const response=await fetch('/browser/frame?tab='+encodeURIComponent(target),{credentials:'same-origin',cache:'no-store'});
+    if(sequence!==frameSequence||target!==active||!shown)return;
     if(!response.ok)throw new Error('Browser frame unavailable; reconnect to Muninn.');
     const blob=await response.blob();
-    if(target!==active||!shown)return;
+    if(sequence!==frameSequence||target!==active||!shown)return;
     const next=URL.createObjectURL(blob);const old=frameURL;frameURL=next;image.src=next;if(old)URL.revokeObjectURL(old);
+    // Safari may still be decoding the new image after src is assigned. Keep
+    // a switched tab inert until its own screenshot is actually ready.
+    try{if(typeof image.decode==='function')await image.decode();}
+    catch(error){if(sequence===frameSequence)throw error;return;}
+    if(sequence!==frameSequence||target!==active||!shown)return;
+    frameTab=target;image.hidden=false;
   }
   const goTo=url=>action(active?'navigate':'new',{url});
   controls.append(makeButton('YouTube Home',()=>goTo('https://www.youtube.com/')),
@@ -119,7 +136,7 @@
   // Wheel/trackpad and mobile swipes scroll the remote provider page, not
   // the PWA document. Native upstream video is still blocked by policy.py.
   image.addEventListener('wheel',event=>{
-    if(!shown)return;
+    if(!canvasReady())return;
     event.preventDefault();
     action('scroll',{dy:Math.round(Math.max(-1600,Math.min(1600,event.deltaY)))})
       .catch(e=>status.textContent=e.message);
@@ -129,12 +146,12 @@
   // Lock each gesture's axis so a sideways pan cannot queue remote scrolls.
   let touchX=null,touchY=null,touchAxis=null,touchMoved=false;
   image.addEventListener('touchstart',event=>{
-    const touch=event.touches.length===1?event.touches[0]:null;
+    const touch=canvasReady()&&event.touches.length===1?event.touches[0]:null;
     touchX=touch?.clientX??null;touchY=touch?.clientY??null;
     touchAxis=null;touchMoved=false;
   },{passive:true});
   image.addEventListener('touchmove',event=>{
-    if(!shown||touchX===null||touchY===null||event.touches.length!==1)return;
+    if(!canvasReady()||touchX===null||touchY===null||event.touches.length!==1)return;
     const nextX=event.touches[0].clientX,nextY=event.touches[0].clientY;
     const dx=touchX-nextX,dy=touchY-nextY;
     if(!touchAxis){
@@ -153,12 +170,14 @@
   },{passive:false});
   image.addEventListener('click',event=>{
     if(touchMoved){touchMoved=false;return;}
+    if(!canvasReady())return;
     const r=image.getBoundingClientRect();
     action('click',{x:(event.clientX-r.left)*1280/r.width,y:(event.clientY-r.top)*800/r.height})
       .catch(e=>status.textContent=e.message);
     image.focus();
   });
   image.addEventListener('keydown',event=>{
+    if(!canvasReady())return;
     if(event.key==='Tab'&&!event.shiftKey)return; // Tab exits the canvas; explicit Tab button controls remote focus.
     const named=['Enter','Backspace','Delete','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'];
     if(named.includes(event.key)){event.preventDefault();action('key',{key:event.key}).catch(e=>status.textContent=e.message);}
@@ -168,9 +187,7 @@
     if(visible===shown)return;
     shown=visible;
     if(!shown){
-      image.removeAttribute('src');
-      if(frameURL)URL.revokeObjectURL(frameURL);
-      frameURL=null;return;
+      clearFrame();return;
     }
     try{
       const state=await request('state');render(state);
@@ -180,7 +197,7 @@
   }
   document.addEventListener('muninn:view-change',event=>{setVisible(event.detail?.visible===true);});
   setVisible(!host.hidden);
-  document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;panel.hidden=true;image.removeAttribute('src');if(frameURL)URL.revokeObjectURL(frameURL);frameURL=null;});
+  document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;panel.hidden=true;clearFrame();});
   async function tick(){
     try{if(shown&&!busy&&!document.hidden&&navigator.onLine){render(await request('state'));await frame();}}
     catch(error){status.textContent=error.message;}

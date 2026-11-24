@@ -165,7 +165,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
   }
   const host=new Element(),events={},calls=[],page={id:'tab1',title:'Provider tab A',url:'https://www.youtube.com/',video_id:null};
   const other={id:'tab2',title:'Provider tab B',url:'https://www.tiktok.com/foryou',video_id:null};
-  let holdNextAction=false, releaseAction;
+  let holdNextAction=false, releaseAction, holdNextFrame=false, releaseFrame;
   host.hidden=false;
   const document={
     hidden:false,activeElement:null,
@@ -182,7 +182,10 @@ test('the private Chromium browsing client mounts and starts against the real PW
         if(holdNextAction){holdNextAction=false;await new Promise(resolve=>{releaseAction=resolve;});}
         return {ok:true,json:async()=>({running:true,tabs:[page,other],captured:0,dropped:0,failures:0})};
       }
-      if(url.startsWith('/browser/frame?tab='))return {ok:true,blob:async()=>new Blob(['jpeg'])};
+      if(url.startsWith('/browser/frame?tab=')){
+        if(holdNextFrame){holdNextFrame=false;await new Promise(resolve=>{releaseFrame=resolve;});}
+        return {ok:true,blob:async()=>new Blob(['jpeg'])};
+      }
       throw new Error('Unexpected browser request '+url);
     }
   };
@@ -235,6 +238,23 @@ test('the private Chromium browsing client mounts and starts against the real PW
   const queued=calls.slice(offset).filter(call=>call.url==='/browser/action').map(call=>JSON.parse(call.options.body));
   assert.deepEqual(queued.map(x=>[x.action,x.tab]),[['scroll','tab1'],['text','tab1']],
     'queued input must target the original tab, not whichever tab is selected at delivery');
+  // While A's replacement frame is in flight, B's old screenshot must
+  // not accept input destined for A.
+  holdNextFrame=true;
+  tabButton('Provider tab A').listeners.click[0]();await flush();
+  assert.equal(typeof releaseFrame,'function');
+  assert.equal(remote.hidden,true,'hide the previous provider screenshot while switching');
+  const beforeFrame=calls.length;
+  remote.listeners.click[0]({clientX:10,clientY:10});
+  remote.listeners.wheel[0]({deltaY:40,preventDefault(){}});
+  remote.listeners.keydown[0]({key:'x',preventDefault(){}});
+  await flush();
+  assert.equal(calls.slice(beforeFrame).filter(call=>call.url==='/browser/action').length,0);
+  releaseFrame();await flush();
+  assert.equal(remote.hidden,false,'show the newly selected tab only after its frame arrives');
+  remote.listeners.keydown[0]({key:'x',preventDefault(){}});
+  await flush();
+  assert.ok(calls.slice(beforeFrame).some(call=>call.url==='/browser/action'&&JSON.parse(call.options.body).tab==='tab1'));
   events['muninn:view-change']({detail:{visible:false}});
   await flush();
   assert.ok(events['muninn:view-change'],'browser responds to PWA navigation changes');
@@ -246,5 +266,6 @@ test('mobile server-browser canvas remains readable and can pan horizontally',()
   assert.match(css,/remote-frame-viewport\{[^}]*overflow-x:auto/);
   assert.match(css,/touch-action:pan-x;width:min\(100%,112vh\)/);
   assert.match(css,/max-height:none/);
+  assert.match(css,/remote-frame\[hidden\]\{display:none\}/);
   assert.match(css,/@media\(max-width:600px\)\{[\s\S]*?remote-frame\{width:960px/);
 });
