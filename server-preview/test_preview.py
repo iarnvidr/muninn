@@ -26,7 +26,7 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("querySelector('#browser-host')", browser)
         self.assertNotIn("querySelector('nav.tabs')", browser)
         self.assertIn('name="muninn-source-browser" content="enabled"', gateway)
-        self.assertIn('muninn-pwa-shell-browser-v3', gateway)
+        self.assertIn('muninn-pwa-shell-browser-v4', gateway)
         self.assertIn('https://www.tiktok.com/search?q=', browser)
         self.assertIn('https://www.youtube.com/results?search_query=', browser)
 
