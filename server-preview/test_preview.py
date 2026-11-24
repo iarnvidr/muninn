@@ -22,11 +22,20 @@ class PolicyTests(unittest.TestCase):
         # This image test must validate the actual packaged browser assets.
         preview = Path(__file__).resolve().parent
         browser = (preview / "client.js").read_text()
+        discovery = (preview / "discovery.js").read_text()
         gateway = (preview / "gateway.py").read_text()
         self.assertIn("querySelector('#browser-host')", browser)
+        self.assertIn("setVisible(false)", browser)
+        self.assertIn("muninn:advanced-browser", browser)
         self.assertNotIn("querySelector('nav.tabs')", browser)
         self.assertIn('name="muninn-source-browser" content="enabled"', gateway)
-        self.assertIn('muninn-pwa-shell-browser-v3', gateway)
+        self.assertIn('muninn-pwa-shell-browser-v4', gateway)
+        self.assertIn('"/app/discovery.js"', gateway)
+        self.assertIn('discovery.js', gateway)
+        self.assertIn('api/feeds?limit=100', discovery)
+        self.assertIn('muninn-discover-grid', discovery)
+        self.assertIn("data-browse-source", discovery)
+        self.assertNotIn('remote-frame', discovery)
         self.assertIn('https://www.tiktok.com/search?q=', browser)
         self.assertIn('https://www.youtube.com/results?search_query=', browser)
 
