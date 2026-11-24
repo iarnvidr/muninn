@@ -233,6 +233,17 @@ test('the private Chromium browsing client mounts and starts against the real PW
   // A slow action can leave scrolls/text in the client queue while the user
   // switches tabs. No queued input may be redirected to the new provider.
   const tabButton=title=>all(host).find(node=>node.tag==='button'&&node.textContent===title);
+  const originalTabA=tabButton('Provider tab A');
+  const originalTabB=tabButton('Provider tab B');
+  // A normal provider refresh must not replace a focused or tapped tab.
+  remote.listeners.keydown[0]({key:'x',preventDefault(){}});await flush();
+  assert.equal(tabButton('Provider tab A'),originalTabA);
+  assert.equal(tabButton('Provider tab B'),originalTabB);
+  page.title='Updated provider tab A';
+  remote.listeners.keydown[0]({key:'x',preventDefault(){}});await flush();
+  assert.equal(tabButton('Updated provider tab A'),originalTabA,'title update preserves tab identity');
+  page.title='Provider tab A';
+  remote.listeners.keydown[0]({key:'x',preventDefault(){}});await flush();
   tabButton('Provider tab A').listeners.click[0]();await flush();
   const offset=calls.length;
   holdNextAction=true;
