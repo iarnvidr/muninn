@@ -124,6 +124,8 @@ test('stale PWA shell recovers the real owner-only provider browser without the 
   assert.equal(h.get('#browser-host').hidden,false);
   assert.equal(h.get('#view-title').textContent,'Browse');
   assert.ok(h.head.children.some(node=>node.tag==='link' && node.href==='/app/browser.css'));
+  assert.ok(h.head.children.some(node=>node.tag==='meta' && node.name==='muninn-source-browser' && node.content==='enabled'));
+  assert.ok(h.head.children.some(node=>node.tag==='script' && node.src==='/app/discovery.js'));
   assert.ok(h.head.children.some(node=>node.tag==='script' && node.src==='/app/browser.js'));
 });
 

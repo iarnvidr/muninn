@@ -137,6 +137,7 @@ class DaggerContract(unittest.TestCase):
             "pub packaging: Void @check", 1
         )[0]
         self.assertIn('"crates/server/src/web/mod.rs"', javascript)
+        self.assertIn('"server-preview/discovery.js"', javascript)
 
     def test_cache_transport_is_explicit_and_not_a_result_receipt(self):
         self.assertIn("path: ci/cache/linux-cargo", self.linux)

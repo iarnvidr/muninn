@@ -104,3 +104,93 @@ button { cursor:pointer; }
   #feed-filters { overflow-x:auto; flex-wrap:nowrap; }
   #feed-filters button { flex:none; }
 }
+
+/* Native discovery: captured provider data renders into Muninn components.
+   The remote Chromium screenshot is an optional account/site tool only. */
+#app[data-client="pwa"] { --side-w:224px; }
+#pwa-discover-menu { display:grid; align-content:start; gap:3px; padding:6px 0 10px; }
+#pwa-discover-menu .nav-caption { margin-top:10px; }
+#pwa-discover-menu .side-item { width:100%; min-height:40px; text-align:left; }
+.pwa-provider-mark { flex:none; display:grid; place-items:center; width:24px; height:24px;
+  border-radius:7px; background:var(--accent-soft); color:var(--accent); font:700 10px var(--mono); }
+#pwa-discover-menu .pwa-provider[aria-pressed=true] { background:var(--accent-soft); color:var(--text); }
+.pwa-discover-search { margin:7px 4px 3px; padding:12px 0 5px; border-top:1px solid var(--border); }
+.pwa-discover-search label { display:block; font-size:11px; color:var(--muted); margin-bottom:7px; }
+.pwa-discover-search input { width:100%; min-height:39px; padding:9px; border:1px solid var(--border); border-radius:8px;
+  color:var(--text); background:var(--bg); font-size:13px; }
+.pwa-search-actions { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:7px; }
+.pwa-search-actions button { padding:7px 4px; border:1px solid var(--border); border-radius:7px; background:var(--panel);
+  color:var(--text); min-height:34px; font-size:11px; }
+.pwa-menu-toggle { display:none; color:var(--text); background:transparent; border:0; font-size:14px; }
+.pwa-nav-backdrop { display:none; }
+.pwa-browser-host, .pwa-browser-host .muninn-discover { min-width:0; width:100%; }
+.muninn-discover-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:15px; }
+.muninn-discover-head h2 { margin:0 0 4px; font-size:20px; font-weight:730; }
+.muninn-discover-subtitle { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
+.muninn-discover-refresh { flex:none; min-height:36px; padding:6px 12px; border:1px solid var(--border);
+  border-radius:8px; color:var(--text); background:var(--panel); }
+.muninn-discover-state { display:block; font-size:12px; color:var(--muted); margin-bottom:14px; }
+.muninn-discover-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(228px,1fr)); gap:23px 16px; }
+.muninn-discover-card { min-width:0; background:transparent; border:0; }
+.muninn-discover-art { position:relative; width:100%; aspect-ratio:16/9; background:var(--panel2);
+  border-radius:10px; overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:12px; }
+.muninn-discover-art img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.muninn-discover-duration { position:absolute; right:7px; bottom:7px; padding:2px 6px; border-radius:4px;
+  background:#090a0bd9; color:white; font:600 11px var(--mono); }
+.muninn-discover-copy { padding:10px 2px 0; }
+.muninn-discover-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  font-size:13px; font-weight:670; line-height:1.5; min-height:38px; margin:0 0 3px; color:var(--text); }
+.muninn-discover-byline { margin:0; font-size:12px; line-height:1.5; color:var(--muted); }
+.muninn-discover-actions { display:flex; flex-wrap:wrap; gap:6px; padding-top:9px; }
+.muninn-discover-actions button { padding:7px 10px; min-height:35px; font-size:12px; border:1px solid var(--border);
+  border-radius:7px; background:var(--panel); color:var(--text); }
+.muninn-discover-actions button:first-child { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+.muninn-discover-art-button { display:block; width:100%; border:0; padding:0; background:transparent; text-align:left; cursor:pointer; }
+.muninn-discover-art-button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.muninn-discover-empty { border:1px dashed var(--border); background:var(--panel); border-radius:10px; padding:28px 18px;
+  color:var(--muted); line-height:1.6; }
+.muninn-discover-watch { max-width:970px; }
+.muninn-discover-watch .muninn-watch-back { margin:0 0 15px; padding:7px 11px; border:1px solid var(--border);
+  border-radius:7px; color:var(--text); background:var(--panel); }
+.muninn-watch-art { width:100%; max-width:880px; aspect-ratio:16/9; background:var(--panel2); border-radius:12px; overflow:hidden; }
+.muninn-watch-art img { width:100%; height:100%; object-fit:cover; }
+.muninn-discover-watch h2 { font-size:clamp(18px,2.5vw,26px); line-height:1.25; margin:17px 0 8px; }
+.muninn-watch-meta { color:var(--muted); font-size:13px; margin:0 0 14px; }
+.muninn-watch-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.muninn-watch-actions button { padding:10px 14px; min-height:40px; border:1px solid var(--border);
+  border-radius:8px; color:var(--text); background:var(--panel); }
+.muninn-watch-actions button:first-child { color:var(--accent); background:var(--accent-soft); border-color:var(--accent); }
+.muninn-watch-player { width:100%; aspect-ratio:16/9; background:#000; border-radius:10px; margin-top:15px; }
+.muninn-discover .remote-browser { max-width:100%; margin-top:16px; }
+.muninn-discover .remote-browser[hidden] { display:none!important; }
+.muninn-advanced-note { font-size:12px; color:var(--muted); margin:0 0 8px; }
+@media(max-width:700px) {
+  #app[data-client="pwa"] { --side-w:0px; }
+  #app[data-client="pwa"] .sidebar { position:fixed; inset:0 auto 0 0; width:min(330px,88vw); z-index:1002;
+    padding:16px 12px; transform:translateX(-103%); transition:transform .18s ease; overflow-y:auto; background:var(--side);
+    box-shadow:6px 0 25px #0003; }
+  #app[data-client="pwa"][data-menu="open"] .sidebar { transform:translateX(0); }
+  #app[data-client="pwa"] .sidebar .side-label,#app[data-client="pwa"] .sidebar .nav-caption,
+  #app[data-client="pwa"] .sidebar .muninn-brand-copy { display:initial; }
+  #app[data-client="pwa"] .sidebar .side-item { justify-content:flex-start; }
+  #app[data-client="pwa"] .sidebar .muninn-brand { justify-content:flex-start; }
+  #app[data-client="pwa"] .sidebar .side-nav { padding:6px 3px; margin:0; }
+  #app[data-client="pwa"] .sidebar .brand-raven { width:36px; }
+  #app[data-client="pwa"] .sidebar .sidebar-note { display:block; }
+  .pwa-menu-toggle { display:inline-flex; align-items:center; flex:none; min-height:38px; padding:8px 12px; }
+  .pwa-nav-backdrop:not([hidden]) { display:block; position:fixed; inset:0; z-index:1001; background:#0009; border:0; }
+  #app[data-client="pwa"] .tabrow { display:none; }
+  #app[data-client="pwa"] .toolbar { gap:3px; min-height:49px; }
+  #app[data-client="pwa"] .pwa-workspace { padding:15px 12px 46px; }
+  #app[data-client="pwa"] .pwa-workspace .page-head { display:none; }
+  #app[data-client="pwa"] .pwa-connection { max-width:140px; }
+  .muninn-discover-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 10px; }
+  .muninn-discover-head h2 { font-size:18px; }
+  .muninn-discover-art { border-radius:7px; }
+  .muninn-discover-title { font-size:12px; min-height:36px; }
+  .muninn-discover-byline { font-size:11px; }
+  .muninn-discover-actions button { font-size:11px; padding:6px 8px; min-height:34px; }
+  .muninn-discover-refresh { font-size:12px; }
+}
+@media(max-width:370px) { .muninn-discover-grid { grid-template-columns:1fr; } }
+@media(prefers-reduced-motion:reduce) { #app[data-client="pwa"] .sidebar { transition:none; } }

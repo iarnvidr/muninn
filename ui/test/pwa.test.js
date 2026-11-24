@@ -138,8 +138,20 @@ test('PWA honors server-selected authentication without token fallback',()=>{
 test('the guarded source browser has a first-class default Browse view instead of the legacy detached tab',()=>{
   const html=file('index.html'),app=file('app.js');
   const browser=fs.readFileSync(path.join(__dirname,'../../server-preview/client.js'),'utf8');
+  const discovery=fs.readFileSync(path.join(__dirname,'../../server-preview/discovery.js'),'utf8');
   const gateway=fs.readFileSync(path.join(__dirname,'../../server-preview/gateway.py'),'utf8');
   assert.match(html,/id="browser-host"/);
+  assert.match(html,/id="pwa-discover-menu"/);
+  assert.match(html,/id="pwa-menu-toggle"/);
+  assert.match(html,/data-browse-source="youtube-home"/);
+  assert.match(html,/data-browse-source="tiktok-foryou"/);
+  assert.match(discovery,/muninn-discover-grid/);
+  assert.match(discovery,/api\/feeds\?kind=/);
+  assert.match(discovery,/api\/feeds\//);
+  assert.match(discovery,/api\/cache/);
+  assert.doesNotMatch(discovery,/remote-frame|createObjectURL|tiktok\.com\/embed|youtube\.com\/embed/);
+  assert.match(browser,/setVisible\(false\)/);
+  assert.match(browser,/muninn:advanced-browser/);
   assert.match(html,/data-view="browse"/);
   assert.match(app,/muninn-source-browser/);
   assert.match(app,/view:browserEnabled && navigator\.onLine \? 'browse'/);
@@ -150,7 +162,8 @@ test('the guarded source browser has a first-class default Browse view instead o
     assert.ok(browser.includes(command),command);
   }
   assert.match(gateway,/muninn-source-browser/);
-  assert.match(gateway,/muninn-pwa-shell-browser-v4/);
+  assert.match(gateway,/muninn-pwa-shell-browser-v5/);
+  assert.match(gateway,/app\/discovery.js/);
   // The Safari recovery path is always same-origin, auth-scoped and never
   // makes the standalone PWA show a nonfunctional browser.
   assert.match(app,/fetch\('\/browser\/state'/);
@@ -204,7 +217,11 @@ test('the private Chromium browsing client mounts and starts against the real PW
   vm.runInNewContext(browser,context);
   const flush=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
   await flush();
-  assert.equal(host.children.length,1,'real Browse container should receive the browser canvas');
+  assert.equal(host.children.length,1,'advanced site-controls can mount without taking over native discovery');
+  assert.equal(calls.length,0,'entering native Browse must not open the pixel browser');
+  assert.equal(host.children[0].hidden,true,'remote Chromium panel is hidden until explicitly requested');
+  events['muninn:advanced-browser']({detail:{open:true}});await flush();
+  assert.equal(host.children[0].hidden,false);
   assert.ok(calls.some(call=>call.url==='/browser/state'));
   assert.ok(calls.some(call=>call.url==='/browser/action'&&JSON.parse(call.options.body).action==='start'));
   assert.ok(calls.some(call=>call.url.startsWith('/browser/frame?tab=')));
@@ -297,6 +314,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
   holdNextState=true;
   const beforeReopen=calls.length;
   events['muninn:view-change']({detail:{visible:true}});await flush();
+  events['muninn:advanced-browser']({detail:{open:true}});await flush();
   assert.equal(typeof releaseState,'function');
   events['muninn:view-change']({detail:{visible:false}});await flush();
   releaseState();await flush();
@@ -305,6 +323,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
   assert.equal(remote.hidden,true);
   // A fresh visit still starts the browser normally.
   events['muninn:view-change']({detail:{visible:true}});await flush();
+  events['muninn:advanced-browser']({detail:{open:true}});await flush();
   assert.equal(remote.hidden,false);
   assert.ok(tabButton('Provider tab A'));
 });

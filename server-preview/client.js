@@ -6,7 +6,10 @@
   // nav.tabs placeholder. Mount in its dedicated first-class Browse view.
   const host=document.querySelector('#browser-host');
   if(!host)return;
+  // Chromium's pixel viewport is only an advanced site interaction/sign-in
+  // fallback. Captured feeds are rendered natively by discovery.js.
   const panel=node('section',null,'pwa-panel remote-browser');
+  panel.hidden=true;
   host.append(panel);
   let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0, frameTab=null, frameSequence=0, stateEpoch=0;
   const heading=node('h2','YouTube and TikTok');
@@ -219,8 +222,22 @@
       }else await frame();
     }catch(error){if(shown&&epoch===stateEpoch)status.textContent=error.message;}
   }
-  document.addEventListener('muninn:view-change',event=>{setVisible(event.detail?.visible===true);});
-  setVisible(!host.hidden);
+  let advancedOpen=false;
+  document.addEventListener('muninn:view-change',event=>{
+    if(event.detail?.visible!==true){
+      advancedOpen=false;
+      panel.hidden=true;
+      setVisible(false);
+    }else setVisible(advancedOpen);
+  });
+  document.addEventListener('muninn:advanced-browser',event=>{
+    advancedOpen=event.detail?.open===true;
+    panel.hidden=!advancedOpen;
+    setVisible(advancedOpen&&!host.hidden);
+  });
+  // Never automatically open Chromium when the owner enters the PWA Browse
+  // view. Native discovery starts source capture and renders structured items.
+  setVisible(false);
   document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;stateEpoch++;panel.hidden=true;clearFrame();});
   async function tick(){
     try{

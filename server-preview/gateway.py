@@ -4,13 +4,17 @@ import asyncio
 import contextlib
 import json
 import os
+import re
+from collections import OrderedDict
 import ipaddress
 import secrets
 import socket
 from pathlib import Path
 from urllib.parse import urlsplit
-from aiohttp import web, ClientSession, ClientTimeout
+from aiohttp import web, ClientSession, ClientTimeout, TCPConnector, ClientError
+from yarl import URL
 from browser import Browser
+from thumbnails import PublicResolver, TIKTOK_ID, MAX_COVER_BYTES, image_type, remember_covers
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "content-length"}
 ROOT = Path(__file__).resolve().parent
@@ -118,8 +122,38 @@ async def browser_frame(request):
     return web.Response(body=image, content_type="image/jpeg")
 
 
+async def cover_art(request):
+    # Fetch only covers from previously authenticated, parsed Core snapshots.
+    await authenticated(request)
+    ident = request.match_info["video_id"]
+    if not TIKTOK_ID.fullmatch(ident):
+        raise web.HTTPNotFound()
+    url = request.app["covers"].get(ident)
+    if url is None:
+        raise web.HTTPNotFound()
+    try:
+        async with request.app["thumb_http"].get(
+            URL(url, encoded=True), allow_redirects=False,
+            headers={"Accept":"image/jpeg,image/png,image/webp"}
+        ) as upstream:
+            if upstream.status != 200:
+                raise web.HTTPNotFound()
+            if int(upstream.headers.get("Content-Length", "0")) > MAX_COVER_BYTES:
+                raise web.HTTPNotFound()
+            body = await upstream.content.read(MAX_COVER_BYTES + 1)
+            if not body or len(body) > MAX_COVER_BYTES:
+                raise web.HTTPNotFound()
+            mime = image_type(body, upstream.headers.get("Content-Type", ""))
+            if mime is None:
+                raise web.HTTPNotFound()
+            return web.Response(body=body, content_type=mime)
+    except (ClientError, TimeoutError, ValueError):
+        raise web.HTTPNotFound() from None
+
+
 async def asset(request):
-    files = {"browser.js": ("client.js", "text/javascript"), "browser.css": ("client.css", "text/css")}
+    files = {"browser.js": ("client.js", "text/javascript"), "browser.css": ("client.css", "text/css"),
+             "discovery.js": ("discovery.js", "text/javascript")}
     name, mime = files[request.match_info["asset"]]
     return web.Response(body=(ROOT / name).read_bytes(), content_type=mime)
 
@@ -148,15 +182,26 @@ async def proxy(request):
         copied = [(key, value) for key, value in upstream.headers.items() if key.lower() not in HOP]
         if request.path in {"/app/", "/app/index.html"} and upstream.status == 200:
             text = await upstream.text()
-            text = text.replace("</head>", '<meta name="muninn-source-browser" content="enabled"><link rel="stylesheet" href="/app/browser.css"><script src="/app/browser.js" defer></script></head>')
+            text = text.replace("</head>", '<meta name="muninn-source-browser" content="enabled"><link rel="stylesheet" href="/app/browser.css"><script src="/app/discovery.js" defer></script><script src="/app/browser.js" defer></script></head>')
             return web.Response(body=text.encode(), status=upstream.status, headers=copied)
+        if (request.method == "GET" and upstream.status == 200
+                and re.fullmatch(r"/api/feeds/[1-9][0-9]*", request.path)):
+            # Reuse only images that Core already parsed as feed items.
+            # Never accept a caller-supplied URL or pass cover origins to Safari.
+            body = await upstream.read()
+            if len(body) <= 8 * 1024 * 1024:
+                try:
+                    remember_covers(request.app["covers"], json.loads(body))
+                except (TypeError, ValueError):
+                    pass
+            return web.Response(body=body, status=upstream.status, headers=copied)
         if request.path == "/app/sw.js" and upstream.status == 200:
             text = await upstream.text()
             # The browser edition must have a distinct cache identity, and
             # only its static JS/CSS join the shell; screenshots stay private.
             if "muninn-pwa-shell-v2" not in text or "const SHELL = [" not in text:
                 raise web.HTTPInternalServerError(text="PWA shell version mismatch")
-            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v4").replace("const SHELL = [", "const SHELL = ['/app/browser.js','/app/browser.css',")
+            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v5").replace("const SHELL = [", "const SHELL = ['/app/discovery.js','/app/browser.js','/app/browser.css',")
             return web.Response(body=text.encode(), headers=copied)
         response = web.StreamResponse(status=upstream.status, headers=copied)
         if "Content-Length" in upstream.headers:
@@ -191,6 +236,10 @@ async def lifecycle(app):
     child = await asyncio.create_subprocess_exec("muninn-web", env=env)
     http = ClientSession(timeout=ClientTimeout(total=None, connect=10, sock_read=60), auto_decompress=False)
     app["http"] = http
+    thumb_http = ClientSession(connector=TCPConnector(resolver=PublicResolver(), limit_per_host=6),
+                               timeout=ClientTimeout(total=12), trust_env=False,
+                               auto_decompress=False)
+    app["thumb_http"] = thumb_http
     browser = None
     try:
         for _ in range(100):
@@ -222,6 +271,7 @@ async def lifecycle(app):
     finally:
         if browser:
             await browser.close()
+        await thumb_http.close()
         await http.close()
         if child.returncode is None:
             child.terminate()
@@ -240,11 +290,13 @@ def create_app():
     if mode not in {"token", "authelia"}:
         raise RuntimeError("MUNINN_WEB_AUTH must be token or authelia")
     app["auth_mode"] = mode
+    app["covers"] = OrderedDict()
     app.cleanup_ctx.append(lifecycle)
     app.router.add_get("/browser/state", browser_state)
     app.router.add_post("/browser/action", browser_action)
     app.router.add_get("/browser/frame", browser_frame)
-    app.router.add_get(r"/app/{asset:browser\.js|browser\.css}", asset)
+    app.router.add_get(r"/discover/thumb/{video_id}", cover_art)
+    app.router.add_get(r"/app/{asset:browser\.js|browser\.css|discovery\.js}", asset)
     app.router.add_route("*", "/{tail:.*}", proxy)
     return app
 

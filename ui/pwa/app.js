@@ -41,6 +41,21 @@
       // capability request was pending.
       if(state.view==='server')state.view='browse';
       render();
+      // A stale shell may already contain the native discovery menu but lack
+      // the gateway stamp. Load discovery only after the protected probe.
+      const nativeMenu=$('#pwa-discover-menu');
+      if(nativeMenu) {
+        const marker=document.createElement('meta');
+        marker.name='muninn-source-browser';marker.content='enabled';
+        document.head.append(marker);
+        const discovery=document.createElement('script');discovery.src='/app/discovery.js';
+        const discoveryLoaded=new Promise((resolve,reject)=>{
+          discovery.addEventListener('load',resolve,{once:true});
+          discovery.addEventListener('error',reject,{once:true});
+        });
+        document.head.append(discovery);
+        await discoveryLoaded;
+      }
       const script=document.createElement('script');script.src='/app/browser.js';
       const loaded=new Promise((resolve,reject)=>{
         script.addEventListener('load',resolve,{once:true});
@@ -48,6 +63,7 @@
       });
       document.head.append(script);
       await loaded;
+      if(!nativeMenu && state.view==='browse') document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:true}}));
     })().catch(()=>{
       // A blocked or expired owner session must not become a token prompt.
       // Refresh via Authelia; the library and offline copies remain usable.
