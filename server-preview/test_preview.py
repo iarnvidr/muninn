@@ -14,8 +14,8 @@ from browser import Browser
 from thumbnails import safe_cover_url, remember_covers, image_type, PublicResolver
 from collections import OrderedDict
 import socket
-from unittest.mock import patch, AsyncMock
-from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers
+from unittest.mock import patch
+from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers, proxy
 from policy import *
 
 
@@ -69,7 +69,7 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("muninn:advanced-browser", browser)
         self.assertNotIn("querySelector('nav.tabs')", browser)
         self.assertIn('name="muninn-source-browser" content="enabled"', gateway)
-        self.assertIn('muninn-pwa-shell-browser-v4', gateway)
+        self.assertIn('muninn-pwa-shell-browser-v5', gateway)
         self.assertIn('"/app/discovery.js"', gateway)
         self.assertIn('discovery.js', gateway)
         self.assertIn('api/feeds?kind=', discovery)
@@ -190,6 +190,37 @@ class GatewayAutheliaTests(unittest.TestCase):
         self.assertEqual(headers["X-Muninn-Gateway-Auth"], "a" * 64)
         self.assertNotIn("Cookie", headers)
 
+
+
+class TrackedPwaNavigationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_app_url_query_still_receives_browser_bootstrap(self):
+        # The owner opens /app/?utm_source=chatgpt.com from ChatGPT.
+        # A query must not bypass the gateway's Browse-enabled HTML response.
+        paths = []
+        class Upstream:
+            status = 200
+            headers = {'Content-Type':'text/html'}
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):return False
+            async def text(self):return '<html><head><title>Muninn</title></head><body>Library</body></html>'
+        class Http:
+            def request(self,method,url,**kwargs):
+                paths.append((method,url,kwargs.get('allow_redirects')))
+                return Upstream()
+        for path in ('/app/', '/app/index.html'):
+            req=SimpleNamespace(
+                method='GET',path=path,
+                raw_path=path+'?utm_source=chatgpt.com',
+                headers={'Host':'muninn-preview.example.test'},
+                app={'auth_mode':'token','authority':'muninn-preview.example.test','http':Http()},
+                read=AsyncMock(return_value=b''))
+            response=await proxy(req)
+            self.assertEqual(response.status,200)
+            self.assertIn('name="muninn-source-browser" content="enabled"',response.text)
+            self.assertIn('/app/discovery.js',response.text)
+            self.assertIn('/app/browser.js',response.text)
+            self.assertIn('/app/browser.css',response.text)
+            self.assertEqual(paths[-1],('GET','http://127.0.0.1:47872'+req.raw_path,False))
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):

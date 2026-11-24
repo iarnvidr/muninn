@@ -254,6 +254,7 @@ type MuninnCi {
         # fail even when host-side Node checks pass. Keep CSS here because
         # mobile Browse interaction tests read the real responsive styles.
         "server-preview/client.js", "server-preview/client.css", "server-preview/gateway.py",
+        "server-preview/discovery.js",
       ], exclude: ["**/node_modules"]))
       .withWorkdir("/src")
       .withExec(["sh", "-ec", "node --test src-tauri/test/*.test.js ui/test/*.test.js build/test_native_player_interactions.js"])

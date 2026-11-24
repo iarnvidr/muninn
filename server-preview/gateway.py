@@ -201,7 +201,7 @@ async def proxy(request):
             # only its static JS/CSS join the shell; screenshots stay private.
             if "muninn-pwa-shell-v2" not in text or "const SHELL = [" not in text:
                 raise web.HTTPInternalServerError(text="PWA shell version mismatch")
-            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v4").replace("const SHELL = [", "const SHELL = ['/app/discovery.js','/app/browser.js','/app/browser.css',")
+            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v5").replace("const SHELL = [", "const SHELL = ['/app/discovery.js','/app/browser.js','/app/browser.css',")
             return web.Response(body=text.encode(), headers=copied)
         response = web.StreamResponse(status=upstream.status, headers=copied)
         if "Content-Length" in upstream.headers:
