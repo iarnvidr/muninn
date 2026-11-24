@@ -32,7 +32,7 @@ class PolicyTests(unittest.TestCase):
         self.assertIn('muninn-pwa-shell-browser-v4', gateway)
         self.assertIn('"/app/discovery.js"', gateway)
         self.assertIn('discovery.js', gateway)
-        self.assertIn('api/feeds?limit=100', discovery)
+        self.assertIn('api/feeds?kind=', discovery)
         self.assertIn('muninn-discover-grid', discovery)
         self.assertIn("data-browse-source", discovery)
         self.assertNotIn('remote-frame', discovery)
