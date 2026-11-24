@@ -248,6 +248,13 @@ class Browser:
                     await page.mouse.click(x, y)
                 elif kind == "scroll":
                     dy = max(-1600, min(1600, int(command.get("dy", 0))))
+                    # Wheel events hit the element under Chromium's mouse, not
+                    # the remote Safari pointer. Move to the gesture target first.
+                    if "x" in command or "y" in command:
+                        x, y = float(command.get("x", -1)), float(command.get("y", -1))
+                        if not (0 <= x < WIDTH and 0 <= y < HEIGHT):
+                            raise ValueError("Scroll outside browser viewport")
+                        await page.mouse.move(x, y)
                     await page.mouse.wheel(0, dy)
                 elif kind == "text":
                     text = command.get("text")

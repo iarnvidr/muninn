@@ -161,6 +161,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
     append(...children){this.children.push(...children);}
     replaceChildren(...children){this.children=children;}
     setAttribute(){}removeAttribute(){}focus(){}
+    getBoundingClientRect(){return {left:-160,top:40,width:640,height:400};}
     addEventListener(name,callback){(this.listeners[name]??=[]).push(callback);}
   }
   const host=new Element(),events={},calls=[],page={id:'tab1',title:'Provider tab A',url:'https://www.youtube.com/',video_id:null};
@@ -227,18 +228,21 @@ test('the private Chromium browsing client mounts and starts against the real PW
   await flush();
   assert.equal(prevented,true,'vertical swipe must scroll remote page instead of PWA');
   assert.ok(before()>beforePan,'vertical swipe must send a remote scroll action');
+  const swipe=calls.filter(call=>call.url==='/browser/action').map(call=>JSON.parse(call.options.body)).filter(x=>x.action==='scroll').at(-1);
+  assert.deepEqual([swipe.x,swipe.y],[638,240],'mobile swipe uses scaled coordinates including horizontal pan');
   // A slow action can leave scrolls/text in the client queue while the user
   // switches tabs. No queued input may be redirected to the new provider.
   const tabButton=title=>all(host).find(node=>node.tag==='button'&&node.textContent===title);
   tabButton('Provider tab A').listeners.click[0]();await flush();
   const offset=calls.length;
   holdNextAction=true;
-  remote.listeners.wheel[0]({deltaY:40,preventDefault(){}});await flush();
+  remote.listeners.wheel[0]({deltaY:40,clientX:200,clientY:140,preventDefault(){}});await flush();
   assert.equal(typeof releaseAction,'function');
   remote.listeners.keydown[0]({key:'x',preventDefault(){}});
   tabButton('Provider tab B').listeners.click[0]();await flush();
   releaseAction();await flush();
   const queued=calls.slice(offset).filter(call=>call.url==='/browser/action').map(call=>JSON.parse(call.options.body));
+  assert.deepEqual([queued[0].x,queued[0].y],[720,200],'wheel targets pointer location in remote viewport');
   assert.deepEqual(queued.map(x=>[x.action,x.tab]),[['scroll','tab1'],['text','tab1']],
     'queued input must target the original tab, not whichever tab is selected at delivery');
   // While A's replacement frame is in flight, B's old screenshot must
@@ -249,7 +253,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
   assert.equal(remote.hidden,true,'hide the previous provider screenshot while switching');
   const beforeFrame=calls.length;
   remote.listeners.click[0]({clientX:10,clientY:10});
-  remote.listeners.wheel[0]({deltaY:40,preventDefault(){}});
+  remote.listeners.wheel[0]({deltaY:40,clientX:200,clientY:140,preventDefault(){}});
   remote.listeners.keydown[0]({key:'x',preventDefault(){}});
   await flush();
   assert.equal(calls.slice(beforeFrame).filter(call=>call.url==='/browser/action').length,0);

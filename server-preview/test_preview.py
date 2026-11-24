@@ -183,6 +183,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):await task
             self.assertEqual(order,['cookies','tab'])
 
+    async def test_scroll_targets_pointer_before_wheel_and_rejects_outside_viewport(self):
+        with tempfile.TemporaryDirectory() as d:
+            browser=Browser(Path(d),None,'http://127.0.0.1:47873','test')
+            order=[]
+            async def move(x,y): order.append(('move',x,y))
+            async def wheel(x,y): order.append(('wheel',x,y))
+            browser.pages['tab']=SimpleNamespace(is_closed=lambda:False,
+                mouse=SimpleNamespace(move=move,wheel=wheel))
+            browser.state=AsyncMock(return_value={})
+            await browser.action({'action':'scroll','tab':'tab','dy':120,'x':900,'y':400})
+            self.assertEqual(order,[('move',900,400),('wheel',0,120)])
+            with self.assertRaises(ValueError):
+                await browser.action({'action':'scroll','tab':'tab','dy':120,'x':1280,'y':400})
+            self.assertEqual(len(order),2)
+            await browser.action({'action':'scroll','tab':'tab','dy':-600})
+            self.assertEqual(order[-1],('wheel',0,-600))
+
     async def test_browser_access_requires_real_muninn_session(self):
         class Response:
             status=401
