@@ -127,6 +127,6 @@ test('PWA mobile keeps provider navigation in a drawer, not a remote screenshot 
   assert.match(css,/#app\[data-client="pwa"\]\[data-menu="open"\] \.sidebar/);
   assert.match(css,/#app\[data-client="pwa"\] \.tabrow \{ display:none;/);
   assert.match(gateway,/app\/discovery.js/);
-  assert.match(gateway,/muninn-pwa-shell-browser-v4/);
+  assert.match(gateway,/muninn-pwa-shell-browser-v5/);
   assert.doesNotMatch(source,/innerHTML|eval\(|document\.cookie|localStorage/);
 });
