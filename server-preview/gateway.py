@@ -119,7 +119,8 @@ async def browser_frame(request):
 
 
 async def asset(request):
-    files = {"browser.js": ("client.js", "text/javascript"), "browser.css": ("client.css", "text/css")}
+    files = {"browser.js": ("client.js", "text/javascript"), "browser.css": ("client.css", "text/css"),
+             "discovery.js": ("discovery.js", "text/javascript")}
     name, mime = files[request.match_info["asset"]]
     return web.Response(body=(ROOT / name).read_bytes(), content_type=mime)
 
@@ -148,7 +149,7 @@ async def proxy(request):
         copied = [(key, value) for key, value in upstream.headers.items() if key.lower() not in HOP]
         if request.path in {"/app/", "/app/index.html"} and upstream.status == 200:
             text = await upstream.text()
-            text = text.replace("</head>", '<meta name="muninn-source-browser" content="enabled"><link rel="stylesheet" href="/app/browser.css"><script src="/app/browser.js" defer></script></head>')
+            text = text.replace("</head>", '<meta name="muninn-source-browser" content="enabled"><link rel="stylesheet" href="/app/browser.css"><script src="/app/discovery.js" defer></script><script src="/app/browser.js" defer></script></head>')
             return web.Response(body=text.encode(), status=upstream.status, headers=copied)
         if request.path == "/app/sw.js" and upstream.status == 200:
             text = await upstream.text()
@@ -156,7 +157,7 @@ async def proxy(request):
             # only its static JS/CSS join the shell; screenshots stay private.
             if "muninn-pwa-shell-v2" not in text or "const SHELL = [" not in text:
                 raise web.HTTPInternalServerError(text="PWA shell version mismatch")
-            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v3").replace("const SHELL = [", "const SHELL = ['/app/browser.js','/app/browser.css',")
+            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v4").replace("const SHELL = [", "const SHELL = ['/app/discovery.js','/app/browser.js','/app/browser.css',")
             return web.Response(body=text.encode(), headers=copied)
         response = web.StreamResponse(status=upstream.status, headers=copied)
         if "Content-Length" in upstream.headers:
@@ -244,7 +245,7 @@ def create_app():
     app.router.add_get("/browser/state", browser_state)
     app.router.add_post("/browser/action", browser_action)
     app.router.add_get("/browser/frame", browser_frame)
-    app.router.add_get(r"/app/{asset:browser\.js|browser\.css}", asset)
+    app.router.add_get(r"/app/{asset:browser\.js|browser\.css|discovery\.js}", asset)
     app.router.add_route("*", "/{tail:.*}", proxy)
     return app
 
