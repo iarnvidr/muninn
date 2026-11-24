@@ -154,7 +154,8 @@
     const img=el('img');
     img.alt='';
     img.loading='lazy';
-    img.src='/thumb/'+encodeURIComponent(item.video_id);
+    img.src=(item.video_id.startsWith('tt_')?'/discover/thumb/':'/thumb/')+
+      encodeURIComponent(item.video_id);
     img.addEventListener('error',()=>img.remove());
     artwork.append(img);
     if(!large && Number(item.duration_seconds)>0)artwork.append(el('span',minutes(item.duration_seconds),'muninn-discover-duration'));
