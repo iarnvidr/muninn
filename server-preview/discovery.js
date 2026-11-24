@@ -29,6 +29,7 @@
     snapshot:null, entries:[], pending:false, loading:false, readEpoch:0, routeEpoch:0,
     advanced:false, lastCapture:null, lastError:null};
   let navigationTail = Promise.resolve();
+  let renderedGridKey = null;
   menu.hidden = false;
   const surface = el('section',undefined,'muninn-discover');
   const heading = el('div',undefined,'muninn-discover-head');
@@ -104,6 +105,7 @@
     if(player){player.pause();player.removeAttribute('src');player.load();}
     watch.hidden=true; grid.hidden=false; heading.hidden=false; message.hidden=false;
     state.selected=null;
+    draw();
   }
   function browseView() {
     const b=document.querySelector('[data-view="browse"]');
@@ -234,16 +236,23 @@
       : 'Videos captured by your private '+(state.source.startsWith('tiktok')?'TikTok':'YouTube')+' browser';
     renderNav();
     if(state.selected){updateWatchAction();return;}
-    grid.replaceChildren();
-    const items=(state.snapshot?.items||[]).filter(isValidItem);
-    if(!items.length){
-      const empty=el('p',state.loading ? 'Reading captured videos from your server…'
-        : state.pending ? 'Opening '+sourceLabel()+' in the private browser and collecting videos…'
-          : state.lastError || 'No captured videos yet. Refresh to load this provider; private account sign-in is under Site controls.',
-        'muninn-discover-empty');
+    const items=(state.snapshot?.items||[]).filter(isValidItem).slice(0,100);
+    const emptyText=state.loading ? 'Reading captured videos from your server…'
+      : state.pending ? 'Opening '+sourceLabel()+' in the private browser and collecting videos…'
+        : state.lastError || 'No captured videos yet. Refresh to load this provider; private account sign-in is under Site controls.';
+    // Unchanged poll results must not replace focused/touched card controls,
+    // restart thumbnail loading or disrupt a Safari scroll gesture.
+    const gridKey=JSON.stringify([state.source,state.query,items.length
+      ? items.map(item=>[item,cachedEntry(item)?.id||null,downloadPending(item)])
+      : emptyText]);
+    if(gridKey!==renderedGridKey){
+      renderedGridKey=gridKey;
+      grid.replaceChildren();
+      if(!items.length){
+      const empty=el('p',emptyText,'muninn-discover-empty');
       grid.append(empty);
     }else {
-      for (const item of items.slice(0,100)) {
+      for (const item of items) {
         const card=el('article',undefined,'muninn-discover-card');
         const open=button(undefined,()=>showDetail(item),'muninn-discover-art-button');
         open.setAttribute('aria-label','Open '+(item.title||'video'));
@@ -261,6 +270,7 @@
         }
         copy.append(actions);card.append(open,copy);grid.append(card);
       }
+    }
     }
     const captured=state.snapshot?.captured_at;
     const time=Number(captured);
@@ -323,7 +333,7 @@
     state.visible=visible;
     if(!visible) {
       state.readEpoch++;state.routeEpoch++;
-      state.selected=null;state.advanced=false;
+      showCollection();state.advanced=false;
       document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:false}}));
       openMenu(false);
     }else {
