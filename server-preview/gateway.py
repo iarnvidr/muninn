@@ -12,6 +12,7 @@ import socket
 from pathlib import Path
 from urllib.parse import urlsplit
 from aiohttp import web, ClientSession, ClientTimeout, TCPConnector, ClientError
+from yarl import URL
 from browser import Browser
 from thumbnails import PublicResolver, TIKTOK_ID, MAX_COVER_BYTES, image_type, remember_covers
 
@@ -132,7 +133,7 @@ async def cover_art(request):
         raise web.HTTPNotFound()
     try:
         async with request.app["thumb_http"].get(
-            url, allow_redirects=False,
+            URL(url, encoded=True), allow_redirects=False,
             headers={"Accept":"image/jpeg,image/png,image/webp"}
         ) as upstream:
             if upstream.status != 200:
