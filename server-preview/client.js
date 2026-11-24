@@ -15,6 +15,7 @@
   const controls=node('div',null,'actions');
   const makeButton=(title,fn)=>{const b=node('button',title);b.type='button';b.addEventListener('click',()=>fn().catch(error=>{status.textContent=error.message;}));return b;};
   const tabBar=node('div',null,'tabs compact');tabBar.setAttribute('aria-label','Server browser tabs');
+  const tabButtons=new Map();
   const navigation=node('form',null,'input-row');
   const url=node('input');url.type='url';url.placeholder='YouTube or TikTok page URL';url.setAttribute('aria-label','YouTube or TikTok URL');
   const go=node('button','Go');go.type='submit';navigation.append(url,go);
@@ -55,10 +56,23 @@
   function render(state) {
     lastState=state;
     if(!state.tabs.some(t=>t.id===active))selectTab(state.tabs.at(-1)?.id||null);
-    tabBar.replaceChildren();
+    // Preserve tab elements across the periodic state/frame refresh. Replacing
+    // them every poll loses keyboard focus and can cancel an in-progress tap.
+    const ids=state.tabs.map(tab=>tab.id);
+    if(ids.length!==tabButtons.size||ids.some((id,index)=>id!==[...tabButtons.keys()][index])){
+      tabBar.replaceChildren();tabButtons.clear();
+      for(const id of ids){
+        const b=makeButton('New tab',async()=>{
+          if(!lastState?.tabs.some(tab=>tab.id===id))return;
+          selectTab(id);render(lastState);await frame();
+        });
+        tabButtons.set(id,b);tabBar.append(b);
+      }
+    }
     for(const tab of state.tabs){
-      const b=makeButton(tab.title||'New tab',async()=>{selectTab(tab.id);render(state);await frame();});
-      b.setAttribute('aria-pressed',String(tab.id===active));tabBar.append(b);
+      const b=tabButtons.get(tab.id);
+      if(b.textContent!==(tab.title||'New tab'))b.textContent=tab.title||'New tab';
+      b.setAttribute('aria-pressed',String(tab.id===active));
     }
     const tab=state.tabs.find(t=>t.id===active);
     if(document.activeElement!==url)url.value=tab?.url||'https://www.youtube.com/';
