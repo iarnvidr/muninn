@@ -8,14 +8,51 @@
   // The source browser is available only when injected by the guarded
   // Chromium gateway. Standalone Rust PWA and offline-only clients do not
   // expose nonfunctional browsing controls.
-  const browserEnabled = document.querySelector('meta[name="muninn-source-browser"]')?.content === 'enabled';
+  // The gateway stamps this marker into a fresh response. Safari may launch
+  // an older, authenticated offline shell that lacks it even while the server
+  // already supports Browse. Recover through a real protected capability probe.
+  let browserEnabled = document.querySelector('meta[name="muninn-source-browser"]')?.content === 'enabled';
   const state = {view:browserEnabled && navigator.onLine ? 'browse' : navigator.onLine ? 'server' : 'device',signedIn:false,entries:[],device:[],feeds:[],feed:null,kind:'',
     transfer:null,playerURL:null,playing:null,epoch:0,refreshing:false};
-  let installPrompt, progressWrite = 0;
-  if(browserEnabled) {
+  let installPrompt, progressWrite = 0, browserRecovery = null;
+  function revealBrowse() {
+    if(!$('#browser-host')) return false;
+    browserEnabled=true;
     for(const b of document.querySelectorAll('[data-view]')) if(b.dataset.view === 'browse') b.hidden=false;
     const brand=$('#muninn-home');brand.dataset.view='browse';brand.title='Browse YouTube and TikTok';
     brand.setAttribute('aria-label','Muninn · Browse');
+    return true;
+  }
+  if(browserEnabled) revealBrowse();
+  async function recoverBrowse() {
+    if(browserEnabled || !navigator.onLine || browserRecovery || !$('#browser-host')) return browserRecovery;
+    browserRecovery=(async()=>{
+      // A standalone Rust PWA returns 404 here. Never show a nonfunctional
+      // browser, and never turn an Authelia redirect into another login prompt.
+      const response=await fetch('/browser/state',{method:'GET',credentials:'same-origin',
+        redirect:'error',cache:'no-store',headers:{'X-Muninn-Client':'pwa'}});
+      if(response.status!==200 || !(response.headers.get('content-type')||'').includes('application/json')) return;
+      const capability=await response.json();
+      if(typeof capability.running!=='boolean' || !Array.isArray(capability.tabs)) return;
+      const css=document.createElement('link');css.rel='stylesheet';css.href='/app/browser.css';
+      document.head.append(css);
+      if(!revealBrowse()) return;
+      // Do not overwrite a tab the owner deliberately opened while the
+      // capability request was pending.
+      if(state.view==='server')state.view='browse';
+      render();
+      const script=document.createElement('script');script.src='/app/browser.js';
+      const loaded=new Promise((resolve,reject)=>{
+        script.addEventListener('load',resolve,{once:true});
+        script.addEventListener('error',reject,{once:true});
+      });
+      document.head.append(script);
+      await loaded;
+    })().catch(()=>{
+      // A blocked or expired owner session must not become a token prompt.
+      // Refresh via Authelia; the library and offline copies remain usable.
+    }).finally(()=>{browserRecovery=null;});
+    return browserRecovery;
   }
   const notice = (text, bad=false) => { $('#notice').textContent=text; $('#notice').classList.toggle('error',bad); };
   const el = (tag, text, className) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(className)n.className=className; return n; };
@@ -260,11 +297,12 @@
   $('#player').addEventListener('error',()=>notice('This browser cannot play this codec or the video is unavailable. Try another quality or download a device copy.',true));
   $('#player').addEventListener('timeupdate',()=>{if(state.playing&&Date.now()-progressWrite>5000){progressWrite=Date.now();const saved=state.device.find(d=>d.id===state.playing);if(saved)saved.position_seconds=$('#player').currentTime;DB.position(state.playing,$('#player').currentTime).catch(()=>{});}});
   addEventListener('offline',()=>{setConnection(false);notice('Offline. Device copies remain available.');});
-  addEventListener('online',refresh);
+  addEventListener('online',()=>{refresh();recoverBrowse();});
   addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('#install').hidden=false;});
   $('#install').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('#install').hidden=true;});
   if('serviceWorker' in navigator&&window.isSecureContext)navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(e=>notice('Offline app shell unavailable: '+e.message,true));
   if(!window.isSecureContext)notice('Use HTTPS to install this PWA and enable reliable offline storage.',true);
   refresh();
+  recoverBrowse();
   setInterval(()=>{if(!document.hidden&&navigator.onLine&&state.signedIn)refresh();},15000);
 })();
