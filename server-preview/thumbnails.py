@@ -21,7 +21,7 @@ CDN_DOMAINS = (
     "tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com",
     "byteimg.com", "ibyteimg.com", "ibytedtos.com",
 )
-TIKTOK_ID = re.compile(r"tt_[0-9]{15,22}\\Z")
+TIKTOK_ID = re.compile(r"tt_[0-9]{15,22}\Z")
 
 
 def safe_cover_url(value):
@@ -83,9 +83,9 @@ class PublicResolver(AbstractResolver):
 def image_type(body, declared):
     """Refuse HTML, SVG and bogus content types even when a CDN labels them images."""
     declared = declared.split(";", 1)[0].strip().lower()
-    if declared == "image/jpeg" and body.startswith(b"\\xff\\xd8\\xff"):
+    if declared == "image/jpeg" and body.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if declared == "image/png" and body.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+    if declared == "image/png" and body.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if declared == "image/webp" and len(body) >= 12 and body[:4] == b"RIFF" and body[8:12] == b"WEBP":
         return "image/webp"
