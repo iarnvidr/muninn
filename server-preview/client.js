@@ -8,7 +8,7 @@
   if(!host)return;
   const panel=node('section',null,'pwa-panel remote-browser');
   host.append(panel);
-  let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0, frameTab=null, frameSequence=0;
+  let active=null, shown=false, busy=false, frameURL=null, lastState=null, actionTail=Promise.resolve(), pending=0, frameTab=null, frameSequence=0, stateEpoch=0;
   const heading=node('h2','YouTube and TikTok');
   const explanation=node('p','Browse the real provider pages through your private server browser. Muninn captures feeds and video links, but upstream video playback is blocked in the browsing canvas; downloaded videos play in Muninn.','hint');
   const status=node('p','Start the private browser to capture feeds and opened videos.','hint');status.setAttribute('role','status');
@@ -67,7 +67,7 @@
   }
   function action(name, extra={}) {
     if(pending>=32)return Promise.reject(new Error('Input queue is full; wait for the browser to catch up.'));
-    pending++;
+    pending++;stateEpoch++;
     // Bind queued input to the tab the user was looking at when it occurred.
     // Changing tabs while a prior request is slow must not retarget a click,
     // scroll or keystroke (including text entered into a provider sign-in form).
@@ -185,7 +185,7 @@
   });
   async function setVisible(visible){
     if(visible===shown)return;
-    shown=visible;
+    shown=visible;stateEpoch++;
     if(!shown){
       clearFrame();return;
     }
@@ -199,7 +199,15 @@
   setVisible(!host.hidden);
   document.querySelector('#logout')?.addEventListener('click',()=>{shown=false;panel.hidden=true;clearFrame();});
   async function tick(){
-    try{if(shown&&!busy&&!document.hidden&&navigator.onLine){render(await request('state'));await frame();}}
+    try{
+      if(shown&&!busy&&!pending&&!document.hidden&&navigator.onLine){
+        const epoch=stateEpoch;
+        const state=await request('state');
+        // A state poll can outlive a navigation or tab mutation. Never
+        // overwrite newer action results (or a hidden/reopened Browse view).
+        if(shown&&!busy&&!pending&&epoch===stateEpoch){render(state);await frame();}
+      }
+    }
     catch(error){status.textContent=error.message;}
     finally{setTimeout(tick,1500);}
   }
