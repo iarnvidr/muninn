@@ -146,7 +146,7 @@ test('the guarded source browser has a first-class default Browse view instead o
   assert.match(html,/data-browse-source="youtube-home"/);
   assert.match(html,/data-browse-source="tiktok-foryou"/);
   assert.match(discovery,/muninn-discover-grid/);
-  assert.match(discovery,/api\/feeds\?limit=100/);
+  assert.match(discovery,/api\/feeds\?kind=/);
   assert.match(discovery,/api\/feeds\//);
   assert.match(discovery,/api\/cache/);
   assert.doesNotMatch(discovery,/remote-frame|createObjectURL|tiktok\.com\/embed|youtube\.com\/embed/);
