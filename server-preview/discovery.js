@@ -112,8 +112,11 @@
     if (!navigator.onLine) { setMessage('Connect to your Muninn server to browse. Your offline library is still available.'); return; }
     state.source=source;state.query=query;state.snapshot=null;state.lastError=null;
     state.routeEpoch++;state.readEpoch++;
+    const wasVisible=state.visible;
     renderNav();showCollection();openMenu(false);browseView();draw();
-    await Promise.allSettled([loadSnapshot(),navigateSource(false)]);
+    // Entering Browse triggers its own initial capture; switching providers
+    // inside an already visible view issues exactly one navigation.
+    if(wasVisible) await Promise.allSettled([loadSnapshot(),navigateSource(false)]);
   }
   for (const b of menu.querySelectorAll('[data-browse-source]')) {
     b.addEventListener('click',()=>switchSource(b.dataset.browseSource).catch(showError));
@@ -227,7 +230,7 @@
         const entry=cachedEntry(item);
         if(entry)actions.append(button('Play',()=>play(item,entry)));
         else actions.append(button(item.cached?.id?'Downloading…':'Save',()=>save(item)));
-        card.append(open,copy,actions);copy.append(actions);grid.append(card);
+        copy.append(actions);card.append(open,copy);grid.append(card);
       }
     }
     const captured=state.snapshot?.captured_at;
@@ -284,7 +287,7 @@
     navigationTail=navigationTail.catch(()=>{}).then(execute);
     return navigationTail;
   }
-  refresh.addEventListener('click',()=>{}); // button() owns the meaningful action.
+  // The Refresh button is wired by button() above.
   function onView(visible) {
     state.visible=visible;
     if(!visible) {
