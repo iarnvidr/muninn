@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 from aiohttp import web
 from multidict import CIMultiDict
 from browser import Browser
-from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers
+from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers, proxy
 from policy import *
 
 
@@ -141,6 +141,36 @@ class GatewayAutheliaTests(unittest.TestCase):
         self.assertEqual(headers["X-Muninn-Gateway-Auth"], "a" * 64)
         self.assertNotIn("Cookie", headers)
 
+
+
+class TrackedPwaNavigationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_app_url_query_still_receives_browser_bootstrap(self):
+        # The owner opens /app/?utm_source=chatgpt.com from ChatGPT.
+        # A query must not bypass the gateway's Browse-enabled HTML response.
+        paths = []
+        class Upstream:
+            status = 200
+            headers = {'Content-Type':'text/html'}
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):return False
+            async def text(self):return '<html><head><title>Muninn</title></head><body>Library</body></html>'
+        class Http:
+            def request(self,method,url,**kwargs):
+                paths.append((method,url,kwargs.get('allow_redirects')))
+                return Upstream()
+        for path in ('/app/', '/app/index.html'):
+            req=SimpleNamespace(
+                method='GET',path=path,
+                raw_path=path+'?utm_source=chatgpt.com',
+                headers={'Host':'muninn-preview.example.test'},
+                app={'auth_mode':'token','authority':'muninn-preview.example.test','http':Http()},
+                read=AsyncMock(return_value=b''))
+            response=await proxy(req)
+            self.assertEqual(response.status,200)
+            self.assertIn('name="muninn-source-browser" content="enabled"',response.text)
+            self.assertIn('/app/browser.js',response.text)
+            self.assertIn('/app/browser.css',response.text)
+            self.assertEqual(paths[-1],('GET','http://127.0.0.1:47872'+req.raw_path,False))
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
