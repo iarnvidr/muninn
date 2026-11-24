@@ -37,8 +37,8 @@ class CapturedCoverTests(unittest.TestCase):
             {"video_id":"tt_7668090902816017672","thumbnail":"https://evil.example/a"}]})
         self.assertEqual(list(index),["tt_7668090902816017671"])
         self.assertEqual(index["tt_7668090902816017671"],valid)
-        self.assertEqual(image_type(b"\\xff\\xd8\\xff\\xe0", "image/jpeg"),"image/jpeg")
-        self.assertEqual(image_type(b"\\x89PNG\\r\\n\\x1a\\n!", "image/png"),"image/png")
+        self.assertEqual(image_type(b"\xff\xd8\xff\xe0", "image/jpeg"),"image/jpeg")
+        self.assertEqual(image_type(b"\x89PNG\r\n\x1a\n!", "image/png"),"image/png")
         self.assertIsNone(image_type(b"<html>secret</html>","image/jpeg"))
         self.assertIsNone(image_type(b"<svg></svg>","image/svg+xml"))
 
