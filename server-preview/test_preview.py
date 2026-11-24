@@ -11,8 +11,48 @@ from unittest.mock import AsyncMock
 from aiohttp import web
 from multidict import CIMultiDict
 from browser import Browser
+from thumbnails import safe_cover_url, remember_covers, image_type, PublicResolver
+from collections import OrderedDict
+import socket
+from unittest.mock import patch, AsyncMock
 from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers
 from policy import *
+
+
+class CapturedCoverTests(unittest.TestCase):
+    def test_only_verified_tiktok_cover_urls_enter_private_index(self):
+        valid="https://p16-sign.tiktokcdn.com/tos/example.jpeg?x-private=1"
+        self.assertEqual(safe_cover_url(valid),valid)
+        for value in ("http://p16-sign.tiktokcdn.com/a",
+                      "https://p16-sign.tiktokcdn.com.evil.test/a",
+                      "https://127.0.0.1/a", "https://user:pass@p16-sign.tiktokcdn.com/a",
+                      "https://p16-sign.tiktokcdn.com:8443/a",
+                      "https://p16-sign.tiktokcdn.com/a#fragment",
+                      "file:///etc/passwd", "https://evil.example/a"):
+            self.assertIsNone(safe_cover_url(value))
+        index=OrderedDict()
+        remember_covers(index,{"items":[
+            {"video_id":"tt_7668090902816017671","thumbnail":valid},
+            {"video_id":"aaaaaaaaaaa","thumbnail":valid},
+            {"video_id":"tt_7668090902816017672","thumbnail":"https://evil.example/a"}]})
+        self.assertEqual(list(index),["tt_7668090902816017671"])
+        self.assertEqual(index["tt_7668090902816017671"],valid)
+        self.assertEqual(image_type(b"\\xff\\xd8\\xff\\xe0", "image/jpeg"),"image/jpeg")
+        self.assertEqual(image_type(b"\\x89PNG\\r\\n\\x1a\\n!", "image/png"),"image/png")
+        self.assertIsNone(image_type(b"<html>secret</html>","image/jpeg"))
+        self.assertIsNone(image_type(b"<svg></svg>","image/svg+xml"))
+
+    def test_private_dns_is_denied_before_any_cover_request(self):
+        async def check():
+            resolver=PublicResolver()
+            loop=asyncio.get_running_loop()
+            with patch.object(loop,"getaddrinfo",new=AsyncMock(return_value=[
+                (socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",443))])):
+                with self.assertRaises(OSError):
+                    await resolver.resolve("p16.tiktokcdn.com",443)
+            with self.assertRaises(OSError):
+                await resolver.resolve("localhost",443)
+        asyncio.run(check())
 
 
 class PolicyTests(unittest.TestCase):
