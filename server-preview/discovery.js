@@ -252,7 +252,7 @@
     const epoch=++state.readEpoch;
     state.loading=true;
     try {
-      const [snapshots,entries]=await Promise.all([request('/api/feeds?limit=100'),request('/api/entries')]);
+      const [snapshots,entries]=await Promise.all([request('/api/feeds?kind='+encodeURIComponent(kind())+'&limit=25'),request('/api/entries')]);
       if(epoch!==state.readEpoch)return;
       if(!Array.isArray(snapshots)||!Array.isArray(entries))throw new Error('Invalid Muninn feed response.');
       state.entries=entries;
