@@ -165,7 +165,7 @@ test('the private Chromium browsing client mounts and starts against the real PW
   }
   const host=new Element(),events={},calls=[],page={id:'tab1',title:'Provider tab A',url:'https://www.youtube.com/',video_id:null};
   const other={id:'tab2',title:'Provider tab B',url:'https://www.tiktok.com/foryou',video_id:null};
-  let holdNextAction=false, releaseAction, holdNextFrame=false, releaseFrame;
+  let holdNextAction=false, releaseAction, holdNextFrame=false, releaseFrame, holdNextState=false, releaseState, nextTick;
   host.hidden=false;
   const document={
     hidden:false,activeElement:null,
@@ -173,11 +173,14 @@ test('the private Chromium browsing client mounts and starts against the real PW
     createElement:tag=>new Element(tag),
     addEventListener:(name,fn)=>events[name]=fn
   };
-  const context={document,navigator:{onLine:true},confirm:()=>false,setTimeout:()=>0,
+  const context={document,navigator:{onLine:true},confirm:()=>false,setTimeout:fn=>{nextTick=fn;return 0;},
     URL:{createObjectURL:()=>'blob:frame',revokeObjectURL:()=>{}},
     fetch:async(url,options={})=>{
       calls.push({url,options});
-      if(url==='/browser/state')return {ok:true,json:async()=>({running:false,tabs:[],captured:0,dropped:0,failures:0})};
+      if(url==='/browser/state'){
+        if(holdNextState){holdNextState=false;await new Promise(resolve=>{releaseState=resolve;});}
+        return {ok:true,json:async()=>({running:false,tabs:[],captured:0,dropped:0,failures:0})};
+      }
       if(url==='/browser/action'){
         if(holdNextAction){holdNextAction=false;await new Promise(resolve=>{releaseAction=resolve;});}
         return {ok:true,json:async()=>({running:true,tabs:[page,other],captured:0,dropped:0,failures:0})};
@@ -255,6 +258,15 @@ test('the private Chromium browsing client mounts and starts against the real PW
   remote.listeners.keydown[0]({key:'x',preventDefault(){}});
   await flush();
   assert.ok(calls.slice(beforeFrame).some(call=>call.url==='/browser/action'&&JSON.parse(call.options.body).tab==='tab1'));
+  // A periodic state request can return an older tab list after an action
+  // has finished. It must not erase the current tab or hide its frame.
+  holdNextState=true;
+  const polling=nextTick();await flush();
+  assert.equal(typeof releaseState,'function');
+  remote.listeners.keydown[0]({key:'y',preventDefault(){}});await flush();
+  releaseState();await polling;await flush();
+  assert.equal(remote.hidden,false,'discard pre-action poll results');
+  assert.ok(tabButton('Provider tab A'),'stale poll must not erase the tabs');
   events['muninn:view-change']({detail:{visible:false}});
   await flush();
   assert.ok(events['muninn:view-change'],'browser responds to PWA navigation changes');
