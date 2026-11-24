@@ -16,10 +16,17 @@ class Element {
   async emit(name){for(const fn of this.listeners[name]||[])await fn({preventDefault(){}});}
 }
 const flatten=node=>[node,...node.children.flatMap(flatten)];
-async function app({complete=true,truncate=false}={}){
+async function app({complete=true,truncate=false,browseProbe=false}={}){
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
-  const tabs=['server','device','feeds'].map(view=>{const b=new Element('button');b.dataset.view=view;return b;});
+  const tabs=['browse','server','device','feeds'].map(view=>{const b=new Element('button');b.dataset.view=view;b.hidden=view==='browse';return b;});
+  const head=new Element('head');
+  head.append=(...elements)=>{
+    head.children.push(...elements);
+    for(const element of elements)if(element.tag==='script')queueMicrotask(()=>{
+      for(const fn of element.listeners.load||[])fn();
+    });
+  };
   const bytes=new Uint8Array(64).fill(5);
   const entry={id:'test-entry',video_id:'aBcD_efg-12',title:'A saved video',channel:'A channel',status:complete?'complete':'downloading',size_bytes:64};
   const stored=new Map(),requests=[],events={},copied=[],saved=[];
@@ -30,14 +37,19 @@ async function app({complete=true,truncate=false}={}){
     clear:async()=>stored.clear(),remove:async id=>stored.delete(id),position:async()=>{}
   };
   const navigator={onLine:true,storage:{estimate:async()=>({quota:1000000000,usage:0}),persist:async()=>true},clipboard:{writeText:async url=>copied.push(url)}};
-  const context={document:{hidden:false,querySelector:selector=>selector.startsWith('#')?get(selector):{value:'720'},querySelectorAll:()=>tabs,createElement:tag=>new Element(tag)},
+  const context={document:{hidden:false,head,
+      querySelector:selector=>selector.startsWith('#')?get(selector):{value:'720'},
+      querySelectorAll:()=>tabs,createElement:tag=>new Element(tag),dispatchEvent:()=>{}},
     navigator,MuninnWebModel:M,MuninnWebStore:DB,Blob,AbortController,DOMException,
+    CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail;}},
     URL:class extends URL{static createObjectURL(blob){assert.ok(blob instanceof Blob);return 'blob:device-copy';}static revokeObjectURL(){}},
     isSecureContext:true,confirm:()=>true,setInterval:()=>0,
     addEventListener:(type,fn)=>{events[type]=fn;},
     fetch:async(url,options={})=>{
       requests.push({url,options});
       if(!navigator.onLine)throw new Error('offline');
+      if(url==='/browser/state')return browseProbe?
+        Response.json({running:false,tabs:[],width:1280,height:800}):new Response('',{status:404});
       if(url==='/api/session'){
         if(options.method==='DELETE')authed=false;
         if(options.method==='POST')authed=true;
@@ -55,7 +67,7 @@ async function app({complete=true,truncate=false}={}){
   const flush=async()=>{for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));};
   await flush();
   const find=text=>flatten(get('#content')).find(e=>e.tag==='button'&&e.textContent===text);
-  return {get,tabs,requests,stored,events,navigator,copied,saved,entry,flush,find};
+  return {get,tabs,requests,stored,events,navigator,copied,saved,entry,flush,find,head};
 }
 test('PWA saves a complete server file, then plays only its persisted device blob offline',async()=>{
   const h=await app();
@@ -102,4 +114,23 @@ test('URL queueing uses protected server API and logout clears downloaded device
   await h.get('#logout').emit('click');await h.flush();
   assert.equal(h.stored.size,0);assert.equal(h.get('#login-panel').hidden,false);
   assert.ok(h.requests.some(r=>r.url==='/api/session'&&r.options.method==='DELETE'));
+});
+
+test('stale PWA shell recovers the real owner-only provider browser without the injected marker',async()=>{
+  const h=await app({browseProbe:true});
+  assert.ok(h.requests.some(req=>req.url==='/browser/state' &&
+    req.options.credentials==='same-origin' && req.options.redirect==='error'));
+  assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,false);
+  assert.equal(h.get('#browser-host').hidden,false);
+  assert.equal(h.get('#view-title').textContent,'Browse');
+  assert.ok(h.head.children.some(node=>node.tag==='link' && node.href==='/app/browser.css'));
+  assert.ok(h.head.children.some(node=>node.tag==='script' && node.src==='/app/browser.js'));
+});
+
+test('standalone PWA remains library-only if the protected provider API is missing',async()=>{
+  const h=await app({browseProbe:false});
+  assert.ok(h.requests.some(req=>req.url==='/browser/state'));
+  assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,true);
+  assert.notEqual(h.get('#view-title').textContent,'Browse');
+  assert.equal(h.head.children.some(node=>node.src==='/app/browser.js'),false);
 });

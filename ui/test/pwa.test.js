@@ -79,7 +79,7 @@ test('service worker caches only owner-authorized static shell and refuses login
 });
 test('service worker never intercepts private APIs, media, sessions or foreign requests',()=>{
   const w=worker();
-  for(const target of ['/api/session','/api/entries','/media/some-file','/thumb/'+ID,'/app/?token=secret','https://evil.test/app/']){
+  for(const target of ['/api/session','/api/entries','/media/some-file','/thumb/'+ID,'/app/?token=secret','/app/?utm_source=chatgpt.com','https://evil.test/app/']){
     let intercepted=false;
     w.events.fetch({request:new Request(new URL(target,'https://muninn.test')),respondWith:()=>intercepted=true});
     assert.equal(intercepted,false,target);
@@ -150,7 +150,15 @@ test('the guarded source browser has a first-class default Browse view instead o
     assert.ok(browser.includes(command),command);
   }
   assert.match(gateway,/muninn-source-browser/);
-  assert.match(gateway,/muninn-pwa-shell-browser-v3/);
+  assert.match(gateway,/muninn-pwa-shell-browser-v4/);
+  // The Safari recovery path is always same-origin, auth-scoped and never
+  // makes the standalone PWA show a nonfunctional browser.
+  assert.match(app,/fetch\('\/browser\/state'/);
+  assert.match(app,/if\(response\.status!==200/);
+  assert.match(app,/revealBrowse\(\)/);
+  assert.match(app,/script\.src='\/app\/browser\.js'/);
+  assert.match(app,/redirect:'error'/);
+  assert.match(app,/recoverBrowse\(\)/);
   assert.doesNotMatch(browser,/youtube\.com\/embed|tiktok\.com\/embed|innerHTML|localStorage/);
 });
 
