@@ -270,6 +270,20 @@ test('the private Chromium browsing client mounts and starts against the real PW
   events['muninn:view-change']({detail:{visible:false}});
   await flush();
   assert.ok(events['muninn:view-change'],'browser responds to PWA navigation changes');
+  // A delayed initial state read must not start Chromium after leaving Browse.
+  holdNextState=true;
+  const beforeReopen=calls.length;
+  events['muninn:view-change']({detail:{visible:true}});await flush();
+  assert.equal(typeof releaseState,'function');
+  events['muninn:view-change']({detail:{visible:false}});await flush();
+  releaseState();await flush();
+  assert.equal(calls.slice(beforeReopen).filter(call=>call.url==='/browser/action').length,0,
+    'a superseded Browse activation must not start the private browser');
+  assert.equal(remote.hidden,true);
+  // A fresh visit still starts the browser normally.
+  events['muninn:view-change']({detail:{visible:true}});await flush();
+  assert.equal(remote.hidden,false);
+  assert.ok(tabButton('Provider tab A'));
 });
 
 
