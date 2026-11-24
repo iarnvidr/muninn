@@ -19,7 +19,7 @@ const flatten=node=>[node,...node.children.flatMap(flatten)];
 async function app({complete=true,truncate=false,browseProbe=false}={}){
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
-  const tabs=['browse','server','device','feeds'].map(view=>{const b=new Element('button');b.dataset.view=view;return b;});
+  const tabs=['browse','server','device','feeds'].map(view=>{const b=new Element('button');b.dataset.view=view;b.hidden=view==='browse';return b;});
   const head=new Element('head');
   head.append=(...elements)=>{
     head.children.push(...elements);
@@ -130,7 +130,7 @@ test('stale PWA shell recovers the real owner-only provider browser without the 
 test('standalone PWA remains library-only if the protected provider API is missing',async()=>{
   const h=await app({browseProbe:false});
   assert.ok(h.requests.some(req=>req.url==='/browser/state'));
-  assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,false);
+  assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,true);
   assert.notEqual(h.get('#view-title').textContent,'Browse');
   assert.equal(h.head.children.some(node=>node.src==='/app/browser.js'),false);
 });
