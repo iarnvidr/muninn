@@ -169,7 +169,11 @@ test('the guarded source browser has a first-class default Browse view instead o
   assert.match(app,/fetch\('\/browser\/state'/);
   assert.match(app,/if\(response\.status!==200/);
   assert.match(app,/revealBrowse\(\)/);
-  assert.match(app,/script\.src='\/app\/browser\.js'/);
+  assert.match(app,/await loadRecoveryAsset\('\/app\/browser\.js'\)/);
+  assert.match(app,/await loadRecoveryAsset\('\/app\/browser\.css',true\)/);
+  assert.match(app,/await loadRecoveryAsset\('\/app\/discovery\.js'\)/);
+  assert.match(app,/asset\.src=url/);
+  assert.match(app,/await loadRecoveryAsset\('\/app\/browser\.js'\);[\s\S]*?if\(!revealBrowse\(\)\)return;/);
   assert.match(app,/redirect:'error'/);
   assert.match(app,/recoverBrowse\(\)/);
   assert.doesNotMatch(browser,/youtube\.com\/embed|tiktok\.com\/embed|innerHTML|localStorage/);

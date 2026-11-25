@@ -24,6 +24,24 @@
     return true;
   }
   if(browserEnabled) revealBrowse();
+  // A partially loaded recovery must not permanently disable retries or
+  // install duplicate discovery/advanced-browser event handlers.
+  const recoveryAssets=new Set();
+  let recoveryMarker=false;
+  async function loadRecoveryAsset(url,stylesheet=false) {
+    if(recoveryAssets.has(url))return;
+    const asset=document.createElement(stylesheet?'link':'script');
+    if(stylesheet){asset.rel='stylesheet';asset.href=url;}else asset.src=url;
+    await new Promise((resolve,reject)=>{
+      asset.addEventListener('load',resolve,{once:true});
+      asset.addEventListener('error',()=>{
+        asset.remove();
+        reject(new Error('Browse asset unavailable'));
+      },{once:true});
+      document.head.append(asset);
+    });
+    recoveryAssets.add(url);
+  }
   async function recoverBrowse() {
     if(browserEnabled || !navigator.onLine || browserRecovery || !$('#browser-host')) return browserRecovery;
     browserRecovery=(async()=>{
@@ -34,35 +52,29 @@
       if(response.status!==200 || !(response.headers.get('content-type')||'').includes('application/json')) return;
       const capability=await response.json();
       if(typeof capability.running!=='boolean' || !Array.isArray(capability.tabs)) return;
-      const css=document.createElement('link');css.rel='stylesheet';css.href='/app/browser.css';
-      document.head.append(css);
-      if(!revealBrowse()) return;
-      // Do not overwrite a tab the owner deliberately opened while the
-      // capability request was pending.
+      const nativeMenu=$('#pwa-discover-menu');
+      try {
+        await loadRecoveryAsset('/app/browser.css',true);
+        // Discovery needs the authenticated gateway marker, but navigation
+        // must not be declared ready until its scripts have finished loading.
+        if(nativeMenu) {
+          if(!recoveryMarker) {
+            const marker=document.createElement('meta');
+            marker.name='muninn-source-browser';marker.content='enabled';
+            document.head.append(marker);
+            recoveryMarker=true;
+          }
+          await loadRecoveryAsset('/app/discovery.js');
+        }
+        await loadRecoveryAsset('/app/browser.js');
+      }catch{
+        notice('Browse assets could not load. Use Refresh to retry; your library remains available.',true);
+        return;
+      }
+      if(!revealBrowse())return;
+      // Preserve a deliberate move to device copies or captured feeds.
       if(state.view==='server')state.view='browse';
       render();
-      // A stale shell may already contain the native discovery menu but lack
-      // the gateway stamp. Load discovery only after the protected probe.
-      const nativeMenu=$('#pwa-discover-menu');
-      if(nativeMenu) {
-        const marker=document.createElement('meta');
-        marker.name='muninn-source-browser';marker.content='enabled';
-        document.head.append(marker);
-        const discovery=document.createElement('script');discovery.src='/app/discovery.js';
-        const discoveryLoaded=new Promise((resolve,reject)=>{
-          discovery.addEventListener('load',resolve,{once:true});
-          discovery.addEventListener('error',reject,{once:true});
-        });
-        document.head.append(discovery);
-        await discoveryLoaded;
-      }
-      const script=document.createElement('script');script.src='/app/browser.js';
-      const loaded=new Promise((resolve,reject)=>{
-        script.addEventListener('load',resolve,{once:true});
-        script.addEventListener('error',reject,{once:true});
-      });
-      document.head.append(script);
-      await loaded;
       if(!nativeMenu && state.view==='browse') document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:true}}));
     })().catch(()=>{
       // A blocked or expired owner session must not become a token prompt.
@@ -296,8 +308,9 @@
     $('#side-toggle').setAttribute('aria-expanded',String(collapsed));
     const label=$('#side-toggle .side-label');if(label)label.textContent=collapsed?'Collapse sidebar':'Expand sidebar';
   });
-  $('#refresh').addEventListener('click',refresh);
-  if(browserEnabled) document.addEventListener('muninn:video-queued',()=>{
+  $('#refresh').addEventListener('click',()=>{refresh();recoverBrowse();});
+  document.addEventListener('muninn:video-queued',()=>{
+    if(!browserEnabled)return;
     notice('Video queued in the Muninn library.');refresh();
   });
   $('#close-player').addEventListener('click',stopPlayer);
