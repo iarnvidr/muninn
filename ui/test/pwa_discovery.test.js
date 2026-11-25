@@ -76,6 +76,10 @@ test('real provider captures are rendered as native Muninn cards, while site con
     else if(url==='/api/feeds/2')data=feeds[2];
     else if(url==='/api/feeds/3')data=feeds[3];
     else if(url==='/api/feeds/4')data=feeds[4];
+    else if(url==='/api/video/'+ID)data={video_id:ID,meta:{captured_at:now},related:[
+      {video_id:ID,title:'Selected video must not recommend itself'},
+      {video_id:'ddddddddddd',title:'Exact parent recommendation'},
+      {video_id:TT,title:'Wrong provider recommendation'}]};
     else if(url==='/api/entries')data=entries;
     else if(url==='/browser/state')data={running:true,tabs:[{id:'a',url:'https://www.youtube.com/'}]};
     else if(url==='/browser/action')data={running:true,tabs:[]};
@@ -100,7 +104,19 @@ test('real provider captures are rendered as native Muninn cards, while site con
   assert.equal(all(refs['#browser-host']).find(e=>e.className==='muninn-discover-card'),initialCard,'unchanged feed polls preserve card DOM');
   assert.equal(all(initialCard).find(e=>e.className==='muninn-discover-art-button'),initialOpen,'tap/focus target is preserved');
 
-  const creator=all(initialCard).find(e=>e.tag==='button'&&e.textContent==='Channel · Engineering channel');
+  initialOpen.click();await flush();
+  const related=all(refs['#browser-host']).find(e=>e.tag==='button'&&e.textContent==='Related videos');
+  assert.ok(related,'video details expose native recommendations');
+  related.click();await flush();
+  assert.ok(textIn(refs['#browser-host']).includes('Exact parent recommendation'));
+  assert.ok(!textIn(refs['#browser-host']).includes('Selected video must not recommend itself'));
+  assert.ok(!textIn(refs['#browser-host']).includes('Wrong provider recommendation'));
+  assert.ok(requests.some(x=>x.url==='/api/video/'+ID));
+  assert.ok(!requests.some(x=>x.url.startsWith('/api/feeds?kind=related')),'never fall back to an unrelated global feed');
+  assert.ok(requests.some(x=>x.url==='/browser/action'&&JSON.parse(x.options.body).url===model.youtubeURL(ID)));
+  sources[0].click();await flush();
+  const homeCard=all(refs['#browser-host']).find(e=>e.className==='muninn-discover-card');
+  const creator=all(homeCard).find(e=>e.tag==='button'&&e.textContent==='Channel · Engineering channel');
   assert.ok(creator,'a captured YouTube channel ID provides native creator navigation');
   creator.click();await flush();
   assert.ok(textIn(refs['#browser-host']).includes('Selected creator upload'));
