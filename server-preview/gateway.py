@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -172,6 +173,21 @@ def upstream_headers(request):
     return headers
 
 
+def browser_worker(text: str) -> str:
+    # A fixed cache version does not trigger a ServiceWorker update when only
+    # the gateway's Browse JS/CSS changes. Bind the worker bytes and cache name
+    # to the exact shipped browser shell, without hashing private runtime data.
+    if "muninn-pwa-shell-v2" not in text or "const SHELL = [" not in text:
+        raise web.HTTPInternalServerError(text="PWA shell version mismatch")
+    revision = hashlib.sha256(text.encode("utf-8"))
+    for name in ("discovery.js", "client.js", "client.css"):
+        revision.update(name.encode("ascii") + b"\x00")
+        revision.update(hashlib.sha256((ROOT / name).read_bytes()).digest())
+    cache = "muninn-pwa-shell-browser-v5-" + revision.hexdigest()
+    return text.replace("muninn-pwa-shell-v2", cache).replace(
+        "const SHELL = [", "const SHELL = ['/app/discovery.js','/app/browser.js','/app/browser.css',")
+
+
 async def proxy(request):
     # The Rust remote adapter still owns its operation allowlist, session
     # lifecycle, CSRF checks and media transfer semantics.
@@ -199,10 +215,7 @@ async def proxy(request):
             text = await upstream.text()
             # The browser edition must have a distinct cache identity, and
             # only its static JS/CSS join the shell; screenshots stay private.
-            if "muninn-pwa-shell-v2" not in text or "const SHELL = [" not in text:
-                raise web.HTTPInternalServerError(text="PWA shell version mismatch")
-            text = text.replace("muninn-pwa-shell-v2", "muninn-pwa-shell-browser-v5").replace("const SHELL = [", "const SHELL = ['/app/discovery.js','/app/browser.js','/app/browser.css',")
-            return web.Response(body=text.encode(), headers=copied)
+            return web.Response(body=browser_worker(text).encode(), headers=copied)
         response = web.StreamResponse(status=upstream.status, headers=copied)
         if "Content-Length" in upstream.headers:
             response.headers["Content-Length"] = upstream.headers["Content-Length"]

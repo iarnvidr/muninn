@@ -15,7 +15,7 @@ from thumbnails import safe_cover_url, remember_covers, image_type, PublicResolv
 from collections import OrderedDict
 import socket
 from unittest.mock import patch
-from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers, proxy
+from gateway import validate_request, authenticated, trusted_owner, internal_identity_headers, upstream_headers, proxy, browser_worker
 from policy import *
 
 
@@ -78,6 +78,28 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn('remote-frame', discovery)
         self.assertIn('https://www.tiktok.com/search?q=', browser)
         self.assertIn('https://www.youtube.com/results?search_query=', browser)
+
+    def test_browser_worker_revision_changes_with_every_browser_asset(self):
+        worker = "const CACHE = 'muninn-pwa-shell-v2';\nconst SHELL = ['/app/'];"
+        with tempfile.TemporaryDirectory() as directory, patch("gateway.ROOT", Path(directory)):
+            root = Path(directory)
+            names = ("discovery.js", "client.js", "client.css")
+            for name in names:
+                (root / name).write_text("initial " + name)
+            initial = browser_worker(worker)
+            self.assertEqual(initial, browser_worker(worker))
+            self.assertRegex(initial, r"muninn-pwa-shell-browser-v5-[0-9a-f]{64}")
+            for url in ("/app/discovery.js", "/app/browser.js", "/app/browser.css"):
+                self.assertIn(url, initial)
+            for name in names:
+                with self.subTest(asset=name):
+                    (root / name).write_text("changed " + name)
+                    self.assertNotEqual(initial, browser_worker(worker))
+                    (root / name).write_text("initial " + name)
+                    self.assertEqual(initial, browser_worker(worker))
+            self.assertNotEqual(initial, browser_worker(worker + "\n// upstream change"))
+            with self.assertRaises(web.HTTPInternalServerError):
+                browser_worker("unrecognized shell")
 
     def test_navigation_and_resource_boundary(self):
         for url in ['https://www.youtube.com/', 'https://accounts.google.com/ServiceLogin', 'https://youtu.be/aaaaaaaaaaa',
