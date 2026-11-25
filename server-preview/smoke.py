@@ -11,6 +11,85 @@ from urllib.parse import urlsplit
 from aiohttp import ClientSession
 from browser import Browser
 
+async def mobile_browse_smoke(browser, http, base, origin, headers):
+    """Exercise shipped PWA HTML/CSS/JS in a real, fresh touch-enabled Chromium.
+
+    The isolated test origin is mapped to the actual gateway's HTTP listener;
+    authentication uses the synthetic pairing session. Only provider-browser
+    control is redirected to the already-fixtured Browser, so there is no
+    external provider traffic, owner profile or live download. This is not
+    installed Safari, service-worker lifecycle or live Authelia acceptance.
+    """
+    frontend = await browser.driver.chromium.launch(
+        headless=True, chromium_sandbox=True,
+        args=["--disable-dev-shm-usage", "--disable-background-networking"])
+    try:
+        context = await frontend.new_context(
+            viewport={"width":390,"height":844}, is_mobile=True, has_touch=True,
+            device_scale_factor=2, service_workers="block")
+        navigations = []
+        async def serve(route):
+            req = route.request
+            url = urlsplit(req.url)
+            if (url.scheme + "://" + url.netloc) != origin:
+                await route.abort()
+                return
+            path = url.path + ("?" + url.query if url.query else "")
+            if url.path == "/browser/state" and req.method == "GET":
+                await route.fulfill(status=200, json=await browser.state())
+            elif url.path == "/browser/action" and req.method == "POST":
+                action = json.loads(req.post_data or "{}")
+                if action.get("action") not in {"new", "navigate", "reload"}:
+                    await route.fulfill(status=400, json={"error":"Unexpected fixture action"})
+                    return
+                if action.get("action") != "reload" and action.get("url") not in {
+                    "https://www.youtube.com/", "https://www.tiktok.com/foryou"
+                }:
+                    await route.fulfill(status=400, json={"error":"Unexpected fixture destination"})
+                    return
+                navigations.append(action)
+                await route.fulfill(status=200, json=await browser.action(action))
+            elif req.method in {"GET", "HEAD"}:
+                async with http.request(req.method, base + path, headers=headers,
+                                        allow_redirects=False) as response:
+                    # Keep the actual gateway status, bytes and security policy.
+                    response_headers = {k:v for k,v in response.headers.items()
+                        if k.lower() in {"content-type", "cache-control",
+                                        "content-security-policy", "x-content-type-options",
+                                        "referrer-policy", "location"}}
+                    await route.fulfill(status=response.status, headers=response_headers,
+                                        body=await response.read())
+            else:
+                await route.fulfill(status=405)
+        await context.route("**/*", serve)
+        page = await context.new_page()
+        page.set_default_timeout(15000)
+        await page.goto(origin + "/app/?utm_source=chatgpt.com", wait_until="domcontentloaded")
+        youtube = page.locator(".muninn-discover-card").filter(has_text="Server browser fixture").first
+        await youtube.wait_for(state="visible")
+        await youtube.locator(".muninn-discover-art-button").tap()
+        await page.locator(".muninn-discover-watch h2").filter(has_text="Server browser fixture").wait_for(state="visible")
+        await page.locator(".muninn-watch-back").tap()
+        await page.locator("#pwa-menu-toggle").tap()
+        await page.locator('[data-browse-source="tiktok-foryou"]').tap()
+        tiktok = page.locator(".muninn-discover-card").filter(has_text="TikTok browser fixture").first
+        await tiktok.wait_for(state="visible")
+        await tiktok.locator(".muninn-discover-art-button").tap()
+        await page.locator(".muninn-discover-watch h2").filter(has_text="TikTok browser fixture").wait_for(state="visible")
+        await page.locator(".muninn-watch-back").tap()
+        # Library and Browse must remain accessible from the same mobile menu.
+        await page.locator("#pwa-menu-toggle").tap()
+        await page.locator('#sidebar [data-view="server"]').last.tap()
+        await page.locator("#browser-host").wait_for(state="hidden")
+        await page.locator("#pwa-menu-toggle").tap()
+        await page.locator('[data-browse-source="youtube-home"]').tap()
+        await youtube.wait_for(state="visible")
+        assert await page.locator("#login-panel").is_hidden()
+        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, touch cards, YouTube/TikTok menu and library return.")
+    finally:
+        await frontend.close()
+
+
 async def main():
     origin=os.environ['MUNINN_WEB_ORIGIN'];authority=urlsplit(origin).netloc
     async with ClientSession() as http:
@@ -60,6 +139,7 @@ async def main():
                     assert r.status==200
                     feeds=await r.json()
                     assert any(f['kind']=='tiktok-for-you' for f in feeds),feeds
+                await mobile_browse_smoke(browser,http,base,origin,headers)
                 await browser.action({'action':'reset'})
                 assert not (Path(d)/'profile').exists()
             finally:await browser.close()
