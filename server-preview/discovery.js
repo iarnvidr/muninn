@@ -69,12 +69,12 @@
     return response.json();
   }
   const channelId = id => typeof id==='string' && /^UC[A-Za-z0-9_-]{22}$/.test(id);
-  const kind = () => state.source==='youtube-channel' ? 'channel' : state.source==='search' ? 'search'
+  const kind = () => state.source==='youtube-related' ? 'related' : state.source==='youtube-channel' ? 'channel' : state.source==='search' ? 'search'
     : state.source==='tiktok-search' ? 'tiktok-search' : sources[state.source]?.kind || 'home';
-  const sourceUrl = () => state.source==='youtube-channel' ? 'https://www.youtube.com/channel/'+state.query+'/videos' : state.source==='search' ? 'https://www.youtube.com/results?search_query='+encodeURIComponent(state.query)
+  const sourceUrl = () => state.source==='youtube-related' ? M.youtubeURL(state.query) : state.source==='youtube-channel' ? 'https://www.youtube.com/channel/'+state.query+'/videos' : state.source==='search' ? 'https://www.youtube.com/results?search_query='+encodeURIComponent(state.query)
     : state.source==='tiktok-search' ? 'https://www.tiktok.com/search?q='+encodeURIComponent(state.query)
     : sources[state.source]?.url || sources['youtube-home'].url;
-  const sourceLabel = () => state.source==='youtube-channel' ? state.channelLabel || 'YouTube channel' : state.source==='search' ? 'YouTube · '+state.query
+  const sourceLabel = () => state.source==='youtube-related' ? 'Related to '+(state.channelLabel||'selected video') : state.source==='youtube-channel' ? state.channelLabel || 'YouTube channel' : state.source==='search' ? 'YouTube · '+state.query
     : state.source==='tiktok-search' ? 'TikTok · '+state.query
     : sources[state.source]?.label || 'Discover';
   const isValidItem = item => item && M.validId(item.video_id) && typeof item.title==='string';
@@ -118,8 +118,9 @@
     if(b)b.click();
   }
   async function switchSource(source, query='', channelLabel='') {
-    if (!sources[source] && !['search','tiktok-search','youtube-channel'].includes(source)) return;
+    if (!sources[source] && !['search','tiktok-search','youtube-channel','youtube-related'].includes(source)) return;
     if(source==='youtube-channel'&&!channelId(query))return;
+    if(source==='youtube-related'&&!M.youtubeURL(query))return;
     if (!navigator.onLine) { setMessage('Connect to your Muninn server to browse. Your offline library is still available.'); return; }
     state.source=source;state.query=query;state.channelLabel=channelLabel;state.snapshot=null;state.lastError=null;
     state.pending=false;state.loading=false;
@@ -233,6 +234,7 @@
       if(!downloadPending(item))return save(item);
     },'muninn-watch-primary'));
     const creator=creatorButton(item);if(creator)actions.append(creator);
+    if(M.youtubeURL(item.video_id))actions.append(button('Related videos',()=>switchSource('youtube-related',item.video_id,item.title)));
     actions.append(button('Copy source URL',async()=>{
       const url=M.videoURL(item.video_id);
       if(!url)return;
@@ -298,6 +300,20 @@
     const epoch=++state.readEpoch;
     state.loading=true;
     try {
+      // The global related feed is not scoped to its parent. Read the selected
+      // video's own metadata instead, and never substitute another video's list.
+      if(state.source==='youtube-related'){
+        const parent=state.query;
+        const [detail,entries]=await Promise.all([request('/api/video/'+encodeURIComponent(parent)),request('/api/entries')]);
+        if(epoch!==state.readEpoch)return;
+        if(detail.video_id!==parent || !Array.isArray(detail.related) || !Array.isArray(entries))
+          throw new Error('Invalid related video response.');
+        state.entries=entries;
+        const items=detail.related.filter(item=>isValidItem(item)&&M.youtubeURL(item.video_id)&&item.video_id!==parent);
+        state.snapshot=items.length?{items,captured_at:detail.meta?.captured_at}:null;
+        state.lastError=null;
+        return;
+      }
       const [snapshots,entries]=await Promise.all([request('/api/feeds?kind='+encodeURIComponent(kind())+'&limit=25'),request('/api/entries')]);
       if(epoch!==state.readEpoch)return;
       if(!Array.isArray(snapshots)||!Array.isArray(entries))throw new Error('Invalid Muninn feed response.');
