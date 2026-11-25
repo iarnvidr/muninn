@@ -11,6 +11,8 @@ pub struct Item {
     pub title: String,
     pub channel: Option<String>,
     pub channel_id: Option<String>,
+    /// Provider handle, separate from the stable opaque creator ID.
+    pub creator_handle: Option<String>,
     pub duration_seconds: Option<u32>,
     pub thumbnail: Option<String>,
     pub published_text: Option<String>,
