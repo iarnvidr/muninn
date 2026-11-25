@@ -16,15 +16,19 @@ class Element {
   async emit(name){for(const fn of this.listeners[name]||[])await fn({preventDefault(){}});}
 }
 const flatten=node=>[node,...node.children.flatMap(flatten)];
-async function app({complete=true,truncate=false,browseProbe=false}={}){
+async function app({complete=true,truncate=false,browseProbe=false,failAssetOnce=null}={}){
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   const tabs=['browse','server','device','feeds'].map(view=>{const b=new Element('button');b.dataset.view=view;b.hidden=view==='browse';return b;});
   const head=new Element('head');
   head.append=(...elements)=>{
     head.children.push(...elements);
-    for(const element of elements)if(element.tag==='script')queueMicrotask(()=>{
-      for(const fn of element.listeners.load||[])fn();
+    for(const element of elements)element.remove=()=>{head.children=head.children.filter(child=>child!==element);};
+    for(const element of elements)if(element.tag==='script'||element.tag==='link')queueMicrotask(()=>{
+      const url=element.src||element.href;
+      const failed=url===failAssetOnce;
+      if(failed)failAssetOnce=null;
+      for(const fn of element.listeners[failed?'error':'load']||[])fn();
     });
   };
   const bytes=new Uint8Array(64).fill(5);
@@ -39,7 +43,7 @@ async function app({complete=true,truncate=false,browseProbe=false}={}){
   const navigator={onLine:true,storage:{estimate:async()=>({quota:1000000000,usage:0}),persist:async()=>true},clipboard:{writeText:async url=>copied.push(url)}};
   const context={document:{hidden:false,head,
       querySelector:selector=>selector.startsWith('#')?get(selector):{value:'720'},
-      querySelectorAll:()=>tabs,createElement:tag=>new Element(tag),dispatchEvent:()=>{}},
+      querySelectorAll:()=>tabs,createElement:tag=>new Element(tag),dispatchEvent:()=>{},addEventListener:()=>{}},
     navigator,MuninnWebModel:M,MuninnWebStore:DB,Blob,AbortController,DOMException,
     CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail;}},
     URL:class extends URL{static createObjectURL(blob){assert.ok(blob instanceof Blob);return 'blob:device-copy';}static revokeObjectURL(){}},
@@ -135,4 +139,17 @@ test('standalone PWA remains library-only if the protected provider API is missi
   assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,true);
   assert.notEqual(h.get('#view-title').textContent,'Browse');
   assert.equal(h.head.children.some(node=>node.src==='/app/browser.js'),false);
+});
+
+for(const asset of ['/app/browser.css','/app/discovery.js','/app/browser.js'])test('stale shell retries a failed '+asset+' without duplicate assets',async()=>{
+  const h=await app({browseProbe:true,failAssetOnce:asset});
+  assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,true);
+  assert.match(h.get('#notice').textContent,/Browse assets could not load/);
+  await h.get('#refresh').emit('click');await h.flush();
+  assert.equal(h.tabs.find(tab=>tab.dataset.view==='browse').hidden,false);
+  assert.equal(h.get('#browser-host').hidden,false);
+  assert.equal(h.get('#view-title').textContent,'Browse');
+  for(const url of ['/app/browser.css','/app/discovery.js','/app/browser.js'])
+    assert.equal(h.head.children.filter(node=>node.src===url||node.href===url).length,1);
+  assert.equal(h.head.children.filter(node=>node.name==='muninn-source-browser').length,1);
 });
