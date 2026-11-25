@@ -150,7 +150,20 @@ pub(crate) fn capture(core: &Core, input: &CaptureInput<'_>, cap: &mut Capture, 
     }
     // A watch page is metadata for a single video, not an invented feed.
     if is_html && path_id.is_some() { cap.kind = Some("tiktok-video".into());cap.items = items.len();return Ok(()); }
-    let kind = feed_kind(source);
+    // The referer identifies the selected video, not the API's purpose.
+    // In particular, /@creator/video/id is NOT a creator feed when the
+    // response came from the related-video endpoint.
+    let kind = if !is_html && feed_kind(input.url) == "tiktok-related" {
+        let Some(parent) = path_id.as_ref() else {
+            // Never publish recommendations without a known parent video.
+            return Ok(());
+        };
+        items.retain(|item| &item.video_id != parent);
+        "tiktok-related"
+    } else {
+        feed_kind(source)
+    };
+    if items.is_empty() { return Ok(()); }
     let item_count = items.len();
     let saved = core.ingest_feed(FeedIngest { kind: kind.into(), source_url: Some(source.chars().take(500).collect()),
         captured_at: Some(core.now()), items, ..FeedIngest::default() }).map_err(|e| e.to_string())?;
@@ -182,6 +195,30 @@ mod tests {
             request_body:None,body:html.as_bytes(),content_type:Some("text/html"),content_encoding:None});
         assert_eq!(result.video_id.as_deref(),Some("tt_7668090902816017671"));
         assert_eq!(core.facts_for("tt_7668090902816017671").title.as_deref(),Some("A caption"));
+    }
+
+    #[test]
+    fn related_capture_preserves_watch_context_without_polluting_creator_feed() {
+        let (_temp, core) = test_core(None, None);
+        let watch = "https://www.tiktok.com/@maker/video/7668090902816017671";
+        let endpoint = "https://www.tiktok.com/api/related/item_list";
+        let body = json!({"itemList":[
+            {"id":"7668090902816017671","desc":"Current","video":{"duration":10}},
+            {"id":"7668090902816017672","desc":"Related","video":{"duration":11}}
+        ]}).to_string();
+        let result = core.capture(CaptureInput {url:endpoint,referer:Some(watch),request_body:None,
+            body:body.as_bytes(),content_type:Some("application/json"),content_encoding:None});
+        assert_eq!(result.kind.as_deref(),Some("tiktok-related"));
+        let snapshot = core.content.latest_snapshot("tiktok-related").unwrap().unwrap();
+        assert_eq!(snapshot.meta.source_url.as_deref(),Some(watch));
+        assert_eq!(snapshot.items.len(),1);
+        assert_eq!(snapshot.items[0].video_id,"tt_7668090902816017672");
+        assert!(core.content.latest_snapshot("tiktok-profile").unwrap().is_none());
+
+        let unattributed = core.capture(CaptureInput {url:endpoint,referer:None,request_body:None,
+            body:body.as_bytes(),content_type:Some("application/json"),content_encoding:None});
+        assert!(unattributed.snapshot_id.is_none());
+        assert_eq!(core.content.latest_snapshot("tiktok-related").unwrap().unwrap().meta.id,snapshot.meta.id);
     }
 
     #[test]
