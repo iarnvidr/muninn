@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const model=require('../pwa/model.js');
 const source=fs.readFileSync(path.join(__dirname,'../../server-preview/discovery.js'),'utf8');
-const ID='aBcD_efg-12',TT='tt_7668090902816017671';
+const ID='aBcD_efg-12',TT='tt_7668090902816017671',CHANNEL='UCabcdefghijklmnopqrstuv';
 
 class Element {
   constructor(tag='div') {
@@ -51,10 +51,14 @@ test('real provider captures are rendered as native Muninn cards, while site con
   const snapshots=[
     {id:1,kind:'home',captured_at:now,source_url:'https://www.youtube.com/'},
     {id:2,kind:'tiktok-for-you',captured_at:now,source_url:'https://www.tiktok.com/foryou'},
+    {id:3,kind:'channel',captured_at:now,source_url:'https://www.youtube.com/channel/'+CHANNEL+'/videos'},
+    {id:4,kind:'channel',captured_at:now+10,source_url:'https://www.youtube.com/channel/UCzyxwvutsrqponmlkjihgfe/videos'},
   ];
   const feeds={
-    1:{id:1,kind:'home',captured_at:now,items:[{video_id:ID,title:'Actual captured YouTube title',channel:'Engineering channel',duration_seconds:105,view_text:'19K views'}]},
-    2:{id:2,kind:'tiktok-for-you',captured_at:now,items:[{video_id:TT,title:'Actual captured TikTok title',channel:'TikTok channel',duration_seconds:27}]}
+    1:{id:1,kind:'home',captured_at:now,items:[{video_id:ID,title:'Actual captured YouTube title',channel:'Engineering channel',channel_id:CHANNEL,duration_seconds:105,view_text:'19K views'}]},
+    2:{id:2,kind:'tiktok-for-you',captured_at:now,items:[{video_id:TT,title:'Actual captured TikTok title',channel:'TikTok channel',duration_seconds:27}]},
+    3:{id:3,kind:'channel',captured_at:now,items:[{video_id:'bbbbbbbbbbb',title:'Selected creator upload'}]},
+    4:{id:4,kind:'channel',captured_at:now+10,items:[{video_id:'ccccccccccc',title:'Unrelated creator upload'}]}
   };
   const document={
     hidden:false,
@@ -70,6 +74,8 @@ test('real provider captures are rendered as native Muninn cards, while site con
     if(url.startsWith('/api/feeds?kind='))data=snapshots;
     else if(url==='/api/feeds/1')data=feeds[1];
     else if(url==='/api/feeds/2')data=feeds[2];
+    else if(url==='/api/feeds/3')data=feeds[3];
+    else if(url==='/api/feeds/4')data=feeds[4];
     else if(url==='/api/entries')data=entries;
     else if(url==='/browser/state')data={running:true,tabs:[{id:'a',url:'https://www.youtube.com/'}]};
     else if(url==='/browser/action')data={running:true,tabs:[]};
@@ -93,6 +99,14 @@ test('real provider captures are rendered as native Muninn cards, while site con
   poll();await flush();
   assert.equal(all(refs['#browser-host']).find(e=>e.className==='muninn-discover-card'),initialCard,'unchanged feed polls preserve card DOM');
   assert.equal(all(initialCard).find(e=>e.className==='muninn-discover-art-button'),initialOpen,'tap/focus target is preserved');
+
+  const creator=all(initialCard).find(e=>e.tag==='button'&&e.textContent==='Channel · Engineering channel');
+  assert.ok(creator,'a captured YouTube channel ID provides native creator navigation');
+  creator.click();await flush();
+  assert.ok(textIn(refs['#browser-host']).includes('Selected creator upload'));
+  assert.ok(!textIn(refs['#browser-host']).includes('Unrelated creator upload'));
+  assert.ok(requests.some(x=>x.url==='/browser/action'&&JSON.parse(x.options.body).url==='https://www.youtube.com/channel/'+CHANNEL+'/videos'));
+  assert.ok(!requests.some(x=>x.url==='/api/feeds/4'),'newer unrelated snapshots are never used');
 
   refs['#pwa-menu-toggle'].click();
   assert.equal(refs['#app'].dataset.menu,'open');

@@ -25,7 +25,7 @@
     return n;
   };
   const shell = $('#app'), backdrop = $('#pwa-nav-backdrop'), toggle = $('#pwa-menu-toggle');
-  const state = {visible:!host.hidden, source:'youtube-home', query:'', selected:null,
+  const state = {visible:!host.hidden, source:'youtube-home', query:'', channelLabel:'', selected:null,
     snapshot:null, entries:[], pending:false, loading:false, readEpoch:0, routeEpoch:0,
     advanced:false, lastCapture:null, lastError:null};
   let navigationTail = Promise.resolve();
@@ -68,12 +68,13 @@
     }
     return response.json();
   }
-  const kind = () => state.source==='search' ? 'search'
+  const channelId = id => typeof id==='string' && /^UC[A-Za-z0-9_-]{22}$/.test(id);
+  const kind = () => state.source==='youtube-channel' ? 'channel' : state.source==='search' ? 'search'
     : state.source==='tiktok-search' ? 'tiktok-search' : sources[state.source]?.kind || 'home';
-  const sourceUrl = () => state.source==='search' ? 'https://www.youtube.com/results?search_query='+encodeURIComponent(state.query)
+  const sourceUrl = () => state.source==='youtube-channel' ? 'https://www.youtube.com/channel/'+state.query+'/videos' : state.source==='search' ? 'https://www.youtube.com/results?search_query='+encodeURIComponent(state.query)
     : state.source==='tiktok-search' ? 'https://www.tiktok.com/search?q='+encodeURIComponent(state.query)
     : sources[state.source]?.url || sources['youtube-home'].url;
-  const sourceLabel = () => state.source==='search' ? 'YouTube · '+state.query
+  const sourceLabel = () => state.source==='youtube-channel' ? state.channelLabel || 'YouTube channel' : state.source==='search' ? 'YouTube · '+state.query
     : state.source==='tiktok-search' ? 'TikTok · '+state.query
     : sources[state.source]?.label || 'Discover';
   const isValidItem = item => item && M.validId(item.video_id) && typeof item.title==='string';
@@ -84,6 +85,11 @@
   };
   function matchingSnapshot(meta) {
     if (meta.kind!==kind()) return false;
+    if (state.source==='youtube-channel') {
+      // Match the exact creator, never a newer snapshot from another channel.
+      const base='https://www.youtube.com/channel/'+state.query;
+      return [base,base+'/',base+'/videos',base+'/videos/'].includes(String(meta.source_url||'').split('?')[0]);
+    }
     if (state.source!=='search' && state.source!=='tiktok-search') return true;
     const text=state.query.trim().toLowerCase();
     // Search snapshots include a query or an exact source URL.
@@ -111,10 +117,12 @@
     const b=document.querySelector('[data-view="browse"]');
     if(b)b.click();
   }
-  async function switchSource(source, query='') {
-    if (!sources[source] && !['search','tiktok-search'].includes(source)) return;
+  async function switchSource(source, query='', channelLabel='') {
+    if (!sources[source] && !['search','tiktok-search','youtube-channel'].includes(source)) return;
+    if(source==='youtube-channel'&&!channelId(query))return;
     if (!navigator.onLine) { setMessage('Connect to your Muninn server to browse. Your offline library is still available.'); return; }
-    state.source=source;state.query=query;state.snapshot=null;state.lastError=null;
+    state.source=source;state.query=query;state.channelLabel=channelLabel;state.snapshot=null;state.lastError=null;
+    state.pending=false;state.loading=false;
     state.advanced=false;
     document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:false}}));
     state.routeEpoch++;state.readEpoch++;
@@ -141,6 +149,11 @@
     browseView();
     document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:state.advanced}}));
   });
+  function creatorButton(item) {
+    if(item.video_id.startsWith('tt_')||!channelId(item.channel_id))return null;
+    return button('Channel'+(item.channel?' · '+item.channel:''),
+      ()=>switchSource('youtube-channel',item.channel_id,item.channel||'YouTube channel'));
+  }
   function captureMeta(item) {
     const bits=[];
     if(item.channel)bits.push(item.channel);
@@ -219,6 +232,7 @@
       if(entry)return play(item,entry);
       if(!downloadPending(item))return save(item);
     },'muninn-watch-primary'));
+    const creator=creatorButton(item);if(creator)actions.append(creator);
     actions.append(button('Copy source URL',async()=>{
       const url=M.videoURL(item.video_id);
       if(!url)return;
@@ -268,7 +282,8 @@
           const action=button(pending?'Downloading…':'Save',()=>save(item));
           action.disabled=pending;actions.append(action);
         }
-        copy.append(actions);card.append(open,copy);grid.append(card);
+        const creator=creatorButton(item);if(creator)actions.append(creator);
+         copy.append(actions);card.append(open,copy);grid.append(card);
       }
     }
     }
