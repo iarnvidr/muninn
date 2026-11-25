@@ -5,10 +5,11 @@ No personal Google account, live video or provider availability is required.
 import asyncio
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
-from aiohttp import ClientSession
+from aiohttp import ClientSession, web
 from browser import Browser
 
 async def mobile_browse_smoke(browser, http, base, origin, headers):
@@ -90,6 +91,146 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await frontend.close()
 
 
+async def installed_worker_smoke(browser, http, base, headers):
+    """Run the actual gateway worker through install, waiting and activation.
+
+    A loopback-only fixture origin is a browser secure context. It forwards
+    only the fixed static shell paths to the paired test gateway, never
+    provider traffic, media, private APIs or owner credentials. Unlike
+    Playwright route.fulfill, this also serves worker-initiated requests.
+    """
+    async with http.get(base + "/app/sw.js", headers=headers) as response:
+        assert response.status == 200
+        current = await response.text()
+    match = re.search(r"const CACHE = '(muninn-pwa-shell-browser-v5-[0-9a-f]{64})';", current)
+    assert match, "Gateway must serve content-versioned worker"
+    current_cache = match.group(1)
+    old_cache = "muninn-pwa-shell-browser-fixture-old"
+    browse_assets = ("/app/discovery.js", "/app/browser.js", "/app/browser.css")
+    old = current.replace(current_cache, old_cache).replace(
+        "'/app/discovery.js','/app/browser.js','/app/browser.css',", "")
+    assert old != current and all(p not in old for p in browse_assets)
+    shell_paths = set(re.findall(r"'/app/[^']*'", current))
+    shell_paths = {p[1:-1] for p in shell_paths}
+    assert set(browse_assets) <= shell_paths
+    generation = {"worker": old}
+
+    async def serve(request):
+        path = request.path
+        if path in {"/worker-harness", "/app/worker-harness"}:
+            # Page-world fetch, not Patchright's isolated evaluate world.
+            # A real page script is also how the installed PWA requests assets.
+            return web.Response(text="""<!doctype html><title>Worker test</title>
+                <button id="probe">Probe offline shell</button><output id="result"></output>
+                <script>
+                document.querySelector('#probe').onclick = async () => {
+                    const results = [];
+                    for (const path of ['/app/discovery.js','/app/browser.js','/app/browser.css']) {
+                        try {
+                            const response = await fetch(path);
+                            results.push([path, response.ok, (await response.text()).length]);
+                        } catch (error) {
+                            results.push([path, false, 0, String(error)]);
+                        }
+                    }
+                    document.querySelector('#result').textContent = JSON.stringify(results);
+                };
+                </script>""", content_type="text/html", headers={"Cache-Control":"no-store"})
+        if path == "/app/sw.js":
+            return web.Response(text=generation["worker"], content_type="text/javascript",
+                                headers={"Cache-Control":"no-store"})
+        if request.method != "GET" or path not in shell_paths:
+            raise web.HTTPNotFound()
+        async with http.get(base + path, headers=headers, allow_redirects=False) as response:
+            assert response.status == 200, (path, response.status)
+            return web.Response(body=await response.read(), status=response.status,
+                                headers={"Content-Type":response.headers["Content-Type"],
+                                         "Cache-Control":"no-store"})
+
+    app = web.Application()
+    app.router.add_get("/{path:.*}", serve)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    frontend = None
+    try:
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        address = "http://127.0.0.1:" + str(runner.addresses[0][1])
+        frontend = await browser.driver.chromium.launch(
+            headless=True, chromium_sandbox=True,
+            args=["--disable-dev-shm-usage", "--disable-background-networking"])
+        context = await frontend.new_context(service_workers="allow")
+        page = await context.new_page()
+        await page.goto(address + "/app/worker-harness")
+        await page.evaluate("navigator.serviceWorker.register('/app/sw.js', {scope:'/app/'})")
+        await page.wait_for_function("!!navigator.serviceWorker.controller", timeout=30000)
+        assert old_cache in await page.evaluate("caches.keys()")
+        assert not await page.evaluate("caches.match('/app/discovery.js').then(Boolean)")
+        await page.evaluate("""async () => {
+            await caches.open('unrelated-fixture-cache');
+            await new Promise((resolve, reject) => {
+                const request = indexedDB.open('offline-device-fixture', 1);
+                request.onupgradeneeded = () => request.result.createObjectStore('videos');
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    const db = request.result;
+                    const tx = db.transaction('videos', 'readwrite');
+                    tx.objectStore('videos').put('retained', 'video');
+                    tx.oncomplete = () => { db.close(); resolve(); };
+                    tx.onerror = () => reject(tx.error);
+                };
+            });
+        }""")
+        generation["worker"] = current
+        await page.evaluate("navigator.serviceWorker.getRegistration().then(r => r.update())")
+        await page.wait_for_function(
+            "navigator.serviceWorker.getRegistration().then(r => !!r.waiting)", timeout=30000)
+        # A new version must not take over a page with an active transfer.
+        assert old_cache in await page.evaluate("caches.keys()")
+        assert current_cache in await page.evaluate("caches.keys()")
+        observer = await context.new_page()
+        await observer.goto(address + "/worker-harness")
+        await page.close()
+        await observer.wait_for_function(
+            "(old) => caches.keys().then(keys => !keys.includes(old))",
+            arg=old_cache, timeout=30000)
+        assert "unrelated-fixture-cache" in await observer.evaluate("caches.keys()")
+        retained = await observer.evaluate("""() => new Promise((resolve, reject) => {
+            const request = indexedDB.open('offline-device-fixture', 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const db = request.result;
+                const get = db.transaction('videos').objectStore('videos').get('video');
+                get.onsuccess = () => { db.close(); resolve(get.result); };
+                get.onerror = () => reject(get.error);
+            };
+        })""")
+        assert retained == "retained"
+        await observer.goto(address + "/app/worker-harness")
+        await observer.wait_for_function("!!navigator.serviceWorker.controller", timeout=30000)
+        for path in browse_assets:
+            assert await observer.evaluate(
+                "p => caches.match(p).then(Boolean)", path), ("missing precache", path)
+        # Take the fixture origin genuinely offline instead of applying CDP
+        # network emulation to an isolated evaluation world. Keep the page and
+        # its controlling worker alive, then exercise normal document fetch.
+        await runner.cleanup()
+        runner = None
+        await observer.locator("#probe").click()
+        await observer.wait_for_function(
+            "document.querySelector('#result').textContent.length > 0", timeout=30000)
+        results = json.loads(await observer.locator("#result").text_content())
+        assert [row[0] for row in results] == list(browse_assets), results
+        assert all(row[1] and row[2] > 0 for row in results), results
+        assert not await observer.evaluate("caches.match('/api/session').then(Boolean)")
+        print("Installed-worker Chromium smoke passed: stale generation waits for old client, activates after close, retains unrelated cache and IndexedDB, serves Browse assets offline.")
+    finally:
+        if frontend is not None:
+            await frontend.close()
+        if runner is not None:
+            await runner.cleanup()
+
+
 async def main():
     origin=os.environ['MUNINN_WEB_ORIGIN'];authority=urlsplit(origin).netloc
     async with ClientSession() as http:
@@ -140,6 +281,7 @@ async def main():
                     feeds=await r.json()
                     assert any(f['kind']=='tiktok-for-you' for f in feeds),feeds
                 await mobile_browse_smoke(browser,http,base,origin,headers)
+                await installed_worker_smoke(browser,http,base,headers)
                 await browser.action({'action':'reset'})
                 assert not (Path(d)/'profile').exists()
             finally:await browser.close()
