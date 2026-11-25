@@ -71,6 +71,7 @@ fn item(value: &Value) -> Option<(Item, VideoIngest)> {
     if !value.get("video").is_some_and(Value::is_object) { return None; }
     let id = number_id(&value["id"]).or_else(|| number_id(&value["aweme_id"]))?;
     let handle = first_string(value, &[&["author", "uniqueId"], &["author", "unique_id"], &["author", "unique_id_str"]]);
+    let handle = handle.filter(|h| (1..=30).contains(&h.len()) && h.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-')));
     let channel = first_string(value, &[&["author", "nickname"], &["author", "uniqueId"], &["author", "unique_id"]]);
     let title = first_string(value, &[&["desc"], &["description"], &["title"]])
         .unwrap_or_else(|| format!("TikTok by {}", handle.as_deref().or(channel.as_deref()).unwrap_or("unknown creator")));
@@ -79,6 +80,7 @@ fn item(value: &Value) -> Option<(Item, VideoIngest)> {
     let author_id = first_string(value, &[&["author", "id"], &["author", "secUid"]]);
     let public = Item {
         video_id: id.clone(), title: title.clone(), channel: channel.clone(), channel_id: author_id.clone(),
+        creator_handle: handle.clone(),
         duration_seconds: duration, thumbnail: thumbnail.clone(),
         view_text: value["stats"]["playCount"].as_u64().map(|n| format!("{n} views")),
         ..Item::default()
@@ -189,7 +191,9 @@ mod tests {
             referer:Some("https://www.tiktok.com/foryou"),request_body:None,body:body.as_bytes(),
             content_type:Some("application/json"),content_encoding:None });
         assert_eq!(result.kind.as_deref(),Some("tiktok-for-you"));
-        assert_eq!(core.content.latest_snapshot("tiktok-for-you").unwrap().unwrap().items[0].video_id,"tt_7668090902816017671");
+        let snapshot = core.content.latest_snapshot("tiktok-for-you").unwrap().unwrap();
+        assert_eq!(snapshot.items[0].video_id,"tt_7668090902816017671");
+        assert_eq!(snapshot.items[0].creator_handle.as_deref(), Some("maker"));
         let html = format!("<script id=\"__UNIVERSAL_DATA_FOR_REHYDRATION__\" type=\"application/json\">{}</script>",json!({"__DEFAULT_SCOPE__":{"webapp.video-detail":{"itemInfo":{"itemStruct":video}}}}));
         let result = core.capture(CaptureInput {url:"https://www.tiktok.com/@maker/video/7668090902816017671",referer:None,
             request_body:None,body:html.as_bytes(),content_type:Some("text/html"),content_encoding:None});

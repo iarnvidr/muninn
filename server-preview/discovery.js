@@ -25,7 +25,7 @@
     return n;
   };
   const shell = $('#app'), backdrop = $('#pwa-nav-backdrop'), toggle = $('#pwa-menu-toggle');
-  const state = {visible:!host.hidden, source:'youtube-home', query:'', channelLabel:'', selected:null,
+  const state = {visible:!host.hidden, source:'youtube-home', query:'', channelLabel:'', creatorHandle:'', selected:null,
     snapshot:null, entries:[], pending:false, loading:false, readEpoch:0, routeEpoch:0,
     advanced:false, lastCapture:null, lastError:null};
   let navigationTail = Promise.resolve();
@@ -69,12 +69,15 @@
     return response.json();
   }
   const channelId = id => typeof id==='string' && /^UC[A-Za-z0-9_-]{22}$/.test(id);
-  const kind = () => state.source==='youtube-related' ? 'related' : state.source==='youtube-channel' ? 'channel' : state.source==='search' ? 'search'
+  const tiktokHandle = h => typeof h==='string' && /^[A-Za-z0-9_.-]{1,30}$/.test(h);
+  const tiktokId = id => typeof id==='string' && /^tt_\d{15,22}$/.test(id);
+  const tiktokWatchUrl = (id, handle) => tiktokId(id) && tiktokHandle(handle) ? 'https://www.tiktok.com/@'+handle+'/video/'+id.slice(3) : null;
+  const kind = () => state.source==='tiktok-related' ? 'tiktok-related' : state.source==='tiktok-profile' ? 'tiktok-profile' : state.source==='youtube-related' ? 'related' : state.source==='youtube-channel' ? 'channel' : state.source==='search' ? 'search'
     : state.source==='tiktok-search' ? 'tiktok-search' : sources[state.source]?.kind || 'home';
-  const sourceUrl = () => state.source==='youtube-related' ? M.youtubeURL(state.query) : state.source==='youtube-channel' ? 'https://www.youtube.com/channel/'+state.query+'/videos' : state.source==='search' ? 'https://www.youtube.com/results?search_query='+encodeURIComponent(state.query)
+  const sourceUrl = () => state.source==='tiktok-related' ? tiktokWatchUrl(state.query,state.creatorHandle) : state.source==='tiktok-profile' ? 'https://www.tiktok.com/@'+state.query : state.source==='youtube-related' ? M.youtubeURL(state.query) : state.source==='youtube-channel' ? 'https://www.youtube.com/channel/'+state.query+'/videos' : state.source==='search' ? 'https://www.youtube.com/results?search_query='+encodeURIComponent(state.query)
     : state.source==='tiktok-search' ? 'https://www.tiktok.com/search?q='+encodeURIComponent(state.query)
     : sources[state.source]?.url || sources['youtube-home'].url;
-  const sourceLabel = () => state.source==='youtube-related' ? 'Related to '+(state.channelLabel||'selected video') : state.source==='youtube-channel' ? state.channelLabel || 'YouTube channel' : state.source==='search' ? 'YouTube · '+state.query
+  const sourceLabel = () => state.source==='youtube-related'||state.source==='tiktok-related' ? 'Related to '+(state.channelLabel||'selected video') : state.source==='tiktok-profile' ? state.channelLabel||'TikTok creator' : state.source==='youtube-channel' ? state.channelLabel || 'YouTube channel' : state.source==='search' ? 'YouTube · '+state.query
     : state.source==='tiktok-search' ? 'TikTok · '+state.query
     : sources[state.source]?.label || 'Discover';
   const isValidItem = item => item && M.validId(item.video_id) && typeof item.title==='string';
@@ -89,6 +92,14 @@
       // Match the exact creator, never a newer snapshot from another channel.
       const base='https://www.youtube.com/channel/'+state.query;
       return [base,base+'/',base+'/videos',base+'/videos/'].includes(String(meta.source_url||'').split('?')[0]);
+    }
+    if (state.source==='tiktok-related') {
+      const canonical=M.sourceURL(meta.source_url);
+      return !!canonical && canonical.startsWith('https://www.tiktok.com/') && M.videoId(canonical)===state.query;
+    }
+    if (state.source==='tiktok-profile') {
+      const canonical=M.sourceURL(meta.source_url);
+      return canonical===sourceUrl() || canonical===sourceUrl()+'/';
     }
     if (state.source!=='search' && state.source!=='tiktok-search') return true;
     const text=state.query.trim().toLowerCase();
@@ -117,12 +128,14 @@
     const b=document.querySelector('[data-view="browse"]');
     if(b)b.click();
   }
-  async function switchSource(source, query='', channelLabel='') {
-    if (!sources[source] && !['search','tiktok-search','youtube-channel','youtube-related'].includes(source)) return;
+  async function switchSource(source, query='', channelLabel='', creatorHandle='') {
+    if (!sources[source] && !['search','tiktok-search','youtube-channel','youtube-related','tiktok-profile','tiktok-related'].includes(source)) return;
     if(source==='youtube-channel'&&!channelId(query))return;
     if(source==='youtube-related'&&!M.youtubeURL(query))return;
+    if(source==='tiktok-profile'&&!tiktokHandle(query))return;
+    if(source==='tiktok-related'&&!tiktokWatchUrl(query,creatorHandle))return;
     if (!navigator.onLine) { setMessage('Connect to your Muninn server to browse. Your offline library is still available.'); return; }
-    state.source=source;state.query=query;state.channelLabel=channelLabel;state.snapshot=null;state.lastError=null;
+    state.source=source;state.query=query;state.channelLabel=channelLabel;state.creatorHandle=creatorHandle;state.snapshot=null;state.lastError=null;
     state.pending=false;state.loading=false;
     state.advanced=false;
     document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:false}}));
@@ -151,7 +164,9 @@
     document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:state.advanced}}));
   });
   function creatorButton(item) {
-    if(item.video_id.startsWith('tt_')||!channelId(item.channel_id))return null;
+    if(tiktokId(item.video_id))return tiktokHandle(item.creator_handle) ? button('Creator · @'+item.creator_handle,
+      ()=>switchSource('tiktok-profile',item.creator_handle,item.channel||'@'+item.creator_handle)) : null;
+    if(!channelId(item.channel_id))return null;
     return button('Channel'+(item.channel?' · '+item.channel:''),
       ()=>switchSource('youtube-channel',item.channel_id,item.channel||'YouTube channel'));
   }
@@ -235,8 +250,9 @@
     },'muninn-watch-primary'));
     const creator=creatorButton(item);if(creator)actions.append(creator);
     if(M.youtubeURL(item.video_id))actions.append(button('Related videos',()=>switchSource('youtube-related',item.video_id,item.title)));
+    else if(tiktokWatchUrl(item.video_id,item.creator_handle))actions.append(button('Related videos',()=>switchSource('tiktok-related',item.video_id,item.title,item.creator_handle)));
     actions.append(button('Copy source URL',async()=>{
-      const url=M.videoURL(item.video_id);
+      const url=tiktokWatchUrl(item.video_id,item.creator_handle)||M.videoURL(item.video_id);
       if(!url)return;
       await navigator.clipboard.writeText(url);
       setMessage('Video URL copied.');
@@ -323,6 +339,11 @@
         const detail=await request('/api/feeds/'+selected.id);
         if(epoch!==state.readEpoch)return;
         if(!Array.isArray(detail.items))throw new Error('Invalid captured feed.');
+        if(state.source==='tiktok-related'||state.source==='tiktok-profile') {
+          // A response may contain mixed items or an unrelated snapshot. Validate both the parent and provider again.
+          if(!matchingSnapshot(detail))throw new Error('Captured TikTok feed does not match this selection.');
+          detail.items=detail.items.filter(item=>isValidItem(item)&&tiktokId(item.video_id)&&item.video_id!==state.query);
+        }
         state.snapshot=detail;state.lastError=null;
       }else state.snapshot=null;
     }catch(error){if(epoch===state.readEpoch)state.lastError=error.message;}

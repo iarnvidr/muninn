@@ -48,17 +48,26 @@ test('real provider captures are rendered as native Muninn cards, while site con
   const browseButton=new Element('button');
   const events={},requests=[],dispatched=[],navigator={onLine:true,clipboard:{writeText:async()=>{}}};
   const now=Date.now(),entries=[];let poll;
+  const TT2='tt_7668090902816017672', TT3='tt_7668090902816017673';
   const snapshots=[
     {id:1,kind:'home',captured_at:now,source_url:'https://www.youtube.com/'},
     {id:2,kind:'tiktok-for-you',captured_at:now,source_url:'https://www.tiktok.com/foryou'},
     {id:3,kind:'channel',captured_at:now,source_url:'https://www.youtube.com/channel/'+CHANNEL+'/videos'},
     {id:4,kind:'channel',captured_at:now+10,source_url:'https://www.youtube.com/channel/UCzyxwvutsrqponmlkjihgfe/videos'},
+    {id:5,kind:'tiktok-profile',captured_at:now,source_url:'https://www.tiktok.com/@maker'},
+    {id:6,kind:'tiktok-profile',captured_at:now+10,source_url:'https://www.tiktok.com/@other'},
+    {id:7,kind:'tiktok-related',captured_at:now,source_url:'https://www.tiktok.com/@maker/video/'+TT.slice(3)},
+    {id:8,kind:'tiktok-related',captured_at:now+10,source_url:'https://www.tiktok.com/@other/video/'+TT3.slice(3)},
   ];
   const feeds={
     1:{id:1,kind:'home',captured_at:now,items:[{video_id:ID,title:'Actual captured YouTube title',channel:'Engineering channel',channel_id:CHANNEL,duration_seconds:105,view_text:'19K views'}]},
-    2:{id:2,kind:'tiktok-for-you',captured_at:now,items:[{video_id:TT,title:'Actual captured TikTok title',channel:'TikTok channel',duration_seconds:27}]},
+    2:{id:2,kind:'tiktok-for-you',captured_at:now,items:[{video_id:TT,title:'Actual captured TikTok title',channel:'TikTok channel',channel_id:'opaque-id',creator_handle:'maker',duration_seconds:27}]},
     3:{id:3,kind:'channel',captured_at:now,items:[{video_id:'bbbbbbbbbbb',title:'Selected creator upload'}]},
-    4:{id:4,kind:'channel',captured_at:now+10,items:[{video_id:'ccccccccccc',title:'Unrelated creator upload'}]}
+    4:{id:4,kind:'channel',captured_at:now+10,items:[{video_id:'ccccccccccc',title:'Unrelated creator upload'}]},
+    5:{...snapshots[4],items:[{video_id:TT2,title:'Exact TikTok creator upload'}]},
+    6:{...snapshots[5],items:[{video_id:TT3,title:'Wrong TikTok creator upload'}]},
+    7:{...snapshots[6],items:[{video_id:TT2,title:'Exact TikTok related clip'},{video_id:TT,title:'TikTok parent must not appear'},{video_id:ID,title:'Wrong provider clip'}]},
+    8:{...snapshots[7],items:[{video_id:TT3,title:'Wrong TikTok parent recommendation'}]}
   };
   const document={
     hidden:false,
@@ -75,7 +84,7 @@ test('real provider captures are rendered as native Muninn cards, while site con
     else if(url==='/api/feeds/1')data=feeds[1];
     else if(url==='/api/feeds/2')data=feeds[2];
     else if(url==='/api/feeds/3')data=feeds[3];
-    else if(url==='/api/feeds/4')data=feeds[4];
+    else if(/^\/api\/feeds\/[4-8]$/.test(url))data=feeds[Number(url.split('/').pop())];
     else if(url==='/api/video/'+ID)data={video_id:ID,meta:{captured_at:now},related:[
       {video_id:ID,title:'Selected video must not recommend itself'},
       {video_id:'ddddddddddd',title:'Exact parent recommendation'},
@@ -134,6 +143,21 @@ test('real provider captures are rendered as native Muninn cards, while site con
     JSON.parse(x.options.body).url==='https://www.tiktok.com/foryou'),
     'source navigation asks Chromium for a new capture rather than displaying its pixels');
   assert.ok(requests.every(x=>!x.url.startsWith('/browser/frame')));
+  const tikCreator=all(refs['#browser-host']).find(e=>e.tag==='button'&&e.textContent==='Creator · @maker');
+  assert.ok(tikCreator,'creator link uses captured handle rather than opaque ID');
+  tikCreator.click();await flush();
+  assert.ok(textIn(refs['#browser-host']).includes('Exact TikTok creator upload'));
+  assert.ok(!textIn(refs['#browser-host']).includes('Wrong TikTok creator upload'));
+  assert.ok(requests.some(x=>x.url==='/browser/action'&&JSON.parse(x.options.body).url==='https://www.tiktok.com/@maker'));
+  sources[2].click();await flush();
+  all(refs['#browser-host']).find(e=>e.className==='muninn-discover-art-button').click();await flush();
+  all(refs['#browser-host']).find(e=>e.tag==='button'&&e.textContent==='Related videos').click();await flush();
+  assert.ok(textIn(refs['#browser-host']).includes('Exact TikTok related clip'));
+  assert.ok(!textIn(refs['#browser-host']).includes('Wrong TikTok parent recommendation'));
+  assert.ok(!textIn(refs['#browser-host']).includes('TikTok parent must not appear'));
+  assert.ok(!textIn(refs['#browser-host']).includes('Wrong provider clip'));
+  assert.ok(requests.some(x=>x.url==='/browser/action'&&JSON.parse(x.options.body).url==='https://www.tiktok.com/@maker/video/'+TT.slice(3)));
+  assert.ok(!requests.some(x=>x.url==='/api/feeds/6'||x.url==='/api/feeds/8'));
   // An already open YouTube tab with no captured feed must not leave the
   // native view empty forever. Reload it once to acquire fresh responses.
   snapshots.splice(snapshots.findIndex(s=>s.kind==='home'),1);
