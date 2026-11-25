@@ -27,7 +27,7 @@
   // A partially loaded recovery must not permanently disable retries or
   // install duplicate discovery/advanced-browser event handlers.
   const recoveryAssets=new Set();
-  let recoveryMarker=false;
+  let recoveryMarker=browserEnabled, browseAssetsReady=false, initialBrowsePending=browserEnabled;
   async function loadRecoveryAsset(url,stylesheet=false) {
     if(recoveryAssets.has(url))return;
     const asset=document.createElement(stylesheet?'link':'script');
@@ -43,7 +43,7 @@
     recoveryAssets.add(url);
   }
   async function recoverBrowse() {
-    if(browserEnabled || !navigator.onLine || browserRecovery || !$('#browser-host')) return browserRecovery;
+    if(browseAssetsReady || initialBrowsePending || !navigator.onLine || browserRecovery || !$('#browser-host')) return browserRecovery;
     browserRecovery=(async()=>{
       // A standalone Rust PWA returns 404 here. Never show a nonfunctional
       // browser, and never turn an Authelia redirect into another login prompt.
@@ -72,6 +72,7 @@
         return;
       }
       if(!revealBrowse())return;
+      browseAssetsReady=true;
       // Preserve a deliberate move to device copies or captured feeds.
       if(state.view==='server')state.view='browse';
       render();
@@ -331,6 +332,26 @@
   $('#install').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('#install').hidden=true;});
   if('serviceWorker' in navigator&&window.isSecureContext)navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(e=>notice('Offline app shell unavailable: '+e.message,true));
   if(!window.isSecureContext)notice('Use HTTPS to install this PWA and enable reliable offline storage.',true);
+  // On a freshly gateway-stamped shell, the deferred discovery and browser
+  // scripts run after app.js. A failed initial request must not leave the
+  // marker permanently suppressing recovery. Wait for the parser's scripts,
+  // then reuse only assets that actually mounted; never duplicate handlers.
+  if(initialBrowsePending) {
+    const inspectInitialBrowse=()=>{
+      initialBrowsePending=false;
+      if(document.querySelector('link[href="/app/browser.css"]')?.sheet)recoveryAssets.add('/app/browser.css');
+      if($('.muninn-discover'))recoveryAssets.add('/app/discovery.js');
+      if($('.remote-browser'))recoveryAssets.add('/app/browser.js');
+      browseAssetsReady=recoveryAssets.has('/app/browser.css') &&
+        (!$('#pwa-discover-menu') || recoveryAssets.has('/app/discovery.js')) &&
+        recoveryAssets.has('/app/browser.js');
+      recoverBrowse();
+    };
+    // The ordinary deferred app.js executes while readyState is interactive;
+    // DOMContentLoaded still waits for the gateway's later deferred scripts.
+    if(document.readyState==='complete')inspectInitialBrowse();
+    else document.addEventListener('DOMContentLoaded',inspectInitialBrowse,{once:true});
+  }
   refresh();
   recoverBrowse();
   setInterval(()=>{if(!document.hidden&&navigator.onLine&&state.signedIn)refresh();},15000);

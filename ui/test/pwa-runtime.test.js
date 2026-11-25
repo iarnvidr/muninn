@@ -16,7 +16,7 @@ class Element {
   async emit(name){for(const fn of this.listeners[name]||[])await fn({preventDefault(){}});}
 }
 const flatten=node=>[node,...node.children.flatMap(flatten)];
-async function app({complete=true,truncate=false,browseProbe=false,failAssetOnce=null}={}){
+async function app({complete=true,truncate=false,browseProbe=false,failAssetOnce=null,marked=false,missingInitial=[]}={}){
   const nodes=new Map();
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   const tabs=['browse','server','device','feeds'].map(view=>{const b=new Element('button');b.dataset.view=view;b.hidden=view==='browse';return b;});
@@ -41,9 +41,16 @@ async function app({complete=true,truncate=false,browseProbe=false,failAssetOnce
     clear:async()=>stored.clear(),remove:async id=>stored.delete(id),position:async()=>{}
   };
   const navigator={onLine:true,storage:{estimate:async()=>({quota:1000000000,usage:0}),persist:async()=>true},clipboard:{writeText:async url=>copied.push(url)}};
-  const context={document:{hidden:false,head,
-      querySelector:selector=>selector.startsWith('#')?get(selector):{value:'720'},
-      querySelectorAll:()=>tabs,createElement:tag=>new Element(tag),dispatchEvent:()=>{},addEventListener:()=>{}},
+  const context={document:{hidden:false,head,readyState:'interactive',
+      querySelector:selector=>{
+        if(selector==='meta[name="muninn-source-browser"]')return marked?{content:'enabled'}:null;
+        if(selector==='link[href="/app/browser.css"]')return marked&&!missingInitial.includes('css')?{sheet:{}}:null;
+        if(selector==='.muninn-discover')return marked&&!missingInitial.includes('discovery')?new Element():null;
+        if(selector==='.remote-browser')return marked&&!missingInitial.includes('browser')?new Element():null;
+        return selector.startsWith('#')?get(selector):{value:'720'};
+      },
+      querySelectorAll:()=>tabs,createElement:tag=>new Element(tag),dispatchEvent:()=>{},
+      addEventListener:(name,fn)=>{events[name]=fn;}},
     navigator,MuninnWebModel:M,MuninnWebStore:DB,Blob,AbortController,DOMException,
     CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail;}},
     URL:class extends URL{static createObjectURL(blob){assert.ok(blob instanceof Blob);return 'blob:device-copy';}static revokeObjectURL(){}},
@@ -68,6 +75,7 @@ async function app({complete=true,truncate=false,browseProbe=false,failAssetOnce
   };
   context.window=context;
   vm.runInNewContext(source,context);
+  if(marked)events.DOMContentLoaded();
   const flush=async()=>{for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));};
   await flush();
   const find=text=>flatten(get('#content')).find(e=>e.tag==='button'&&e.textContent===text);
@@ -152,4 +160,25 @@ for(const asset of ['/app/browser.css','/app/discovery.js','/app/browser.js'])te
   for(const url of ['/app/browser.css','/app/discovery.js','/app/browser.js'])
     assert.equal(h.head.children.filter(node=>node.src===url||node.href===url).length,1);
   assert.equal(h.head.children.filter(node=>node.name==='muninn-source-browser').length,1);
+});
+
+test('a marked gateway shell retries only the initially missing Browse script',async()=>{
+  const h=await app({marked:true,browseProbe:true,missingInitial:['discovery']});
+  assert.ok(h.requests.some(req=>req.url==='/browser/state'));
+  assert.equal(h.get('#view-title').textContent,'Browse');
+  assert.deepEqual(h.head.children.map(node=>node.src||node.href),['/app/discovery.js']);
+  await h.get('#refresh').emit('click');await h.flush();
+  assert.equal(h.head.children.length,1,'successful recovery does not add duplicate handlers');
+});
+test('healthy gateway-stamped shell neither probes nor reloads mounted Browse assets',async()=>{
+  const h=await app({marked:true,browseProbe:true});
+  assert.equal(h.get('#view-title').textContent,'Browse');
+  assert.equal(h.head.children.length,0);
+  assert.ok(!h.requests.some(req=>req.url==='/browser/state'));
+});
+test('marked gateway shell can retry failed recovery again on Refresh',async()=>{
+  const h=await app({marked:true,browseProbe:true,missingInitial:['browser'],failAssetOnce:'/app/browser.js'});
+  assert.match(h.get('#notice').textContent,/Browse assets could not load/);
+  await h.get('#refresh').emit('click');await h.flush();
+  assert.deepEqual(h.head.children.map(node=>node.src||node.href),['/app/browser.js']);
 });
