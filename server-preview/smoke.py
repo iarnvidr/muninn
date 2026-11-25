@@ -118,8 +118,24 @@ async def installed_worker_smoke(browser, http, base, headers):
     async def serve(request):
         path = request.path
         if path in {"/worker-harness", "/app/worker-harness"}:
-            return web.Response(text="<html><title>Worker test</title></html>",
-                                content_type="text/html", headers={"Cache-Control":"no-store"})
+            # Page-world fetch, not Patchright's isolated evaluate world.
+            # A real page script is also how the installed PWA requests assets.
+            return web.Response(text="""<!doctype html><title>Worker test</title>
+                <button id="probe">Probe offline shell</button><output id="result"></output>
+                <script>
+                document.querySelector('#probe').onclick = async () => {
+                    const results = [];
+                    for (const path of ['/app/discovery.js','/app/browser.js','/app/browser.css']) {
+                        try {
+                            const response = await fetch(path);
+                            results.push([path, response.ok, (await response.text()).length]);
+                        } catch (error) {
+                            results.push([path, false, 0, String(error)]);
+                        }
+                    }
+                    document.querySelector('#result').textContent = JSON.stringify(results);
+                };
+                </script>""", content_type="text/html", headers={"Cache-Control":"no-store"})
         if path == "/app/sw.js":
             return web.Response(text=generation["worker"], content_type="text/javascript",
                                 headers={"Cache-Control":"no-store"})
@@ -192,18 +208,27 @@ async def installed_worker_smoke(browser, http, base, headers):
         assert retained == "retained"
         await observer.goto(address + "/app/worker-harness")
         await observer.wait_for_function("!!navigator.serviceWorker.controller", timeout=30000)
-        await context.set_offline(True)
         for path in browse_assets:
-            result = await observer.evaluate(
-                "p => fetch(p).then(async r => [r.ok, (await r.text()).length])", path)
-            assert result[0] and result[1] > 0, (path, result)
+            assert await observer.evaluate(
+                "p => caches.match(p).then(Boolean)", path), ("missing precache", path)
+        # Take the fixture origin genuinely offline instead of applying CDP
+        # network emulation to an isolated evaluation world. Keep the page and
+        # its controlling worker alive, then exercise normal document fetch.
+        await runner.cleanup()
+        runner = None
+        await observer.locator("#probe").click()
+        await observer.wait_for_function(
+            "document.querySelector('#result').textContent.length > 0", timeout=30000)
+        results = json.loads(await observer.locator("#result").text_content())
+        assert [row[0] for row in results] == list(browse_assets), results
+        assert all(row[1] and row[2] > 0 for row in results), results
         assert not await observer.evaluate("caches.match('/api/session').then(Boolean)")
-        await context.set_offline(False)
         print("Installed-worker Chromium smoke passed: stale generation waits for old client, activates after close, retains unrelated cache and IndexedDB, serves Browse assets offline.")
     finally:
         if frontend is not None:
             await frontend.close()
-        await runner.cleanup()
+        if runner is not None:
+            await runner.cleanup()
 
 
 async def main():
