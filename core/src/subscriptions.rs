@@ -33,9 +33,109 @@ pub struct DiscoveredChannel {
     pub name: String,
 }
 
+const FETCH_RETRIES: usize = 2;
+#[cfg(not(test))]
+const FETCH_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
+#[cfg(test)]
+const FETCH_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(1);
+
+fn classify_fetch_error(message: &str) -> (Option<u16>, &'static str, bool) {
+    let status = message.split_once("status code ").and_then(|(_, rest)| {
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        (!digits.is_empty()).then(|| digits.parse::<u16>().ok()).flatten()
+    });
+    let lower = message.to_lowercase();
+    let reason = if lower.contains("timed out") || lower.contains("timeout") {
+        "timeout"
+    } else if lower.contains("connection") || lower.contains("dns") {
+        "connection error"
+    } else {
+        "request failed"
+    };
+    let transient = status.map_or(true, |code| code == 429 || code >= 500);
+    (status, reason, transient)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    const POLL_ID: &str = "UCaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn poll_core(fetcher: Arc<dyn crate::ytdlp::Fetcher>) -> Arc<Core> {
+        let (_, core) = crate::engine::testutil::test_core(None, Some(fetcher));
+        core.set_now_for_tests(Some(10_000_000));
+        core.put_subscriptions(&[Channel {
+            channel_id: POLL_ID.into(), name: "Creator".into(), quality: Quality::P1080,
+            retention_days: 0, keep: false, enabled: true, poll_minutes: 60, max_per_poll: 3,
+        }]).unwrap();
+        core
+    }
+
+    #[test]
+    fn transient_fetch_error_retries_and_records_success() {
+        struct Retry(AtomicUsize);
+        impl crate::ytdlp::Fetcher for Retry {
+            fn get(&self, _: &str, _: u64) -> Result<Vec<u8>> {
+                if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err(crate::Error::bad("GET https://www.youtube.com/feeds/videos.xml?channel_id=UCaaaaaaaaaaaaaaaaaaaaaa: Network Error: timed out reading response"))
+                } else {
+                    Ok(b"<feed><entry><yt:videoId>aaaaaaaaaaa</yt:videoId><title>Upload</title></entry></feed>".to_vec())
+                }
+            }
+        }
+        let fetcher = Arc::new(Retry(AtomicUsize::new(0)));
+        let core = poll_core(fetcher.clone());
+        core.poll_channels().unwrap();
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 2);
+        assert_eq!(core.video.kv_get(&format!("channel-result:{POLL_ID}")).unwrap().and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap()["queued"], 1);
+    }
+
+    #[test]
+    fn not_found_fetch_error_is_not_retried_and_is_recorded() {
+        struct Missing(AtomicUsize);
+        impl crate::ytdlp::Fetcher for Missing {
+            fn get(&self, _: &str, _: u64) -> Result<Vec<u8>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(crate::Error::bad("GET https://www.youtube.com/feeds/videos.xml?channel_id=UCaaaaaaaaaaaaaaaaaaaaaa: status code 404"))
+            }
+        }
+        let fetcher = Arc::new(Missing(AtomicUsize::new(0)));
+        let core = poll_core(fetcher.clone());
+        core.poll_channels().unwrap();
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 1);
+        let result: Value = serde_json::from_str(&core.video.kv_get(&format!("channel-result:{POLL_ID}")).unwrap().unwrap()).unwrap();
+        assert!(result["error"].as_str().is_some());
+        assert!(result["reason"].as_str().unwrap().contains("404"));
+    }
+
+    #[test]
+    fn persistent_timeout_retries_then_records_failure() {
+        struct Timeout(AtomicUsize);
+        impl crate::ytdlp::Fetcher for Timeout {
+            fn get(&self, _: &str, _: u64) -> Result<Vec<u8>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(crate::Error::bad("GET https://www.youtube.com/feeds/videos.xml?channel_id=UCaaaaaaaaaaaaaaaaaaaaaa: Network Error: timed out reading response"))
+            }
+        }
+        let fetcher = Arc::new(Timeout(AtomicUsize::new(0)));
+        let core = poll_core(fetcher.clone());
+        core.poll_channels().unwrap();
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 1 + FETCH_RETRIES);
+        let result: Value = serde_json::from_str(&core.video.kv_get(&format!("channel-result:{POLL_ID}")).unwrap().unwrap()).unwrap();
+        assert!(result["error"].as_str().is_some());
+        assert_eq!(result["reason"], "timeout");
+    }
+
+    #[test]
+    fn fetch_error_classification_ignores_numbers_in_urls() {
+        assert_eq!(classify_fetch_error("GET https://youtube.test/feeds?channel_id=UC404abcdefghijklmnopqrstuv: ok"), (None, "request failed", true));
+        assert_eq!(classify_fetch_error("GET https://youtube.test/feeds?channel_id=UC500abcdefghijklmnopqrstuv: status code 404"), (Some(404), "request failed", false));
+        assert_eq!(classify_fetch_error("Connection Failed"), (None, "connection error", true));
+        assert_eq!(classify_fetch_error("Network Error: timed out reading response"), (None, "timeout", true));
+        assert_eq!(classify_fetch_error("status code 503"), (Some(503), "request failed", true));
+    }
     #[test]
     fn signed_in_channel_renderers_become_named_candidates_without_enabling_downloads() {
         let (_d, core) = crate::engine::testutil::test_core(None, None);
@@ -393,17 +493,34 @@ impl Core {
                 "https://www.youtube.com/feeds/videos.xml?channel_id={}",
                 c.channel_id
             );
-            let data = match self.fetcher.get(&url, 1024 * 1024) {
-                Ok(b) => b,
-                Err(_) => {
+            let mut retries = 0;
+            let (data, failure) = loop {
+                match self.fetcher.get(&url, 1024 * 1024) {
+                    Ok(data) => break (Some(data), None),
+                    Err(error) => {
+                        let (status, reason, transient) = classify_fetch_error(&error.to_string());
+                        if transient && retries < FETCH_RETRIES {
+                            retries += 1;
+                            std::thread::sleep(FETCH_RETRY_BACKOFF);
+                            continue;
+                        }
+                        let reason = status.map_or_else(|| reason.to_owned(), |code| format!("HTTP {code}: {reason}"));
+                        break (None, Some((reason, status)));
+                    }
+                }
+            };
+            let data = match data {
+                Some(data) => data,
+                None => {
+                    let (reason, status) = failure.unwrap_or_else(|| ("request failed".into(), None));
                     self.video.kv_put(
                         &format!("channel-result:{}", c.channel_id),
-                        &json!({"error":"Could not fetch channel uploads"}).to_string(),
+                        &json!({"error":"Could not fetch channel uploads", "reason":reason}).to_string(),
                     )?;
                     self.log_event(
                         "error",
                         "channel.fetch_failed",
-                        json!({"channel_id":c.channel_id}),
+                        json!({"channel_id":c.channel_id, "error":reason, "status":status}),
                     );
                     continue;
                 }
