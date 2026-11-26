@@ -11,20 +11,53 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from aiohttp import ClientSession, web
 from browser import Browser
+from gateway import boundary, browser_state, browser_action, browser_frame
 
 async def mobile_browse_smoke(browser, http, base, origin, headers):
     """Exercise shipped PWA HTML/CSS/JS in a real, fresh touch-enabled Chromium.
 
     The isolated test origin is mapped to the actual gateway's HTTP listener;
-    authentication uses the synthetic pairing session. Only provider-browser
-    control is redirected to the already-fixtured Browser, so there is no
-    external provider traffic, owner profile or live download. This is not
+    authentication uses the synthetic pairing session. Provider-browser control
+    goes through a loopback instance of the real gateway handlers and middleware
+    with the already-fixtured Browser. No external provider traffic, owner profile
+    or live download. This is not
     installed Safari, service-worker lifecycle or live Authelia acceptance.
     """
     frontend = await browser.driver.chromium.launch(
         headless=True, chromium_sandbox=True,
         args=["--disable-dev-shm-usage", "--disable-background-networking"])
+    runner = None
     try:
+        # Exercise the production HTTP boundary against the real Core pairing
+        # session, but bind only the disposable fixture Browser to these routes.
+        fixture_gateway = web.Application(middlewares=[boundary])
+        fixture_gateway['origin'] = origin
+        fixture_gateway['authority'] = urlsplit(origin).netloc.lower()
+        fixture_gateway['auth_mode'] = 'token'
+        fixture_gateway['http'] = http
+        fixture_gateway['browser'] = browser
+        fixture_gateway.router.add_get('/browser/state', browser_state)
+        fixture_gateway.router.add_post('/browser/action', browser_action)
+        fixture_gateway.router.add_get('/browser/frame', browser_frame)
+        runner = web.AppRunner(fixture_gateway)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        gateway_base = 'http://127.0.0.1:' + str(runner.addresses[0][1])
+        async with http.get(gateway_base + '/browser/state', headers={k:v for k,v in headers.items() if k != 'Cookie'}) as response:
+            assert response.status == 401
+        async with http.post(gateway_base + '/browser/action', headers={**headers, 'Origin':'https://evil.test'}, json={'action':'reload'}) as response:
+            assert response.status == 403
+        async def forward_browser(route, path, action=None):
+            async with http.request(route.request.method, gateway_base + path,
+                                    headers=headers, json=action, allow_redirects=False) as response:
+                assert response.headers.get('Cache-Control') == 'no-store'
+                assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+                if route.request.method == 'GET' and path.startswith('/browser/frame?') and response.status == 200:
+                    assert response.content_type == 'image/jpeg'
+                await route.fulfill(status=response.status, headers={k:v for k,v in response.headers.items()
+                                    if k.lower() in {'content-type','cache-control','x-content-type-options','referrer-policy'}},
+                                    body=await response.read())
         context = await frontend.new_context(
             viewport={"width":390,"height":844}, is_mobile=True, has_touch=True,
             device_scale_factor=2, service_workers="block")
@@ -41,10 +74,9 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
             path = url.path + ("?" + url.query if url.query else "")
             if url.path == "/browser/state" and req.method == "GET":
                 state_reads += 1
-                await route.fulfill(status=200, json=await browser.state())
+                await forward_browser(route, path)
             elif url.path == "/browser/frame" and req.method == "GET":
-                tab = parse_qs(url.query).get('tab', [''])[0]
-                await route.fulfill(status=200, content_type='image/jpeg', body=await browser.frame(tab))
+                await forward_browser(route, path)
             elif url.path == "/browser/action" and req.method == "POST":
                 action = json.loads(req.post_data or "{}")
                 if action.get("action") not in {"new", "navigate", "reload"}:
@@ -60,7 +92,7 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                     await route.fulfill(status=503, json={"error":"Fixture navigation failure"})
                     return
                 navigations.append(action)
-                await route.fulfill(status=200, json=await browser.action(action))
+                await forward_browser(route, path, action)
             elif req.method in {"GET", "HEAD"}:
                 async with http.request(req.method, base + path, headers=headers,
                                         allow_redirects=False) as response:
@@ -140,7 +172,11 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         assert await page.locator("#login-panel").is_hidden()
         print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
     finally:
-        await frontend.close()
+        try:
+            await frontend.close()
+        finally:
+            if runner is not None:
+                await runner.cleanup()
 
 
 async def installed_worker_smoke(browser, http, base, headers):
