@@ -8,7 +8,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from aiohttp import ClientSession, web
 from browser import Browser
 
@@ -38,6 +38,9 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
             path = url.path + ("?" + url.query if url.query else "")
             if url.path == "/browser/state" and req.method == "GET":
                 await route.fulfill(status=200, json=await browser.state())
+            elif url.path == "/browser/frame" and req.method == "GET":
+                tab = parse_qs(url.query).get('tab', [''])[0]
+                await route.fulfill(status=200, content_type='image/jpeg', body=await browser.frame(tab))
             elif url.path == "/browser/action" and req.method == "POST":
                 action = json.loads(req.post_data or "{}")
                 if action.get("action") not in {"new", "navigate", "reload"}:
@@ -68,6 +71,18 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await page.goto(origin + "/app/?utm_source=chatgpt.com", wait_until="domcontentloaded")
         youtube = page.locator(".muninn-discover-card").filter(has_text="Server browser fixture").first
         await youtube.wait_for(state="visible")
+        # The real website canvas must be discoverable directly, not buried
+        # under a sign-in tool or below a long captured feed.
+        site_toggle = page.locator('#pwa-site-browser-toggle')
+        remote = page.locator('.remote-browser')
+        await site_toggle.tap()
+        await remote.wait_for(state='visible')
+        await page.locator('.remote-browser .remote-frame').wait_for(state='visible')
+        await youtube.wait_for(state='hidden')
+        assert await site_toggle.get_attribute('aria-expanded') == 'true'
+        await site_toggle.tap()
+        await remote.wait_for(state='hidden')
+        await youtube.wait_for(state='visible')
         await youtube.locator(".muninn-discover-art-button").tap()
         await page.locator(".muninn-discover-watch h2").filter(has_text="Server browser fixture").wait_for(state="visible")
         await page.locator(".muninn-watch-back").tap()
@@ -86,7 +101,7 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await page.locator('[data-browse-source="youtube-home"]').tap()
         await youtube.wait_for(state="visible")
         assert await page.locator("#login-panel").is_hidden()
-        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, touch cards, YouTube/TikTok menu and library return.")
+        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas and return, touch cards, YouTube/TikTok menu and library return.")
     finally:
         await frontend.close()
 

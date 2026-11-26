@@ -44,7 +44,11 @@
   const watch = el('section',undefined,'muninn-discover-watch');
   watch.hidden = true;
   surface.append(heading,message,grid,watch);
-  host.prepend(surface);
+  const siteToggle = button('Browse YouTube / TikTok websites',()=>setAdvanced(!state.advanced),'muninn-discover-refresh');
+  siteToggle.id='pwa-site-browser-toggle';
+  const siteActions=el('div',undefined,'muninn-discover-head');
+  siteActions.append(siteToggle);
+  host.prepend(siteActions,surface);
   function openMenu(open) {
     shell.dataset.menu = open ? 'open' : 'closed';
     backdrop.hidden = !open;
@@ -116,6 +120,9 @@
     }
     const advanced = $('#pwa-advanced-toggle');
     advanced.setAttribute('aria-expanded',String(state.advanced));
+    siteToggle.setAttribute('aria-expanded',String(state.advanced));
+    siteToggle.textContent=state.advanced?'Return to captured videos':'Browse YouTube / TikTok websites';
+    surface.hidden=state.advanced;
   }
   function showCollection() {
     const player=watch.querySelector('video');
@@ -156,13 +163,14 @@
     const provider=event.submitter?.value==='tiktok'?'tiktok-search':'search';
     switchSource(provider,query).catch(showError);
   });
-  $('#pwa-advanced-toggle').addEventListener('click',()=>{
-    state.advanced=!state.advanced;
+  function setAdvanced(open) {
+    state.advanced=open;
     renderNav();
     openMenu(false);
-    browseView();
+    if(!state.visible)browseView();
     document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:state.advanced}}));
-  });
+  }
+  $('#pwa-advanced-toggle').addEventListener('click',()=>setAdvanced(!state.advanced));
   function creatorButton(item) {
     if(tiktokId(item.video_id))return tiktokHandle(item.creator_handle) ? button('Creator · @'+item.creator_handle,
       ()=>switchSource('tiktok-profile',item.creator_handle,item.channel||'@'+item.creator_handle)) : null;
@@ -385,7 +393,7 @@
     state.visible=visible;
     if(!visible) {
       state.readEpoch++;state.routeEpoch++;
-      showCollection();state.advanced=false;
+      showCollection();state.advanced=false;renderNav();
       document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:false}}));
       openMenu(false);
     }else {
