@@ -302,6 +302,39 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await browser.action({'action':'scroll','tab':'tab','dy':-600})
             self.assertEqual(order[-1],('wheel',0,-600))
 
+    async def test_failed_new_navigation_releases_only_the_new_tab(self):
+        with tempfile.TemporaryDirectory() as d:
+            browser = Browser(Path(d), None, 'http://127.0.0.1:47873', 'test')
+            existing = SimpleNamespace(is_closed=lambda: False, close=AsyncMock())
+            browser.pages['existing'] = existing
+            created = []
+            async def new_page():
+                ident = 'new-' + str(len(created))
+                async def close():
+                    browser.pages.pop(ident, None)
+                page = SimpleNamespace(
+                    goto=AsyncMock(side_effect=RuntimeError('fixture navigation failure')
+                                   if len(created) < 4 else None),
+                    close=AsyncMock(side_effect=close))
+                created.append((ident, page))
+                return page
+            async def register(page):
+                browser.pages[created[-1][0]] = page
+            browser.context = SimpleNamespace(new_page=new_page)
+            browser._register = register
+            browser.sync_cookies = AsyncMock()
+            browser.state = AsyncMock(return_value={'running': True})
+            command = {'action': 'new', 'url': 'https://www.tiktok.com/foryou'}
+            for _ in range(4):
+                with self.assertRaisesRegex(RuntimeError, 'fixture navigation failure'):
+                    await browser.action(command)
+                self.assertEqual(list(browser.pages), ['existing'])
+                created[-1][1].close.assert_awaited_once()
+            self.assertEqual(await browser.action(command), {'running': True})
+            self.assertEqual(list(browser.pages), ['existing', 'new-4'])
+            created[-1][1].close.assert_not_awaited()
+            existing.close.assert_not_awaited()
+
     async def test_browser_access_requires_real_muninn_session(self):
         class Response:
             status=401

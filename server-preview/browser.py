@@ -223,8 +223,16 @@ class Browser:
                 if len(self.pages) >= MAX_TABS:
                     raise ValueError("Close a tab before opening another (four-tab limit)")
                 page = await self.context.new_page()
-                await self._register(page)
-                await page.goto(url, wait_until="domcontentloaded")
+                try:
+                    await self._register(page)
+                    await page.goto(url, wait_until="domcontentloaded")
+                except Exception:
+                    # Failed creation must not consume a tab slot or leave a
+                    # blank tab for the next state poll to select. Only close
+                    # the page created for this action, not the owner profile.
+                    with contextlib.suppress(Exception):
+                        await page.close()
+                    raise
             elif kind == "reset":
                 await self.close()
                 import shutil
