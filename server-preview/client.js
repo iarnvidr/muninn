@@ -16,7 +16,13 @@
   const explanation=node('p','Browse the real provider pages through your private server browser. Muninn captures feeds and video links, but upstream video playback is blocked in the browsing canvas; downloaded videos play in Muninn.','hint');
   const status=node('p','Start the private browser to capture feeds and opened videos.','hint');status.setAttribute('role','status');
   const controls=node('div',null,'actions');
-  const makeButton=(title,fn)=>{const b=node('button',title);b.type='button';b.addEventListener('click',()=>fn().catch(error=>{status.textContent=error.message;}));return b;};
+  // Keep user-action errors separate from periodic state/capture counters.
+  // A successful poll does not mean a failed navigation or Chromium launch succeeded.
+  const actionError=node('p',null,'hint remote-action-error');
+  actionError.setAttribute('role','alert');actionError.hidden=true;
+  function reportError(error){actionError.textContent=error.message;actionError.hidden=false;}
+  function clearError(){actionError.textContent='';actionError.hidden=true;}
+  const makeButton=(title,fn)=>{const b=node('button',title);b.type='button';b.addEventListener('click',()=>fn().catch(reportError));return b;};
   const tabBar=node('div',null,'tabs compact');tabBar.setAttribute('aria-label','Server browser tabs');
   const tabButtons=new Map();
   const navigation=node('form',null,'input-row');
@@ -38,7 +44,7 @@
   for(const key of ['Tab','Enter','Backspace','Escape'])keyboard.append(makeButton(key,()=>action('key',{key})));
   keyboard.append(makeButton('Scroll up',()=>action('scroll',{dy:-600})),makeButton('Scroll down',()=>action('scroll',{dy:600})));
   const warning=node('p','Single-owner preview: signing into Google or TikTok stores those sessions on this server, not on your Mac or phone. Anyone allowed into this preview and paired to Muninn can operate it. Reset removes both sessions.','hint');
-  panel.append(heading,explanation,controls,search,tabBar,navigation,viewport,mobileHint,input,keyboard,status,warning);
+  panel.append(heading,explanation,controls,search,tabBar,navigation,actionError,viewport,mobileHint,input,keyboard,status,warning);
 
   async function request(path, body) {
     const response=await fetch('/browser/'+path,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',
@@ -99,7 +105,7 @@
       const previous=new Set(lastState?.tabs.map(t=>t.id)||[]);
       const state=await request('action',{action:name,...extra,tab:target});
       if(name==='new')selectTab(state.tabs.find(t=>!previous.has(t.id))?.id||active);
-      render(state);await frame();
+      render(state);await frame();clearError();
     }finally{busy=false;}
   }
   async function frame(){
@@ -146,10 +152,10 @@
     const provider=event.submitter?.value==='tiktok'?'tiktok':'youtube';
     const target=provider==='tiktok'?'https://www.tiktok.com/search?q='+encodeURIComponent(term):
       'https://www.youtube.com/results?search_query='+encodeURIComponent(term);
-    goTo(target).catch(e=>status.textContent=e.message);
+    goTo(target).catch(reportError);
   });
-  navigation.addEventListener('submit',event=>{event.preventDefault();action(active?'navigate':'new',{url:url.value}).catch(e=>status.textContent=e.message);});
-  input.addEventListener('submit',event=>{event.preventDefault();const value=text.value;text.value='';action('text',{text:value}).catch(e=>status.textContent=e.message);});
+  navigation.addEventListener('submit',event=>{event.preventDefault();action(active?'navigate':'new',{url:url.value}).catch(reportError);});
+  input.addEventListener('submit',event=>{event.preventDefault();const value=text.value;text.value='';action('text',{text:value}).catch(reportError);});
   // Wheel/trackpad and mobile swipes scroll the remote provider page, not
   // the PWA document. Native upstream video is still blocked by policy.py.
   function canvasPoint(clientX,clientY){
@@ -161,7 +167,7 @@
     if(!canvasReady())return;
     event.preventDefault();
     action('scroll',{...canvasPoint(event.clientX,event.clientY),dy:Math.round(Math.max(-1600,Math.min(1600,event.deltaY)))})
-      .catch(e=>status.textContent=e.message);
+      .catch(reportError);
   },{passive:false});
   // The screenshot is a 1280px Chromium viewport. A phone needs horizontal
   // panning to read it, while vertical gestures must scroll the remote site.
@@ -184,7 +190,7 @@
     if(touchAxis==='horizontal')return; // Native scrolling inside the image viewport.
     event.preventDefault();touchX=nextX;touchY=nextY;
     action('scroll',{...canvasPoint(nextX,nextY),dy:Math.round(Math.max(-1600,Math.min(1600,dy*3)))})
-      .catch(e=>status.textContent=e.message);
+      .catch(reportError);
   },{passive:false});
   image.addEventListener('touchend',event=>{
     if(touchMoved&&touchAxis==='vertical')event.preventDefault();
@@ -195,21 +201,21 @@
     if(!canvasReady())return;
     const r=image.getBoundingClientRect();
     action('click',{x:(event.clientX-r.left)*1280/r.width,y:(event.clientY-r.top)*800/r.height})
-      .catch(e=>status.textContent=e.message);
+      .catch(reportError);
     image.focus();
   });
   image.addEventListener('keydown',event=>{
     if(!canvasReady())return;
     if(event.key==='Tab'&&!event.shiftKey)return; // Tab exits the canvas; explicit Tab button controls remote focus.
     const named=['Enter','Backspace','Delete','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'];
-    if(named.includes(event.key)){event.preventDefault();action('key',{key:event.key}).catch(e=>status.textContent=e.message);}
-    else if(event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey){event.preventDefault();action('text',{text:event.key}).catch(e=>status.textContent=e.message);}
+    if(named.includes(event.key)){event.preventDefault();action('key',{key:event.key}).catch(reportError);}
+    else if(event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey){event.preventDefault();action('text',{text:event.key}).catch(reportError);}
   });
   async function setVisible(visible){
     if(visible===shown)return;
     shown=visible;let epoch=++stateEpoch;
     if(!shown){
-      clearFrame();return;
+      clearFrame();clearError();return;
     }
     try{
       const state=await request('state');
@@ -220,7 +226,7 @@
       if(!state.tabs.length){
         const start=action('start');epoch=stateEpoch;await start;
       }else await frame();
-    }catch(error){if(shown&&epoch===stateEpoch)status.textContent=error.message;}
+    }catch(error){if(shown&&epoch===stateEpoch)reportError(error);}
   }
   let advancedOpen=false;
   document.addEventListener('muninn:view-change',event=>{

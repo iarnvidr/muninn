@@ -29,7 +29,10 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
             viewport={"width":390,"height":844}, is_mobile=True, has_touch=True,
             device_scale_factor=2, service_workers="block")
         navigations = []
+        state_reads = 0
+        fail_next_tiktok = False
         async def serve(route):
+            nonlocal state_reads, fail_next_tiktok
             req = route.request
             url = urlsplit(req.url)
             if (url.scheme + "://" + url.netloc) != origin:
@@ -37,6 +40,7 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                 return
             path = url.path + ("?" + url.query if url.query else "")
             if url.path == "/browser/state" and req.method == "GET":
+                state_reads += 1
                 await route.fulfill(status=200, json=await browser.state())
             elif url.path == "/browser/frame" and req.method == "GET":
                 tab = parse_qs(url.query).get('tab', [''])[0]
@@ -50,6 +54,10 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                     "https://www.youtube.com/", "https://www.tiktok.com/foryou"
                 }:
                     await route.fulfill(status=400, json={"error":"Unexpected fixture destination"})
+                    return
+                if fail_next_tiktok and action.get("url") == "https://www.tiktok.com/foryou":
+                    fail_next_tiktok = False
+                    await route.fulfill(status=503, json={"error":"Fixture navigation failure"})
                     return
                 navigations.append(action)
                 await route.fulfill(status=200, json=await browser.action(action))
@@ -80,6 +88,35 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await page.locator('.remote-browser .remote-frame').wait_for(state='visible')
         await youtube.wait_for(state='hidden')
         assert await site_toggle.get_attribute('aria-expanded') == 'true'
+        # Exercise actual website controls, not just native provider menus.
+        address = remote.locator('input[type=url]')
+        async def wait_for_address(expected):
+            # Keep the real gateway CSP enabled: wait_for_function evaluates
+            # a JavaScript string and is forbidden by script-src 'self'.
+            for _ in range(150):
+                if await address.input_value() == expected:
+                    return
+                await asyncio.sleep(0.1)
+            raise AssertionError(f"Expected browser address {expected}, got {await address.input_value()}")
+        await remote.get_by_role('button', name='YouTube Home', exact=True).tap()
+        await wait_for_address('https://www.youtube.com/')
+        fail_next_tiktok = True
+        await remote.get_by_role('button', name='TikTok For You', exact=True).tap()
+        error = remote.locator('.remote-action-error')
+        await error.wait_for(state='visible')
+        assert '503' in await error.text_content()
+        before = state_reads
+        for _ in range(50):
+            if state_reads > before:
+                break
+            await asyncio.sleep(0.1)
+        assert state_reads > before, 'Expected periodic state refresh after failed navigation'
+        assert await error.is_visible(), 'State polling must not erase an unresolved navigation failure'
+        await remote.get_by_role('button', name='TikTok For You', exact=True).tap()
+        await wait_for_address('https://www.tiktok.com/foryou')
+        await error.wait_for(state='hidden')
+        await remote.locator('.remote-frame').wait_for(state='visible')
+        assert any(a.get('url') == 'https://www.tiktok.com/foryou' for a in navigations)
         await site_toggle.tap()
         await remote.wait_for(state='hidden')
         await youtube.wait_for(state='visible')
@@ -101,7 +138,7 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await page.locator('[data-browse-source="youtube-home"]').tap()
         await youtube.wait_for(state="visible")
         assert await page.locator("#login-panel").is_hidden()
-        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas and return, touch cards, YouTube/TikTok menu and library return.")
+        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
     finally:
         await frontend.close()
 
