@@ -90,8 +90,16 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         assert await site_toggle.get_attribute('aria-expanded') == 'true'
         # Exercise actual website controls, not just native provider menus.
         address = remote.locator('input[type=url]')
+        async def wait_for_address(expected):
+            # Keep the real gateway CSP enabled: wait_for_function evaluates
+            # a JavaScript string and is forbidden by script-src 'self'.
+            for _ in range(150):
+                if await address.input_value() == expected:
+                    return
+                await asyncio.sleep(0.1)
+            raise AssertionError(f"Expected browser address {expected}, got {await address.input_value()}")
         await remote.get_by_role('button', name='YouTube Home', exact=True).tap()
-        await page.wait_for_function("document.querySelector('.remote-browser input[type=url]').value === 'https://www.youtube.com/'")
+        await wait_for_address('https://www.youtube.com/')
         fail_next_tiktok = True
         await remote.get_by_role('button', name='TikTok For You', exact=True).tap()
         error = remote.locator('.remote-action-error')
@@ -105,7 +113,7 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         assert state_reads > before, 'Expected periodic state refresh after failed navigation'
         assert await error.is_visible(), 'State polling must not erase an unresolved navigation failure'
         await remote.get_by_role('button', name='TikTok For You', exact=True).tap()
-        await page.wait_for_function("document.querySelector('.remote-browser input[type=url]').value === 'https://www.tiktok.com/foryou'")
+        await wait_for_address('https://www.tiktok.com/foryou')
         await error.wait_for(state='hidden')
         await remote.locator('.remote-frame').wait_for(state='visible')
         assert any(a.get('url') == 'https://www.tiktok.com/foryou' for a in navigations)
