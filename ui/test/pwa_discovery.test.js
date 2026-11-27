@@ -40,6 +40,7 @@ const flush=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmedia
 test('real provider captures are rendered as native Muninn cards, while site controls stay opt-in',async()=>{
   const refs={};for(const id of ['browser-host','pwa-discover-menu','app','pwa-nav-backdrop',
     'pwa-menu-toggle','pwa-advanced-toggle','pwa-discover-search','pwa-discover-query'])refs['#'+id]=new Element();
+  refs['.toolbar']=new Element();
   refs['#browser-host'].hidden=false;
   refs['#pwa-discover-menu'].hidden=true;
   const sources=['youtube-home','youtube-subscriptions','tiktok-foryou','tiktok-following']
@@ -114,6 +115,15 @@ test('real provider captures are rendered as native Muninn cards, while site con
   const siteToggle=all(refs['#browser-host']).find(e=>e.id==='pwa-site-browser-toggle');
   const surface=all(refs['#browser-host']).find(e=>e.className==='muninn-discover');
   assert.ok(siteToggle,'direct website browsing is visible without opening the drawer');
+  const toolbarSites=all(refs['.toolbar']).find(e=>e.id==='pwa-toolbar-websites');
+  assert.ok(toolbarSites,'website entry is present outside the Browse workspace and drawer');
+  assert.equal(toolbarSites.attributes['aria-pressed'],'false');
+  toolbarSites.click();await flush();
+  assert.equal(surface.hidden,true);
+  assert.equal(toolbarSites.attributes['aria-pressed'],'true');
+  toolbarSites.click();await flush();
+  assert.equal(surface.hidden,false);
+  assert.equal(toolbarSites.attributes['aria-pressed'],'false');
   assert.equal(siteToggle.textContent,'Browse YouTube / TikTok websites');
   siteToggle.click();await flush();
   assert.equal(surface.hidden,true,'website browsing replaces rather than follows the potentially long feed');
