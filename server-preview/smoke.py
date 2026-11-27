@@ -14,7 +14,7 @@ from browser import Browser
 from gateway import boundary, browser_state, browser_action, browser_frame
 
 async def mobile_browse_smoke(browser, http, base, origin, headers):
-    """Exercise shipped PWA HTML/CSS/JS in a real, fresh touch-enabled Chromium.
+    """Exercise shipped PWA HTML/CSS/JS in a fresh touch-enabled frontend engine.
 
     The isolated test origin is mapped to the actual gateway's HTTP listener;
     authentication uses the synthetic pairing session. Provider-browser control
@@ -23,11 +23,30 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
     or live download. This is not
     installed Safari, service-worker lifecycle or live Authelia acceptance.
     """
-    frontend = await browser.driver.chromium.launch(
-        headless=True, chromium_sandbox=True,
-        args=["--disable-dev-shm-usage", "--disable-background-networking"])
+    frontend = None
+    webkit_driver = None
+    engine = "WebKit" if os.environ.get("MUNINN_FRONTEND_WEBKIT") == "1" else "Chromium"
     runner = None
     try:
+        if engine == "WebKit":
+            # Official Playwright supplies a separate frontend engine in the
+            # disposable CI-only image. Patchright still controls the actual
+            # sandboxed Chromium provider fixture; don't change its path.
+            from playwright.async_api import async_playwright
+            previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/webkit"
+            try:
+                webkit_driver = await async_playwright().start()
+            finally:
+                if previous is None:
+                    os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+                else:
+                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
+            frontend = await webkit_driver.webkit.launch(headless=True)
+        else:
+            frontend = await browser.driver.chromium.launch(
+                headless=True, chromium_sandbox=True,
+                args=["--disable-dev-shm-usage", "--disable-background-networking"])
         # Exercise the production HTTP boundary against the real Core pairing
         # session, but bind only the disposable fixture Browser to these routes.
         fixture_gateway = web.Application(middlewares=[boundary])
@@ -193,13 +212,18 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                                   'y': bounds['height'] * 100 / 800})
         await wait_for_address('https://www.youtube.com/watch?v=aaaaaaaaaaa')
         assert sum(a.get('action') == 'click' for a in navigations) == before_clicks + 1
-        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
+        print(f"Mobile {engine} DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
     finally:
         try:
-            await frontend.close()
+            if frontend is not None:
+                await frontend.close()
         finally:
-            if runner is not None:
-                await runner.cleanup()
+            try:
+                if webkit_driver is not None:
+                    await webkit_driver.stop()
+            finally:
+                if runner is not None:
+                    await runner.cleanup()
 
 
 async def installed_worker_smoke(browser, http, base, headers):
@@ -392,7 +416,11 @@ async def main():
                     feeds=await r.json()
                     assert any(f['kind']=='tiktok-for-you' for f in feeds),feeds
                 await mobile_browse_smoke(browser,http,base,origin,headers)
-                await installed_worker_smoke(browser,http,base,headers)
+                # The exact-image Chromium pass already tests installed-worker
+                # recovery. The supplemental Linux WebKit run tests DOM/input
+                # compatibility only, not Safari's installed-PWA lifecycle.
+                if os.environ.get("MUNINN_FRONTEND_WEBKIT") != "1":
+                    await installed_worker_smoke(browser,http,base,headers)
                 await browser.action({'action':'reset'})
                 assert not (Path(d)/'profile').exists()
             finally:await browser.close()

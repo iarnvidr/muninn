@@ -76,6 +76,43 @@ jobs:
           done
           test "$state" = healthy
           docker exec muninn-preview-smoke python3 /opt/muninn-preview/smoke.py
+      - name: Exercise real gateway Browse with a Linux WebKit frontend (test only)
+        run: |
+          set -euo pipefail
+          image="$(docker image ls --no-trunc --filter "label=org.opencontainers.image.revision=$GITHUB_SHA" --format '{{.ID}}' | head -n1)"
+          test -n "$image"
+          # The published image remains the exact original Dagger image.
+          # WebKit is installed in a disposable derivative, not production.
+          docker tag "$image" muninn-preview-webkit-base:ci
+          mkdir -p "$RUNNER_TEMP/muninn-webkit-secrets"
+          trap 'docker rm -fv muninn-webkit-smoke >/dev/null 2>&1 || true; docker image rm muninn-preview-webkit-test:ci muninn-preview-webkit-base:ci >/dev/null 2>&1 || true; rm -rf "$RUNNER_TEMP/muninn-webkit-secrets"' EXIT
+          docker build --pull=false -t muninn-preview-webkit-test:ci - <<'DOCKERFILE'
+          FROM muninn-preview-webkit-base:ci
+          LABEL org.opencontainers.image.revision="webkit-test-only"
+          USER root
+          RUN python3 -m pip install --no-cache-dir playwright==1.57.0 \
+              && PLAYWRIGHT_BROWSERS_PATH=/opt/webkit python3 -m playwright install --with-deps webkit \
+              && rm -rf /var/lib/apt/lists/*
+          USER 10001:10001
+          DOCKERFILE
+          openssl rand -hex 32 > "$RUNNER_TEMP/muninn-webkit-secrets/token"
+          chmod 0444 "$RUNNER_TEMP/muninn-webkit-secrets/token"
+          # Same restrictive sandbox and isolated data as the original smoke.
+          # No privileged flag, host port, owner credential or owner profile.
+          docker run --name muninn-webkit-smoke --detach --init --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --security-opt "seccomp=$PWD/server-preview/chromium-seccomp.json" \
+            --pids-limit 512 --memory 3g --shm-size 512m --tmpfs /tmp:size=1g,mode=1777 \
+            --mount "type=bind,src=$RUNNER_TEMP/muninn-webkit-secrets/token,dst=/run/secrets/muninn-token,readonly" \
+            -e MUNINN_WEB_ORIGIN=https://muninn-preview.test -e MUNINN_WEB_TOKEN_FILE=/run/secrets/muninn-token \
+            --mount type=volume,dst=/var/lib/muninn muninn-preview-webkit-test:ci
+          for i in $(seq 1 60); do
+            state=$(docker inspect -f '{{.State.Health.Status}}' muninn-webkit-smoke)
+            [ "$state" != healthy ] || break
+            sleep 2
+          done
+          test "$state" = healthy
+          docker exec -e MUNINN_FRONTEND_WEBKIT=1 muninn-webkit-smoke python3 /opt/muninn-preview/smoke.py
+          echo 'Linux WebKit DOM/input fixture passed; not actual Safari, installed-PWA, or owner acceptance.' >> "$GITHUB_STEP_SUMMARY"
       - name: Exercise Authelia gateway health and trusted Docker peer
         run: |
           set -euo pipefail
