@@ -20,7 +20,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -30,7 +30,7 @@ jobs:
           key: muninn-dagger-cargo-preview-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           restore-keys: |
             muninn-dagger-cargo-v1-Linux-X64-
-      - uses: dagger/dagger-for-github@496f1b3d8b0d823834c13e67cf8a8e08ca3b9602
+      - uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77
         with:
           version: 1.0.0-beta.25
           module: ci/dagger/server-preview
@@ -151,7 +151,7 @@ jobs:
               output.write('digest='+image.split('@',1)[1]+'\n')
           PY
           echo "Checked preview: $image" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: github.event_name == 'push'
         with:
           name: muninn-server-preview-image
