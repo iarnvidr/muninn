@@ -116,13 +116,29 @@
     if(!response.ok)throw new Error('Browser frame unavailable; reconnect to Muninn.');
     const blob=await response.blob();
     if(sequence!==frameSequence||target!==active||!shown)return;
-    const next=URL.createObjectURL(blob);const old=frameURL;frameURL=next;image.src=next;if(old)URL.revokeObjectURL(old);
-    // Safari may still be decoding the new image after src is assigned. Keep
-    // a switched tab inert until its own screenshot is actually ready.
-    try{if(typeof image.decode==='function')await image.decode();}
-    catch(error){if(sequence===frameSequence)throw error;return;}
-    if(sequence!==frameSequence||target!==active||!shown)return;
-    frameTab=target;image.hidden=false;
+    const next=URL.createObjectURL(blob);
+    // WebKit can reject decode() on the display:none canvas. Load the JPEG
+    // independently of layout, before publishing it to the interactive image.
+    // The old frame remains available on the same tab until the new one loads;
+    // a tab switch still clears it and invalidates every pending frame.
+    try{
+      await new Promise((resolve,reject)=>{
+        const candidate=new Image();
+        const finish=error=>{
+          clearTimeout(timeout);candidate.onload=null;candidate.onerror=null;
+          if(error){candidate.removeAttribute('src');reject(error);}else resolve();
+        };
+        const timeout=setTimeout(()=>finish(new Error('Browser frame load timed out.')),8000);
+        candidate.onload=()=>finish(candidate.naturalWidth?null:new Error('Browser frame is empty.'));
+        candidate.onerror=()=>finish(new Error('Browser frame could not be loaded.'));
+        candidate.src=next;
+      });
+      if(sequence!==frameSequence||target!==active||!shown)return;
+      const old=frameURL;
+      frameURL=next;image.src=next;frameTab=target;image.hidden=false;
+      if(old)URL.revokeObjectURL(old);
+    }catch(error){if(sequence===frameSequence)throw error;}
+    finally{if(frameURL!==next)URL.revokeObjectURL(next);}
   }
   const goTo=url=>action(active?'navigate':'new',{url});
   controls.append(makeButton('YouTube Home',()=>goTo('https://www.youtube.com/')),
