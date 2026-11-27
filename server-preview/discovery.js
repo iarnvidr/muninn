@@ -165,10 +165,21 @@
   });
   function setAdvanced(open) {
     state.advanced=open;
+    if(open){
+      // Native capture and the interactive website share the same remote tabs.
+      // Invalidate queued/background feed navigation before handing them to
+      // the owner; a delayed state read must not navigate the active tab.
+      state.routeEpoch++;state.pending=false;
+    }
     renderNav();
     openMenu(false);
     if(!state.visible)browseView();
     document.dispatchEvent(new CustomEvent('muninn:advanced-browser',{detail:{open:state.advanced}}));
+    if(!open && state.visible && !state.snapshot){
+      loadSnapshot().then(()=>{
+        if(state.visible&&!state.advanced&&!state.snapshot)navigateSource(false);
+      }).catch(showError);
+    }
   }
   $('#pwa-advanced-toggle').addEventListener('click',()=>setAdvanced(!state.advanced));
   function creatorButton(item) {
@@ -360,14 +371,14 @@
   // Actual remote Chromium navigation is used to *produce* provider captures,
   // never as the primary screen or Safari iframe.
   async function navigateSource(force=false) {
-    if(!state.visible||!navigator.onLine)return;
+    if(!state.visible||state.advanced||!navigator.onLine)return;
     const route=++state.routeEpoch,target=sourceUrl();
     const execute=async()=>{
-      if(route!==state.routeEpoch || !state.visible)return;
+      if(route!==state.routeEpoch || !state.visible || state.advanced)return;
       state.pending=true;draw();
       try{
         const remote=await request('/browser/state');
-        if(route!==state.routeEpoch||!state.visible)return;
+        if(route!==state.routeEpoch||!state.visible||state.advanced)return;
         const tabs=Array.isArray(remote.tabs)?remote.tabs:[];
         const match=tabs.find(tab=>tab.url===target);
         if(match) {
@@ -399,7 +410,7 @@
     }else {
       draw();
       loadSnapshot().then(()=>{
-        if(state.visible&&!state.snapshot)navigateSource(false);
+        if(state.visible&&!state.advanced&&!state.snapshot)navigateSource(false);
       }).catch(showError);
     }
   }
