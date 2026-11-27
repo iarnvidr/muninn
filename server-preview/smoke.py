@@ -136,7 +136,14 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         remote = page.locator('.remote-browser')
         await site_toggle.tap()
         await remote.wait_for(state='visible')
-        await page.locator('.remote-browser .remote-frame').wait_for(state='visible')
+        try:
+            await page.locator('.remote-browser .remote-frame').wait_for(state='visible')
+        except Exception:
+            # Synthetic fixture only: report the actual UI failure, not a
+            # generic visibility timeout. No owner page, cookies or screenshots.
+            print("Fixture canvas status:", await remote.locator('[role=status]').text_content())
+            print("Fixture canvas action error:", await remote.locator('.remote-action-error').text_content())
+            raise
         await youtube.wait_for(state='hidden')
         assert await site_toggle.get_attribute('aria-expanded') == 'true'
         # Exercise actual website controls, not just native provider menus.
