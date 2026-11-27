@@ -170,13 +170,15 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await page.locator('[data-browse-source="youtube-home"]').tap()
         await youtube.wait_for(state="visible")
         assert await page.locator("#login-panel").is_hidden()
-        # From the Library, use the direct website menu (not a native feed).
+        # From the Library, use the always-visible toolbar, without the drawer.
         await page.locator("#pwa-menu-toggle").tap()
         await page.locator('#sidebar [data-view="server"]').last.tap()
         await page.locator("#browser-host").wait_for(state="hidden")
-        await page.locator("#pwa-menu-toggle").tap()
-        await page.locator("#pwa-advanced-toggle").tap()
+        toolbar_sites = page.locator('#pwa-toolbar-websites')
+        await toolbar_sites.wait_for(state='visible')
+        await toolbar_sites.tap()
         await remote.wait_for(state="visible")
+        assert await toolbar_sites.get_attribute('aria-pressed') == 'true'
         await remote.get_by_role('button', name='YouTube Home', exact=True).tap()
         await wait_for_address('https://www.youtube.com/')
         await error.wait_for(state='hidden')

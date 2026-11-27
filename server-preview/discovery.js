@@ -49,6 +49,14 @@
   const siteActions=el('div',undefined,'muninn-discover-head');
   siteActions.append(siteToggle);
   host.prepend(siteActions,surface);
+  // Keep real website Browse one tap away, including on mobile where the
+  // tab strip is hidden and the workspace may currently be Library/Device.
+  const toolbar = $('.toolbar');
+  const toolbarSites = button('Websites',()=>setAdvanced(!state.advanced),'small muninn-toolbar-sites');
+  toolbarSites.id='pwa-toolbar-websites';
+  toolbarSites.setAttribute('aria-label','Browse YouTube and TikTok websites');
+  toolbarSites.setAttribute('aria-controls','browser-host');
+  if(toolbar)toolbar.prepend(toolbarSites);
   function openMenu(open) {
     shell.dataset.menu = open ? 'open' : 'closed';
     backdrop.hidden = !open;
@@ -121,6 +129,8 @@
     const advanced = $('#pwa-advanced-toggle');
     advanced.setAttribute('aria-expanded',String(state.advanced));
     siteToggle.setAttribute('aria-expanded',String(state.advanced));
+    toolbarSites.setAttribute('aria-pressed',String(state.advanced));
+    toolbarSites.setAttribute('aria-label',state.advanced?'Return to captured videos':'Browse YouTube and TikTok websites');
     siteToggle.textContent=state.advanced?'Return to captured videos':'Browse YouTube / TikTok websites';
     surface.hidden=state.advanced;
   }
