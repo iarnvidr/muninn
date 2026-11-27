@@ -83,9 +83,11 @@ jobs:
           test -n "$image"
           # The published image remains the exact original Dagger image.
           # WebKit is installed in a disposable derivative, not production.
+          # Retain this alias for the later original-image Authelia smoke;
+          # removing its only tag could delete an otherwise untagged load.
           docker tag "$image" muninn-preview-webkit-base:ci
           mkdir -p "$RUNNER_TEMP/muninn-webkit-secrets"
-          trap 'docker rm -fv muninn-webkit-smoke >/dev/null 2>&1 || true; docker image rm muninn-preview-webkit-test:ci muninn-preview-webkit-base:ci >/dev/null 2>&1 || true; rm -rf "$RUNNER_TEMP/muninn-webkit-secrets"' EXIT
+          trap 'docker rm -fv muninn-webkit-smoke >/dev/null 2>&1 || true; docker image rm muninn-preview-webkit-test:ci >/dev/null 2>&1 || true; rm -rf "$RUNNER_TEMP/muninn-webkit-secrets"' EXIT
           docker build --pull=false -t muninn-preview-webkit-test:ci - <<'DOCKERFILE'
           FROM muninn-preview-webkit-base:ci
           LABEL org.opencontainers.image.revision="webkit-test-only"
