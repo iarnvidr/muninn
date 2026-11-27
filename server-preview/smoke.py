@@ -79,10 +79,10 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                 await forward_browser(route, path)
             elif url.path == "/browser/action" and req.method == "POST":
                 action = json.loads(req.post_data or "{}")
-                if action.get("action") not in {"new", "navigate", "reload"}:
+                if action.get("action") not in {"new", "navigate", "reload", "click"}:
                     await route.fulfill(status=400, json={"error":"Unexpected fixture action"})
                     return
-                if action.get("action") != "reload" and action.get("url") not in {
+                if action.get("action") in {"new", "navigate"} and action.get("url") not in {
                     "https://www.youtube.com/", "https://www.tiktok.com/foryou"
                 }:
                     await route.fulfill(status=400, json={"error":"Unexpected fixture destination"})
@@ -170,6 +170,27 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await page.locator('[data-browse-source="youtube-home"]').tap()
         await youtube.wait_for(state="visible")
         assert await page.locator("#login-panel").is_hidden()
+        # From the Library, use the direct website menu (not a native feed).
+        await page.locator("#pwa-menu-toggle").tap()
+        await page.locator('#sidebar [data-view="server"]').last.tap()
+        await page.locator("#browser-host").wait_for(state="hidden")
+        await page.locator("#pwa-menu-toggle").tap()
+        await page.locator("#pwa-advanced-toggle").tap()
+        await remote.wait_for(state="visible")
+        await remote.get_by_role('button', name='YouTube Home', exact=True).tap()
+        await wait_for_address('https://www.youtube.com/')
+        await error.wait_for(state='hidden')
+        frame = remote.locator('.remote-frame')
+        await frame.wait_for(state='visible')
+        # The synthetic page has a fixed target at (100,100) in the 1280x800
+        # screenshot. Tap the real canvas and require a provider URL change.
+        bounds = await frame.bounding_box()
+        assert bounds, 'Expected a visible interactive browser frame'
+        before_clicks = sum(a.get('action') == 'click' for a in navigations)
+        await frame.tap(position={'x': bounds['width'] * 100 / 1280,
+                                  'y': bounds['height'] * 100 / 800})
+        await wait_for_address('https://www.youtube.com/watch?v=aaaaaaaaaaa')
+        assert sum(a.get('action') == 'click' for a in navigations) == before_clicks + 1
         print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
     finally:
         try:
@@ -342,7 +363,7 @@ async def main():
             try:
                 await browser.start()
                 fixture={'contents':{'items':[{'videoRenderer':{'videoId':'aaaaaaaaaaa','title':{'simpleText':'Server browser fixture'}}}]}}
-                html='<html><title>Fixture home</title><script>var ytInitialData = '+json.dumps(fixture)+';</script><h1>Fixture home</h1></html>'
+                html='<html><title>Fixture home</title><script>var ytInitialData = '+json.dumps(fixture)+';</script><h1>Fixture home</h1><a style="position:absolute;left:50px;top:70px;width:150px;height:80px;display:block" href="https://www.youtube.com/watch?v=aaaaaaaaaaa">Open fixture video</a></html>'
                 async def fulfill(route):await route.fulfill(status=200,content_type='text/html',body=html)
                 await browser.context.route('https://www.youtube.com/**',fulfill)
                 state=await browser.action({'action':'start'})
