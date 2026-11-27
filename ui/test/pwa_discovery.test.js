@@ -47,7 +47,7 @@ test('real provider captures are rendered as native Muninn cards, while site con
   refs['#pwa-discover-menu'].querySelectorAll=selector=>selector==='[data-browse-source]'?sources:[];
   const browseButton=new Element('button');
   const events={},requests=[],dispatched=[],navigator={onLine:true,clipboard:{writeText:async()=>{}}};
-  const now=Date.now(),entries=[];let poll;
+  const now=Date.now(),entries=[];let poll,holdBrowserState;
   const TT2='tt_7668090902816017672', TT3='tt_7668090902816017673';
   const snapshots=[
     {id:1,kind:'home',captured_at:now,source_url:'https://www.youtube.com/'},
@@ -90,7 +90,11 @@ test('real provider captures are rendered as native Muninn cards, while site con
       {video_id:'ddddddddddd',title:'Exact parent recommendation'},
       {video_id:TT,title:'Wrong provider recommendation'}]};
     else if(url==='/api/entries')data=entries;
-    else if(url==='/browser/state')data={running:true,tabs:[{id:'a',url:'https://www.youtube.com/'}]};
+    else if(url==='/browser/state'){
+      const gate=holdBrowserState;holdBrowserState=null;
+      if(gate)await gate;
+      data={running:true,tabs:[{id:'a',url:'https://www.youtube.com/'}]};
+    }
     else if(url==='/browser/action')data={running:true,tabs:[]};
     else if(url==='/api/cache')data={ok:true,entry:{id:'queued'}};
     else throw new Error('Unexpected remote call '+url);
@@ -174,6 +178,18 @@ test('real provider captures are rendered as native Muninn cards, while site con
   // An already open YouTube tab with no captured feed must not leave the
   // native view empty forever. Reload it once to acquire fresh responses.
   snapshots.splice(snapshots.findIndex(s=>s.kind==='home'),1);
+  // Hold a native feed state read while the owner switches to the actual
+  // website canvas. The stale read must not issue a reload/navigation there.
+  let releaseState;
+  holdBrowserState=new Promise(resolve=>{releaseState=resolve;});
+  const beforeRace=requests.filter(x=>x.url==='/browser/action').length;
+  sources[0].click();await flush();
+  assert.equal(holdBrowserState,null,'native state read reached the held request');
+  siteToggle.click();await flush();
+  releaseState();await flush();
+  assert.equal(surface.hidden,true);
+  assert.equal(requests.filter(x=>x.url==='/browser/action').length,beforeRace,'native feed must not navigate the website canvas after mode switch');
+  siteToggle.click();await flush();
   sources[0].click();await flush();
   assert.ok(requests.some(x=>x.url==='/browser/action'&&
     JSON.parse(x.options.body).action==='reload'&&JSON.parse(x.options.body).tab==='a'));
