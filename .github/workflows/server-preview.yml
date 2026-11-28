@@ -114,7 +114,7 @@ jobs:
           done
           test "$state" = healthy
           docker exec -e MUNINN_FRONTEND_WEBKIT=1 muninn-webkit-smoke python3 /opt/muninn-preview/smoke.py
-          echo 'Linux WebKit DOM/input fixture passed; not actual Safari, installed-PWA, or owner acceptance.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Linux WebKit DOM/input and stale-worker fixture passed; not actual Safari, installed-PWA, or owner acceptance.' >> "$GITHUB_STEP_SUMMARY"
       - name: Exercise Authelia gateway health and trusted Docker peer
         run: |
           set -euo pipefail
