@@ -72,11 +72,13 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                                     headers=headers, json=action, allow_redirects=False) as response:
                 assert response.headers.get('Cache-Control') == 'no-store'
                 assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+                body = await response.read()
                 if route.request.method == 'GET' and path.startswith('/browser/frame?') and response.status == 200:
                     assert response.content_type == 'image/jpeg'
+                    assert body.startswith(b'\xff\xd8') and body.endswith(b'\xff\xd9'), "Fixture returned invalid JPEG bytes"
                 await route.fulfill(status=response.status, headers={k:v for k,v in response.headers.items()
                                     if k.lower() in {'content-type','cache-control','x-content-type-options','referrer-policy'}},
-                                    body=await response.read())
+                                    body=body)
         context = await frontend.new_context(
             viewport={"width":390,"height":844}, is_mobile=True, has_touch=True,
             device_scale_factor=2, service_workers="block")
@@ -124,7 +126,9 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                                         body=await response.read())
             else:
                 await route.fulfill(status=405)
-        await context.route("**/*", serve)
+        # Intercept network requests only. A WebKit blob: image is local
+        # to the document, not a foreign HTTP origin to abort.
+        await context.route(re.compile(r"^https?://"), serve)
         page = await context.new_page()
         page.set_default_timeout(15000)
         await page.goto(origin + "/app/?utm_source=chatgpt.com", wait_until="domcontentloaded")
@@ -137,7 +141,14 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         await site_toggle.tap()
         await remote.wait_for(state='visible')
         try:
-            await page.locator('.remote-browser .remote-frame').wait_for(state='visible')
+            frame_image = page.locator('.remote-browser .remote-frame')
+            await frame_image.wait_for(state='visible')
+            for _ in range(100):
+                if await frame_image.evaluate("(image) => image.complete && image.naturalWidth > 0"):
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                raise AssertionError("Visible fixture frame never decoded")
         except Exception:
             # Synthetic fixture only: report the actual UI failure, not a
             # generic visibility timeout. No owner page, cookies or screenshots.
