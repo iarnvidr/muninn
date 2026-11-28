@@ -13,6 +13,32 @@ from aiohttp import ClientSession, web
 from browser import Browser
 from gateway import boundary, browser_state, browser_action, browser_frame
 
+async def launch_frontend(browser, engine):
+    """Use the same isolated frontend engine for DOM and worker fixtures."""
+    if engine != "WebKit":
+        frontend = await browser.driver.chromium.launch(
+            headless=True, chromium_sandbox=True,
+            args=["--disable-dev-shm-usage", "--disable-background-networking"])
+        return frontend, None
+    # Official Playwright supplies a separate frontend engine in the
+    # disposable CI-only image. Patchright still controls provider Chromium.
+    from playwright.async_api import async_playwright
+    previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/webkit"
+    try:
+        driver = await async_playwright().start()
+    finally:
+        if previous is None:
+            os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+        else:
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
+    try:
+        return await driver.webkit.launch(headless=True), driver
+    except BaseException:
+        await driver.stop()
+        raise
+
+
 async def mobile_browse_smoke(browser, http, base, origin, headers):
     """Exercise shipped PWA HTML/CSS/JS in a fresh touch-enabled frontend engine.
 
@@ -28,25 +54,7 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
     engine = "WebKit" if os.environ.get("MUNINN_FRONTEND_WEBKIT") == "1" else "Chromium"
     runner = None
     try:
-        if engine == "WebKit":
-            # Official Playwright supplies a separate frontend engine in the
-            # disposable CI-only image. Patchright still controls the actual
-            # sandboxed Chromium provider fixture; don't change its path.
-            from playwright.async_api import async_playwright
-            previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/webkit"
-            try:
-                webkit_driver = await async_playwright().start()
-            finally:
-                if previous is None:
-                    os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
-                else:
-                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
-            frontend = await webkit_driver.webkit.launch(headless=True)
-        else:
-            frontend = await browser.driver.chromium.launch(
-                headless=True, chromium_sandbox=True,
-                args=["--disable-dev-shm-usage", "--disable-background-networking"])
+        frontend, webkit_driver = await launch_frontend(browser, engine)
         # Exercise the production HTTP boundary against the real Core pairing
         # session, but bind only the disposable fixture Browser to these routes.
         fixture_gateway = web.Application(middlewares=[boundary])
@@ -305,13 +313,13 @@ async def installed_worker_smoke(browser, http, base, headers):
     runner = web.AppRunner(app)
     await runner.setup()
     frontend = None
+    webkit_driver = None
+    engine = "WebKit" if os.environ.get("MUNINN_FRONTEND_WEBKIT") == "1" else "Chromium"
     try:
         site = web.TCPSite(runner, "127.0.0.1", 0)
         await site.start()
         address = "http://127.0.0.1:" + str(runner.addresses[0][1])
-        frontend = await browser.driver.chromium.launch(
-            headless=True, chromium_sandbox=True,
-            args=["--disable-dev-shm-usage", "--disable-background-networking"])
+        frontend, webkit_driver = await launch_frontend(browser, engine)
         context = await frontend.new_context(service_workers="allow")
         page = await context.new_page()
         await page.goto(address + "/app/worker-harness")
@@ -376,12 +384,18 @@ async def installed_worker_smoke(browser, http, base, headers):
         assert [row[0] for row in results] == list(browse_assets), results
         assert all(row[1] and row[2] > 0 for row in results), results
         assert not await observer.evaluate("caches.match('/api/session').then(Boolean)")
-        print("Installed-worker Chromium smoke passed: stale generation waits for old client, activates after close, retains unrelated cache and IndexedDB, serves Browse assets offline.")
+        print(f"Installed-worker {engine} smoke passed: stale generation waits for old client, activates after close, retains unrelated cache and IndexedDB, serves Browse assets offline.")
     finally:
-        if frontend is not None:
-            await frontend.close()
-        if runner is not None:
-            await runner.cleanup()
+        try:
+            if frontend is not None:
+                await frontend.close()
+        finally:
+            try:
+                if webkit_driver is not None:
+                    await webkit_driver.stop()
+            finally:
+                if runner is not None:
+                    await runner.cleanup()
 
 
 async def main():
@@ -434,11 +448,9 @@ async def main():
                     feeds=await r.json()
                     assert any(f['kind']=='tiktok-for-you' for f in feeds),feeds
                 await mobile_browse_smoke(browser,http,base,origin,headers)
-                # The exact-image Chromium pass already tests installed-worker
-                # recovery. The supplemental Linux WebKit run tests DOM/input
-                # compatibility only, not Safari's installed-PWA lifecycle.
-                if os.environ.get("MUNINN_FRONTEND_WEBKIT") != "1":
-                    await installed_worker_smoke(browser,http,base,headers)
+                # Both engines must upgrade a stale worker and preserve offline
+                # data; Linux WebKit still is not Safari installed-PWA acceptance.
+                await installed_worker_smoke(browser,http,base,headers)
                 await browser.action({'action':'reset'})
                 assert not (Path(d)/'profile').exists()
             finally:await browser.close()
