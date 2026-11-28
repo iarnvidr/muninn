@@ -14,7 +14,7 @@ from browser import Browser
 from gateway import boundary, browser_state, browser_action, browser_frame
 
 async def mobile_browse_smoke(browser, http, base, origin, headers):
-    """Exercise shipped PWA HTML/CSS/JS in a real, fresh touch-enabled Chromium.
+    """Exercise shipped PWA HTML/CSS/JS in a fresh touch-enabled frontend engine.
 
     The isolated test origin is mapped to the actual gateway's HTTP listener;
     authentication uses the synthetic pairing session. Provider-browser control
@@ -23,11 +23,30 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
     or live download. This is not
     installed Safari, service-worker lifecycle or live Authelia acceptance.
     """
-    frontend = await browser.driver.chromium.launch(
-        headless=True, chromium_sandbox=True,
-        args=["--disable-dev-shm-usage", "--disable-background-networking"])
+    frontend = None
+    webkit_driver = None
+    engine = "WebKit" if os.environ.get("MUNINN_FRONTEND_WEBKIT") == "1" else "Chromium"
     runner = None
     try:
+        if engine == "WebKit":
+            # Official Playwright supplies a separate frontend engine in the
+            # disposable CI-only image. Patchright still controls the actual
+            # sandboxed Chromium provider fixture; don't change its path.
+            from playwright.async_api import async_playwright
+            previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/webkit"
+            try:
+                webkit_driver = await async_playwright().start()
+            finally:
+                if previous is None:
+                    os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+                else:
+                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
+            frontend = await webkit_driver.webkit.launch(headless=True)
+        else:
+            frontend = await browser.driver.chromium.launch(
+                headless=True, chromium_sandbox=True,
+                args=["--disable-dev-shm-usage", "--disable-background-networking"])
         # Exercise the production HTTP boundary against the real Core pairing
         # session, but bind only the disposable fixture Browser to these routes.
         fixture_gateway = web.Application(middlewares=[boundary])
@@ -53,11 +72,13 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                                     headers=headers, json=action, allow_redirects=False) as response:
                 assert response.headers.get('Cache-Control') == 'no-store'
                 assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+                body = await response.read()
                 if route.request.method == 'GET' and path.startswith('/browser/frame?') and response.status == 200:
                     assert response.content_type == 'image/jpeg'
+                    assert body.startswith(b'\xff\xd8') and body.endswith(b'\xff\xd9'), "Fixture returned invalid JPEG bytes"
                 await route.fulfill(status=response.status, headers={k:v for k,v in response.headers.items()
                                     if k.lower() in {'content-type','cache-control','x-content-type-options','referrer-policy'}},
-                                    body=await response.read())
+                                    body=body)
         context = await frontend.new_context(
             viewport={"width":390,"height":844}, is_mobile=True, has_touch=True,
             device_scale_factor=2, service_workers="block")
@@ -105,7 +126,9 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                                         body=await response.read())
             else:
                 await route.fulfill(status=405)
-        await context.route("**/*", serve)
+        # Intercept network requests only. A WebKit blob: image is local
+        # to the document, not a foreign HTTP origin to abort.
+        await context.route(re.compile(r"^https?://"), serve)
         page = await context.new_page()
         page.set_default_timeout(15000)
         await page.goto(origin + "/app/?utm_source=chatgpt.com", wait_until="domcontentloaded")
@@ -117,7 +140,21 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
         remote = page.locator('.remote-browser')
         await site_toggle.tap()
         await remote.wait_for(state='visible')
-        await page.locator('.remote-browser .remote-frame').wait_for(state='visible')
+        try:
+            frame_image = page.locator('.remote-browser .remote-frame')
+            await frame_image.wait_for(state='visible')
+            for _ in range(100):
+                if await frame_image.evaluate("(image) => image.complete && image.naturalWidth > 0"):
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                raise AssertionError("Visible fixture frame never decoded")
+        except Exception:
+            # Synthetic fixture only: report the actual UI failure, not a
+            # generic visibility timeout. No owner page, cookies or screenshots.
+            print("Fixture canvas status:", await remote.locator('[role=status]').text_content())
+            print("Fixture canvas action error:", await remote.locator('.remote-action-error').text_content())
+            raise
         await youtube.wait_for(state='hidden')
         assert await site_toggle.get_attribute('aria-expanded') == 'true'
         # Exercise actual website controls, not just native provider menus.
@@ -193,13 +230,18 @@ async def mobile_browse_smoke(browser, http, base, origin, headers):
                                   'y': bounds['height'] * 100 / 800})
         await wait_for_address('https://www.youtube.com/watch?v=aaaaaaaaaaa')
         assert sum(a.get('action') == 'click' for a in navigations) == before_clicks + 1
-        print("Mobile Chromium DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
+        print(f"Mobile {engine} DOM smoke passed: tracked URL, real gateway assets and captured feeds, direct website canvas, provider navigation, persistent failure and retry, return, touch cards, YouTube/TikTok menu and library return.")
     finally:
         try:
-            await frontend.close()
+            if frontend is not None:
+                await frontend.close()
         finally:
-            if runner is not None:
-                await runner.cleanup()
+            try:
+                if webkit_driver is not None:
+                    await webkit_driver.stop()
+            finally:
+                if runner is not None:
+                    await runner.cleanup()
 
 
 async def installed_worker_smoke(browser, http, base, headers):
@@ -392,7 +434,11 @@ async def main():
                     feeds=await r.json()
                     assert any(f['kind']=='tiktok-for-you' for f in feeds),feeds
                 await mobile_browse_smoke(browser,http,base,origin,headers)
-                await installed_worker_smoke(browser,http,base,headers)
+                # The exact-image Chromium pass already tests installed-worker
+                # recovery. The supplemental Linux WebKit run tests DOM/input
+                # compatibility only, not Safari's installed-PWA lifecycle.
+                if os.environ.get("MUNINN_FRONTEND_WEBKIT") != "1":
+                    await installed_worker_smoke(browser,http,base,headers)
                 await browser.action({'action':'reset'})
                 assert not (Path(d)/'profile').exists()
             finally:await browser.close()

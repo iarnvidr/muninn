@@ -199,7 +199,14 @@ test('the private Chromium browsing client mounts and starts against the real PW
     createElement:tag=>new Element(tag),
     addEventListener:(name,fn)=>events[name]=fn
   };
-  const context={document,navigator:{onLine:true},confirm:()=>false,setTimeout:fn=>{nextTick=fn;return 0;},
+  // Model the independent image loader without replacing the poll timer.
+  class FrameImage {
+    constructor(){this.naturalWidth=1280;}
+    set src(value){Promise.resolve().then(()=>this.onload?.());}
+    removeAttribute(){}
+  }
+  const context={document,navigator:{onLine:true},confirm:()=>false,Image:FrameImage,
+    setTimeout:(fn,delay)=>{if(delay===1500)nextTick=fn;return delay;},clearTimeout:()=>{},
     URL:{createObjectURL:()=>'blob:frame',revokeObjectURL:()=>{}},
     fetch:async(url,options={})=>{
       calls.push({url,options});
